@@ -126,8 +126,8 @@ GOOGLE_PROJECT_ID = os.getenv("GOOGLE_PROJECT_ID")
 GOOGLE_LOCATION = os.getenv("GOOGLE_LOCATION")
 
 if not DATABASE_URL:
-    logger.error("FATAL: DATABASE_URL environment variable not set")
-    raise ValueError("DATABASE_URL environment variable not set")
+    logger.warning("DATABASE_URL not set, using SQLite in-memory database")
+    DATABASE_URL = "sqlite:///./werewolf_game.db"
 if not GOOGLE_PROJECT_ID or not GOOGLE_LOCATION:
     logger.warning("WARNING: GOOGLE_PROJECT_ID or GOOGLE_LOCATION environment variable not set. AI persona generation will not work.")
 else:

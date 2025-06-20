@@ -89,7 +89,7 @@ steps:
       - '--port'
       - '8080'
       - '--set-env-vars'
-      - 'GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_REGION=asia-northeast1,ENVIRONMENT=production'
+      - 'GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_REGION=asia-northeast1,ENVIRONMENT=production,GOOGLE_PROJECT_ID=$PROJECT_ID,GOOGLE_LOCATION=asia-northeast1,DATABASE_URL=sqlite:///./werewolf_game.db'
     waitFor: ['push-backend']
 
   # フロントエンドをCloud Runにデプロイ
