@@ -25,25 +25,15 @@ RUN npm run build
 # Production stage - Cloud Run最適化
 FROM nginx:alpine
 
-# Cloud Run向けnginx設定
-COPY nginx.cloudrun.conf /etc/nginx/conf.d/default.conf
+# シンプルなnginx設定を使用
+COPY nginx.simple.conf /etc/nginx/conf.d/default.conf
 
 # ビルドされたアプリケーションをコピー
 COPY --from=builder /app/dist /usr/share/nginx/html
 
-# Cloud Runのポート設定（環境変数から取得）
+# Cloud Runのポート設定
 ENV PORT=8080
-
-# nginx設定でポートを動的に変更するスクリプト
-RUN echo '#!/bin/sh\n\
-echo "Starting nginx on port $PORT"\n\
-sed -i "s/listen 80;/listen $PORT;/g" /etc/nginx/conf.d/default.conf\n\
-nginx -t\n\
-exec nginx -g "daemon off;"' > /start.sh && \
-chmod +x /start.sh
-
-# Cloud Run用のポート設定（動的ポート対応）
 EXPOSE 8080
 
-# 起動スクリプトを実行
-CMD ["/start.sh"]
+# nginx を直接起動（シンプル化）
+CMD ["nginx", "-g", "daemon off;"]
