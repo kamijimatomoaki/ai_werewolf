@@ -27,8 +27,8 @@ from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field, ConfigDict
 from sqlalchemy import (Boolean, Column, DateTime, create_engine,
-                        ForeignKey, Integer, String, Text, text)
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+                        ForeignKey, Integer, String, Text, text, JSON)
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import Session, relationship, sessionmaker, joinedload
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
@@ -155,7 +155,7 @@ class Room(Base):
     human_players = Column(Integer, default=1)
     ai_players = Column(Integer, default=4)
     day_number = Column(Integer, default=1)
-    turn_order = Column(JSONB, nullable=True)
+    turn_order = Column(JSON, nullable=True)
     current_turn_index = Column(Integer, default=0)
     # 【追加】公開・非公開設定
     is_private = Column(Boolean, default=False, nullable=False)
@@ -173,7 +173,7 @@ class Player(Base):
     is_human = Column(Boolean, default=True)
     is_alive = Column(Boolean, default=True)
     character_name = Column(String, nullable=False, default="名無しの村人")
-    character_persona = Column(JSONB, nullable=True)
+    character_persona = Column(JSON, nullable=True)
     role = Column(String, nullable=True)
     room = relationship("Room", back_populates="players")
 
