@@ -26,6 +26,8 @@ steps:
       - 'gcr.io/$PROJECT_ID/werewolf-frontend:latest'
       - '-f'
       - 'frontend/Dockerfile.cloudrun'
+      - '--build-arg'
+      - 'VITE_API_BASE_URL=https://werewolf-backend-${_BACKEND_HASH}-an.a.run.app'
       - './frontend'
     waitFor: ['-']
 
@@ -59,23 +61,6 @@ steps:
       - 'gcr.io/$PROJECT_ID/werewolf-frontend:latest'
     waitFor: ['build-frontend']
 
-  # Cloud SQL Proxyでデータベースマイグレーション実行
-  - name: 'gcr.io/cloud-sql-docker/gce-proxy:1.33.14'
-    id: 'db-migration'
-    args:
-      - '/cloud_sql_proxy'
-      - '-instances=$PROJECT_ID:asia-northeast1:werewolf-db=tcp:5432'
-      - '&'
-      - 'sleep'
-      - '10'
-      - '&&'
-      - 'python'
-      - 'database/migrate.py'
-    env:
-      - 'DATABASE_URL=postgresql://werewolf_user:$$DB_PASSWORD@localhost:5432/werewolf_game'
-    secretEnv: ['DB_PASSWORD']
-    waitFor: ['push-backend']
-
   # バックエンドをCloud Runにデプロイ
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     id: 'deploy-backend'
@@ -101,13 +86,11 @@ steps:
       - '80'
       - '--timeout'
       - '300'
+      - '--port'
+      - '8080'
       - '--set-env-vars'
-      - 'GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_REGION=asia-northeast1,ENVIRONMENT=production'
-      - '--set-secrets'
-      - 'DATABASE_URL=DATABASE_URL:latest,REDIS_URL=REDIS_URL:latest'
-      - '--add-cloudsql-instances'
-      - '$PROJECT_ID:asia-northeast1:werewolf-db'
-    waitFor: ['push-backend', 'db-migration']
+      - 'GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_REGION=asia-northeast1,ENVIRONMENT=production,PORT=8080'
+    waitFor: ['push-backend']
 
   # フロントエンドをCloud Runにデプロイ
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
@@ -134,19 +117,26 @@ steps:
       - '100'
       - '--timeout'
       - '60'
-      - '--set-env-vars'
-      - 'BACKEND_URL=https://werewolf-backend-RANDOM-HASH-an.a.run.app'
+      - '--port'
+      - '8080'
     waitFor: ['push-frontend', 'deploy-backend']
 
-# 秘密情報の設定
-availableSecrets:
-  secretManager:
-    - versionName: projects/$PROJECT_ID/secrets/DATABASE_URL/versions/latest
-      env: 'DATABASE_URL'
-    - versionName: projects/$PROJECT_ID/secrets/REDIS_URL/versions/latest
-      env: 'REDIS_URL'
-    - versionName: projects/$PROJECT_ID/secrets/DB_PASSWORD/versions/latest
-      env: 'DB_PASSWORD'
+  # デプロイ後の情報取得
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: 'get-info'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        echo "=== デプロイ完了 ==="
+        echo "Backend URL: $(gcloud run services describe werewolf-backend --region=asia-northeast1 --format='value(status.url)')"
+        echo "Frontend URL: $(gcloud run services describe werewolf-frontend --region=asia-northeast1 --format='value(status.url)')"
+        echo "API Docs: $(gcloud run services describe werewolf-backend --region=asia-northeast1 --format='value(status.url)')/docs"
+    waitFor: ['deploy-frontend']
+
+# 代替変数の設定
+substitutions:
+  _BACKEND_HASH: 'unknown'
 
 # ビルド設定
 options:
@@ -155,7 +145,7 @@ options:
   logging: CLOUD_LOGGING_ONLY
 
 # タイムアウト設定
-timeout: '1800s'
+timeout: '1200s'
 
 # タグ設定
 tags:
