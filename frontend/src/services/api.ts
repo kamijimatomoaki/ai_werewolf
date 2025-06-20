@@ -43,6 +43,10 @@ export interface AvailableTargetsResponse {
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
 
+// デバッグ用: 実際に使用されているAPI URLをログ出力
+console.log('API_BASE_URL:', API_BASE_URL);
+console.log('VITE_API_BASE_URL env var:', import.meta.env.VITE_API_BASE_URL);
+
 class ApiService {
   // 部屋管理
   async getRooms(skip: number = 0, limit: number = 10): Promise<RoomSummary[]> {
