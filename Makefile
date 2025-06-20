@@ -101,3 +101,28 @@ db-seed:
 # 本番デプロイ用
 deploy-prod: build
 	docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+# Cloud Run デプロイ
+deploy-cloudrun:
+	./scripts/deploy-cloudrun.sh
+
+# Cloud Build手動実行
+build-cloudrun:
+	gcloud builds submit --config=cloudbuild.yaml .
+
+# Cloud Runサービス確認
+status-cloudrun:
+	@echo "=== Cloud Run サービス状況 ==="
+	gcloud run services list --region=asia-northeast1
+	@echo ""
+	@echo "=== サービスURL ==="
+	@echo "Backend:  $$(gcloud run services describe werewolf-backend --region=asia-northeast1 --format='value(status.url)' 2>/dev/null || echo 'Not deployed')"
+	@echo "Frontend: $$(gcloud run services describe werewolf-frontend --region=asia-northeast1 --format='value(status.url)' 2>/dev/null || echo 'Not deployed')"
+
+# Cloud Runログ確認
+logs-cloudrun:
+	@echo "=== Backend Logs ==="
+	gcloud logs read 'resource.type=cloud_run_revision AND resource.labels.service_name=werewolf-backend' --limit=20
+	@echo ""
+	@echo "=== Frontend Logs ==="
+	gcloud logs read 'resource.type=cloud_run_revision AND resource.labels.service_name=werewolf-frontend' --limit=20

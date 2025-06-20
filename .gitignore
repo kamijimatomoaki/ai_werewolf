@@ -39,6 +39,10 @@ env/
 docker-compose.override.yml
 docker-data/
 
+# Cloud Run / Google Cloud
+.gcloudignore
+cloudbuild-local.yaml
+
 # IDE
 .vscode/
 .idea/
