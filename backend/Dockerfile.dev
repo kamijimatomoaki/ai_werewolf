@@ -1,0 +1,35 @@
+# Development Dockerfile with hot reload support
+FROM python:3.11-slim AS development
+
+# 作業ディレクトリを設定
+WORKDIR /app
+
+# システムの依存関係をインストール
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    libpq-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Python依存関係をコピーしてインストール
+COPY game_logic/requirements.txt .
+COPY requirements-dev.txt .
+
+# 開発用依存関係もインストール
+RUN pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir -r requirements-dev.txt
+
+# アプリケーションコードをコピー
+COPY . .
+
+# 非rootユーザーを作成
+RUN useradd --create-home --shell /bin/bash appuser && \
+    chown -R appuser:appuser /app
+USER appuser
+
+# ポートを公開
+EXPOSE 8000
+
+# 開発時はホットリロードで起動
+CMD ["python", "-m", "uvicorn", "game_logic.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

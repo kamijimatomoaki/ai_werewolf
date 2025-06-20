@@ -1,0 +1,95 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  database:
+    image: postgres:15-alpine
+    container_name: werewolf_db
+    environment:
+      POSTGRES_DB: werewolf_game
+      POSTGRES_USER: werewolf_user
+      POSTGRES_PASSWORD: werewolf_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U werewolf_user -d werewolf_game"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Redis for session storage and caching
+  redis:
+    image: redis:7-alpine
+    container_name: werewolf_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # Backend API
+  backend:
+    build: 
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: werewolf_backend
+    environment:
+      - DATABASE_URL=postgresql://werewolf_user:werewolf_password@database:5432/werewolf_game
+      - REDIS_URL=redis://redis:6379
+      - GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT}
+      - GOOGLE_CLOUD_REGION=${GOOGLE_CLOUD_REGION:-asia-northeast1}
+      - CORS_ORIGINS=http://localhost:3000,http://localhost:80
+      - LOG_LEVEL=INFO
+    ports:
+      - "8000:8000"
+    depends_on:
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app:ro
+      - ~/.config/gcloud:/home/appuser/.config/gcloud:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+
+  # Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: werewolf_frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  default:
+    name: werewolf_network

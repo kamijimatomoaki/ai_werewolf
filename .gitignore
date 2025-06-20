@@ -34,6 +34,11 @@ env/
 .env.test.local
 .env.production.local
 
+# Docker
+.env.docker
+docker-compose.override.yml
+docker-data/
+
 # IDE
 .vscode/
 .idea/
