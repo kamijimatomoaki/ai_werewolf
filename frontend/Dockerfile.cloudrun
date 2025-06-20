@@ -9,8 +9,8 @@ WORKDIR /app
 COPY package*.json ./
 
 # 依存関係をインストール（開発依存関係も含む）
-# package-lock.jsonがない場合はnpm installを使用
-RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
+# package-lock.jsonがない場合はnpm installを使用（peer依存関係の競合を回避）
+RUN if [ -f package-lock.json ]; then npm ci --legacy-peer-deps; else npm install --legacy-peer-deps; fi
 
 # ソースコードをコピー
 COPY . .
