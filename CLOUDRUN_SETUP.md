@@ -27,6 +27,9 @@ gcloud services enable sqladmin.googleapis.com
 gcloud services enable secretmanager.googleapis.com
 gcloud services enable vpcaccess.googleapis.com
 gcloud services enable aiplatform.googleapis.com
+
+# Cloud Build権限の設定（重要！）
+./setup-cloudbuild-permissions.sh
 ```
 
 ### 2. 自動デプロイ（推奨）
