@@ -614,16 +614,50 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
     if turn_order[current_index] != str(player_id):
         raise HTTPException(status_code=403, detail="It's not your turn.")
 
-    create_game_log(db, room_id, "day_discussion", "speech", actor_player_id=player_id, content=statement)
+    # 現在のフェーズでのプレイヤーの発言回数をチェック (最大3回)
+    current_phase_speeches = db.query(GameLog).filter(
+        GameLog.room_id == room_id,
+        GameLog.phase == "day_discussion",
+        GameLog.event_type == "speech",
+        GameLog.actor_player_id == player_id
+    ).count()
+    
+    if current_phase_speeches >= 3:
+        raise HTTPException(status_code=403, detail="You have already made 3 speeches this turn.")
 
-    next_index = (current_index + 1)
-    if next_index >= len(turn_order):
-        db_room.status = 'day_vote'
-        logger.info(f"All players have spoken in room {room_id}. Moving to vote phase.")
-    else:
-        db_room.current_turn_index = next_index
-        current_player_id = turn_order[db_room.current_turn_index]
-        logger.info(f"Turn advanced in room {room_id} to player {current_player_id}.")
+    create_game_log(db, room_id, "day_discussion", "speech", actor_player_id=player_id, content=statement)
+    
+    # 発言回数を再確認（今回の発言を含む）
+    updated_speech_count = current_phase_speeches + 1
+    
+    # 3回発言したら次のプレイヤーに移行
+    if updated_speech_count >= 3:
+        next_index = (current_index + 1)
+        if next_index >= len(turn_order):
+            # 全員が3回ずつ発言したかチェック
+            all_players_finished = True
+            for player_uuid_str in turn_order:
+                player_speech_count = db.query(GameLog).filter(
+                    GameLog.room_id == room_id,
+                    GameLog.phase == "day_discussion",
+                    GameLog.event_type == "speech",
+                    GameLog.actor_player_id == uuid.UUID(player_uuid_str)
+                ).count()
+                if player_speech_count < 3:
+                    all_players_finished = False
+                    break
+            
+            if all_players_finished:
+                db_room.status = 'day_vote'
+                logger.info(f"All players have made 3 speeches each in room {room_id}. Moving to vote phase.")
+            else:
+                # まだ全員が3回発言していない場合、最初のプレイヤーに戻る
+                db_room.current_turn_index = 0
+                logger.info(f"Starting new speech round in room {room_id}.")
+        else:
+            db_room.current_turn_index = next_index
+            current_player_id = turn_order[db_room.current_turn_index]
+            logger.info(f"Turn advanced in room {room_id} to player {current_player_id}.")
 
     db.commit()
     db.refresh(db_room)
@@ -761,8 +795,13 @@ def process_vote(db: Session, room_id: uuid.UUID, voter_id: uuid.UUID, target_id
     if db_room.status != 'day_vote':
         raise HTTPException(status_code=400, detail="Not in voting phase")
 
-    # 投票を記録
-    create_game_log(db, room_id, "day_vote", "vote", actor_player_id=voter_id, content=f"voted for {target_id}")
+    # 投票対象のキャラクター名を取得
+    target_player = db.query(Player).filter(Player.player_id == target_id).first()
+    if not target_player:
+        raise HTTPException(status_code=404, detail="Target player not found")
+    
+    # 投票を記録（プレイヤー名を使用）
+    create_game_log(db, room_id, "day_vote", "vote", actor_player_id=voter_id, content=f"voted for {target_player.character_name}")
     
     # 現在の投票を集計（ログから）
     vote_logs = db.query(GameLog).filter(
@@ -778,8 +817,8 @@ def process_vote(db: Session, room_id: uuid.UUID, voter_id: uuid.UUID, target_id
         if log.actor_player_id:
             # 最新の投票のみをカウント（一人一票）
             voters.add(str(log.actor_player_id))
-            target = log.content.replace("voted for ", "")
-            vote_counts[target] = vote_counts.get(target, 0) + 1
+            target_name = log.content.replace("voted for ", "")
+            vote_counts[target_name] = vote_counts.get(target_name, 0) + 1
     
     # 生存中の人間プレイヤー数を確認
     living_human_players = [p for p in db_room.players if p.is_alive and p.is_human]
@@ -793,8 +832,8 @@ def process_vote(db: Session, room_id: uuid.UUID, voter_id: uuid.UUID, target_id
             
             if len(most_voted) == 1:
                 # 単独最多票
-                voted_out_id = most_voted[0]
-                voted_out_player = db.query(Player).filter(Player.player_id == voted_out_id).first()
+                voted_out_name = most_voted[0]
+                voted_out_player = db.query(Player).filter(Player.character_name == voted_out_name).first()
                 if voted_out_player:
                     voted_out_player.is_alive = False
                 
@@ -806,24 +845,29 @@ def process_vote(db: Session, room_id: uuid.UUID, voter_id: uuid.UUID, target_id
                 
                 return VoteResult(
                     vote_counts=vote_counts,
-                    voted_out_player_id=voted_out_id,
+                    voted_out_player_id=voted_out_player.player_id if voted_out_player else None,
                     tied_vote=False,
                     message=f"{voted_out_player.character_name}が投票により追放されました。"
                 )
             else:
-                # 同票
+                # 同票 - 夜フェーズに移行
+                db_room.status = 'night'
+                create_game_log(db, room_id, "phase_transition", "同票のため誰も追放されませんでした。夜フェーズに移行します。")
                 return VoteResult(
                     vote_counts=vote_counts,
                     voted_out_player_id=None,
                     tied_vote=True,
-                    message="同票のため、誰も追放されませんでした。"
+                    message="同票のため、誰も追放されませんでした。夜フェーズに移行します。"
                 )
         else:
+            # 無投票 - 夜フェーズに移行
+            db_room.status = 'night'
+            create_game_log(db, room_id, "phase_transition", "投票がありませんでした。夜フェーズに移行します。")
             return VoteResult(
                 vote_counts={},
                 voted_out_player_id=None,
                 tied_vote=False,
-                message="投票がありませんでした。"
+                message="投票がありませんでした。夜フェーズに移行します。"
             )
     
     db.commit()
@@ -1126,14 +1170,46 @@ def generate_fallback_ai_speech(ai_player, room, db) -> str:
     except Exception:
         return "今の状況をよく考えてみましょう。"
 
+def get_strategic_coming_out_decision(ai_player: Player, room: Room, recent_logs: List[GameLog]) -> str:
+    """戦略的なカミングアウト判断を行う"""
+    
+    living_players = [p for p in room.players if p.is_alive]
+    day_num = room.day_number
+    
+    # 役職開示のリスクとメリットを評価
+    should_come_out = False
+    fake_role = None
+    
+    # 3日目以降で戦略的なカミングアウトを検討
+    if day_num >= 3:
+        if ai_player.role == 'seer':
+            # 占い師は疑いをかけられたらカミングアウト
+            should_come_out = True
+        elif ai_player.role == 'werewolf':
+            # 人狼は占い師や魔者を騙って偽装カミングアウト
+            if day_num >= 4 or len(living_players) <= 4:
+                fake_role = 'seer'  # 占い師と偽ってカミングアウト
+    
+    if should_come_out:
+        return f"私は占い師です。今こそ真実を話します。"
+    elif fake_role:
+        return f"実は私は{'占い師' if fake_role == 'seer' else fake_role}です。信じてください。"
+    
+    return ""
+
 def build_ai_speech_prompt(ai_player: Player, room: Room, recent_logs: List[GameLog]) -> str:
     """AI発言生成用のプロンプトを構築"""
     
+    # 戦略的カミングアウトをチェック
+    coming_out_speech = get_strategic_coming_out_decision(ai_player, room, recent_logs)
+    if coming_out_speech:
+        return coming_out_speech
+    
     # 基本設定
     role_description = {
-        'villager': '村人として、人狼を見つけ出すことが目標です。',
-        'werewolf': '人狼として、正体がばれないように振る舞い、村人を惑わせることが目標です。',
-        'seer': '占い師として、調査結果を元に人狼を見つけることが目標です。'
+        'villager': '村人として、人狼を見つけ出すことが目標です。疑わしいプレイヤーを指摘したり、情報を集めたりしてください。',
+        'werewolf': '人狼として、正体がばれないように振る舞い、村人を惑わせることが目標です。他のプレイヤーに疑いを向けさせ、村人陣営を分裂させてください。',
+        'seer': '占い師として、調査結果を元に人狼を見つけることが目標です。状況を見てカミングアウトを検討してください。'
     }
     
     # ペルソナ情報
@@ -1169,6 +1245,7 @@ def build_ai_speech_prompt(ai_player: Player, room: Room, recent_logs: List[Game
 - 自然で人間らしい発言
 - 役職の目標に沿った内容
 - 必要に応じて他のプレイヤーに質問や提案
+- 戦略的なカミングアウトや偽装を検討してください
 
 発言:
 """

@@ -383,9 +383,9 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
         </Card>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* プレイヤー一覧 */}
-        <div className="lg:col-span-1">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[calc(100vh-12rem)]">
+        {/* プレイヤー一覧 - 独立スクロール */}
+        <div className="lg:col-span-1 h-full overflow-y-auto scrollbar-thin scrollbar-thumb-gray-600 scrollbar-track-gray-800">
           <PlayerList
             players={room.players}
             currentPlayerId={currentPlayerId}
@@ -397,8 +397,8 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
           />
         </div>
 
-        {/* ゲーム進行エリア */}
-        <div className="lg:col-span-2">
+        {/* ゲーム進行エリア - 独立スクロール */}
+        <div className="lg:col-span-2 h-full overflow-y-auto scrollbar-thin scrollbar-thumb-gray-600 scrollbar-track-gray-800 flex flex-col">
           {/* ゲーム制御コンポーネント */}
           <GameControls
             gameStatus={room.status}

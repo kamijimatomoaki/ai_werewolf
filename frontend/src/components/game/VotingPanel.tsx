@@ -81,10 +81,10 @@ export default function VotingPanel({
             {Object.entries(voteResult.vote_counts).map(([playerId, count]) => {
               const player = players.find(p => p.player_id === playerId);
               return (
-                <div key={playerId} className="flex justify-between items-center p-3 bg-white rounded-lg border">
+                <div key={playerId} className="flex justify-between items-center p-3 bg-gradient-to-r from-gray-800/80 to-gray-700/80 border border-gray-600/50 rounded-lg backdrop-blur-sm">
                   <div className="flex items-center gap-3">
                     <Avatar name={player?.character_name || '不明'} size="sm" />
-                    <span className="font-medium">{player?.character_name || '不明'}</span>
+                    <span className="font-medium text-gray-200">{player?.character_name || '不明'}</span>
                   </div>
                   <Chip size="sm" color="danger" variant="flat">
                     {count}票
@@ -200,8 +200,10 @@ export default function VotingPanel({
                   {selectedVoteTarget && (
                     <Button
                       variant="bordered"
+                      color="warning"
                       onClick={() => setSelectedVoteTarget('')}
                       isDisabled={isVoting || isLoading}
+                      className="border-orange-500/50 text-orange-300 hover:bg-orange-500/20"
                     >
                       選択解除
                     </Button>
@@ -210,8 +212,8 @@ export default function VotingPanel({
               </div>
 
               {/* 投票のヒント */}
-              <div className="p-3 bg-white rounded-lg border">
-                <p className="text-xs text-gray-600">
+              <div className="p-3 bg-gradient-to-r from-blue-600/20 to-purple-600/20 border border-blue-500/30 rounded-lg backdrop-blur-sm">
+                <p className="text-xs text-blue-200">
                   💡 これまでの議論を振り返り、最も怪しいと思うプレイヤーに投票しましょう。
                   投票は一度しかできません。
                 </p>
