@@ -852,11 +852,11 @@ def process_vote(db: Session, room_id: uuid.UUID, voter_id: uuid.UUID, target_id
     for target_name in latest_votes.values():
         vote_counts[target_name] = vote_counts.get(target_name, 0) + 1
     
-    # 生存中の人間プレイヤー数を確認
-    living_human_players = [p for p in db_room.players if p.is_alive and p.is_human]
+    # 生存中の全プレイヤー数を確認（人間とAI両方）
+    living_players = [p for p in db_room.players if p.is_alive]
     
     # 全員が投票したかチェック
-    if len(voters) >= len(living_human_players):
+    if len(voters) >= len(living_players):
         # 最多票を獲得したプレイヤーを特定
         if vote_counts:
             max_votes = max(vote_counts.values())
@@ -923,7 +923,7 @@ def process_vote(db: Session, room_id: uuid.UUID, voter_id: uuid.UUID, target_id
         vote_counts=vote_counts,
         voted_out_player_id=None,
         tied_vote=False,
-        message=f"投票受付中... ({len(voters)}/{len(living_human_players)})"
+        message=f"投票受付中... ({len(voters)}/{len(living_players)})"
     )
 
 def process_night_actions(db: Session, room_id: uuid.UUID) -> Dict[str, Any]:
@@ -968,6 +968,18 @@ def process_night_actions(db: Session, room_id: uuid.UUID) -> Dict[str, Any]:
             results['victim'] = target.character_name
             results['victim_id'] = str(target.player_id)
             results['protected'] = False
+    
+    # ボディガードの守り（自動）
+    bodyguards = [p for p in db_room.players if p.role == 'bodyguard' and p.is_alive]
+    if bodyguards:
+        bodyguard = bodyguards[0]
+        alive_players = [p for p in db_room.players if p.is_alive and p.player_id != bodyguard.player_id]
+        if alive_players:
+            protected = random.choice(alive_players)
+            create_game_log(db, room_id, "night", "protect", 
+                          actor_player_id=bodyguard.player_id,
+                          content=f"protected {protected.character_name}")
+            results['protection'] = f"{bodyguard.character_name}が{protected.character_name}を守りました"
     
     # 占い師の占い（自動）
     seers = [p for p in db_room.players if p.role == 'seer' and p.is_alive]
@@ -1290,7 +1302,8 @@ def build_ai_speech_prompt(ai_player: Player, room: Room, recent_logs: List[Game
 - 現在は{room.day_number}日目の{('昼の議論' if room.status == 'day_discussion' else '投票' if room.status == 'day_vote' else '夜')}フェーズです
 - 生存プレイヤー数: {len([p for p in room.players if p.is_alive])}人
 
-{persona_info}
+# あなたの設定
+{persona_info if persona_info else "特別な設定はありません。自然体で発言してください。"}
 
 {conversation_history}
 
@@ -2042,48 +2055,163 @@ async def handle_auto_progress(room_id: uuid.UUID, db: Session = Depends(get_db)
         if not room:
             raise HTTPException(status_code=404, detail="Room not found")
         
-        if room.status != 'day_discussion':
-            return {"message": "Auto progress only available during discussion phase"}
+        if room.status not in ['day_discussion', 'day_vote']:
+            return {"message": "Auto progress only available during discussion and voting phases"}
         
-        # 現在のターンプレイヤーを確認
-        if not room.turn_order or room.current_turn_index is None:
-            return {"message": "Turn order not initialized"}
-        
-        current_player_id = room.turn_order[room.current_turn_index]
-        current_player = get_player(db, uuid.UUID(current_player_id))
-        
-        if not current_player:
-            return {"message": "Current player not found"}
-        
-        # AIプレイヤーの場合、自動発言
-        if not current_player.is_human:
-            speech = generate_ai_speech(db, room_id, current_player.player_id)
-            updated_room = speak_logic(db, room_id, current_player.player_id, speech)
+        # 発言フェーズでの処理
+        if room.status == 'day_discussion':
+            # 現在のターンプレイヤーを確認
+            if not room.turn_order or room.current_turn_index is None:
+                return {"message": "Turn order not initialized"}
             
-            # WebSocketで発言を通知
-            await sio.emit("new_speech", {
-                "room_id": str(room_id),
-                "speaker_id": str(current_player.player_id),
-                "statement": speech,
-                "is_ai": True
-            }, room=str(room_id))
+            current_player_id = room.turn_order[room.current_turn_index]
+            current_player = get_player(db, uuid.UUID(current_player_id))
             
-            return {
-                "auto_progressed": True,
-                "speaker": current_player.character_name,
-                "speech": speech,
-                "room_status": updated_room.status,
-                "current_turn_index": updated_room.current_turn_index
-            }
-        else:
+            if not current_player:
+                return {"message": "Current player not found"}
+            
+            # AIプレイヤーの場合、自動発言
+            if not current_player.is_human:
+                speech = generate_ai_speech(db, room_id, current_player.player_id)
+                updated_room = speak_logic(db, room_id, current_player.player_id, speech)
+                
+                # WebSocketで発言を通知
+                await sio.emit("new_speech", {
+                    "room_id": str(room_id),
+                    "speaker_id": str(current_player.player_id),
+                    "statement": speech,
+                    "is_ai": True
+                }, room=str(room_id))
+                
+                return {
+                    "auto_progressed": True,
+                    "speaker": current_player.character_name,
+                    "speech": speech,
+                    "room_status": updated_room.status,
+                    "current_turn_index": updated_room.current_turn_index
+                }
+            else:
+                return {
+                    "auto_progressed": False,
+                    "message": "Current player is human, waiting for manual input"
+                }
+        
+        # 投票フェーズでの処理
+        elif room.status == 'day_vote':
+            # 未投票のAIプレイヤーを特定して自動投票
+            vote_logs = db.query(GameLog).filter(
+                GameLog.room_id == room_id,
+                GameLog.event_type == "vote",
+                GameLog.phase == "day_vote"
+            ).all()
+            
+            voted_players = set()
+            for log in vote_logs:
+                if log.actor_player_id:
+                    voted_players.add(str(log.actor_player_id))
+            
+            ai_players = [p for p in room.players if p.is_alive and not p.is_human]
+            unvoted_ai_players = [p for p in ai_players if str(p.player_id) not in voted_players]
+            
+            if unvoted_ai_players:
+                # 最初の未投票AIプレイヤーのみ投票させる
+                ai_player = unvoted_ai_players[0]
+                possible_targets = [p for p in room.players if p.is_alive and p.player_id != ai_player.player_id]
+                
+                if possible_targets:
+                    target = random.choice(possible_targets)
+                    vote_result = process_vote(db, room_id, ai_player.player_id, target.player_id)
+                    
+                    # WebSocketで投票を通知
+                    await sio.emit("vote_cast", {
+                        "room_id": str(room_id),
+                        "voter_id": str(ai_player.player_id),
+                        "target_id": str(target.player_id),
+                        "is_ai": True
+                    }, room=str(room_id))
+                    
+                    return {
+                        "auto_progressed": True,
+                        "voter": ai_player.character_name,
+                        "target": target.character_name,
+                        "vote_result": vote_result.message
+                    }
+            
             return {
                 "auto_progressed": False,
-                "message": "Current player is human, waiting for manual input"
+                "message": "No AI players need to vote"
             }
+        
+        return {
+            "auto_progressed": False,
+            "message": "Invalid game phase"
+        }
             
     except Exception as e:
         logger.error(f"Error in auto progress: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to auto progress game")
+
+@app.post("/api/rooms/{room_id}/auto_vote")
+async def handle_auto_vote(room_id: uuid.UUID, db: Session = Depends(get_db)):
+    """AIプレイヤーの自動投票"""
+    try:
+        room = get_room(db, room_id)
+        if not room:
+            raise HTTPException(status_code=404, detail="Room not found")
+        
+        if room.status != 'day_vote':
+            return {"message": "Not in voting phase"}
+        
+        # 未投票のAIプレイヤーを特定
+        vote_logs = db.query(GameLog).filter(
+            GameLog.room_id == room_id,
+            GameLog.event_type == "vote",
+            GameLog.phase == "day_vote"
+        ).all()
+        
+        voted_players = set()
+        for log in vote_logs:
+            if log.actor_player_id:
+                voted_players.add(str(log.actor_player_id))
+        
+        ai_players = [p for p in room.players if p.is_alive and not p.is_human]
+        unvoted_ai_players = [p for p in ai_players if str(p.player_id) not in voted_players]
+        
+        if not unvoted_ai_players:
+            return {"message": "All AI players have already voted"}
+        
+        # 各AIプレイヤーの自動投票を実行
+        auto_votes = []
+        for ai_player in unvoted_ai_players:
+            # 投票対象を選択（自分以外の生存プレイヤー）
+            possible_targets = [p for p in room.players if p.is_alive and p.player_id != ai_player.player_id]
+            if possible_targets:
+                target = random.choice(possible_targets)
+                
+                # 投票実行
+                process_vote(db, room_id, ai_player.player_id, target.player_id)
+                auto_votes.append({
+                    "voter": ai_player.character_name,
+                    "target": target.character_name
+                })
+                
+                # WebSocketで投票を通知
+                await sio.emit("vote_cast", {
+                    "room_id": str(room_id),
+                    "voter_id": str(ai_player.player_id),
+                    "target_id": str(target.player_id),
+                    "is_ai": True
+                }, room=str(room_id))
+        
+        return {
+            "auto_voted": True,
+            "votes": auto_votes,
+            "message": f"AI players auto-voted: {len(auto_votes)} votes cast"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in auto vote: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to auto vote")
 
 # --- Spectator API Endpoints ---
 @app.post("/api/rooms/{room_id}/spectators/join", response_model=SpectatorJoinResponse)
