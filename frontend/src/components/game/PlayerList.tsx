@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Button } from "@heroui/button";
 import { Card } from "@heroui/card";
-import { Input } from "@heroui/input";
 import { Avatar } from "@heroui/avatar";
 import { Chip } from "@heroui/chip";
 
@@ -59,6 +58,34 @@ export default function PlayerList({
     }
   };
 
+  const handleBulkGeneratePersona = async () => {
+    const unsetPersonaPlayers = players.filter(p => !p.is_human && !p.character_persona);
+    
+    try {
+      // 全プレイヤーを順次生成（並列だとAPI制限に引っかかる可能性があるため）
+      for (const player of unsetPersonaPlayers) {
+        const keywords = personaKeywords[player.player_id];
+        if (keywords?.trim()) {
+          setGeneratingPersona(player.player_id);
+          await onGeneratePersona(player.player_id, keywords);
+        }
+      }
+      
+      // 成功後、全てのキーワードをクリア
+      setPersonaKeywords(prev => {
+        const newKeywords = { ...prev };
+        unsetPersonaPlayers.forEach(player => {
+          newKeywords[player.player_id] = '';
+        });
+        return newKeywords;
+      });
+    } catch (error) {
+      console.error('Failed to bulk generate personas:', error);
+    } finally {
+      setGeneratingPersona(null);
+    }
+  };
+
   const canStartGame = gameStatus === 'waiting' && players.length === totalPlayers;
   const hasUnsetPersonas = players.some(p => !p.is_human && !p.character_persona);
 
@@ -104,15 +131,18 @@ export default function PlayerList({
                   >
                     {player.is_alive ? "生存" : "脱落"}
                   </Chip>
-                  {player.role && gameStatus !== 'waiting' && (
+                  {player.role && (gameStatus === 'finished' || player.player_id === currentPlayerId) && (
                     <Chip size="sm" variant="flat" color="warning">
                       {player.role}
                     </Chip>
                   )}
                   {player.character_persona && (
-                    <Chip size="sm" variant="flat" color="secondary">
-                      ペルソナ設定済み
-                    </Chip>
+                    <div className="w-full mt-2">
+                      <Card className="p-2 bg-gradient-to-r from-purple-100 to-pink-100">
+                        <p className="text-xs font-medium text-gray-700">ペルソナ:</p>
+                        <p className="text-sm text-gray-800 mt-1">{player.character_persona.persona_description}</p>
+                      </Card>
+                    </div>
                   )}
                 </div>
               </div>
@@ -124,51 +154,72 @@ export default function PlayerList({
       {/* AIペルソナ生成（待機中のみ） */}
       {gameStatus === 'waiting' && (
         <div className="mt-6 space-y-3">
-          <h3 className="font-semibold">AIペルソナ生成</h3>
+          <h3 className="font-semibold text-lg">AIペルソナ一括設定</h3>
           
           {players.filter(p => !p.is_human && !p.character_persona).length === 0 ? (
-            <div className="text-sm text-gray-600 p-3 bg-green-50 rounded-lg border border-green-200">
+            <div className="text-sm text-gray-600 p-4 bg-green-50 rounded-lg border border-green-200">
               ✅ すべてのAIプレイヤーにペルソナが設定されました
             </div>
           ) : (
-            <div className="text-sm text-gray-600 mb-3">
-              AIプレイヤーにキャラクター設定を生成します
-            </div>
-          )}
-
-          {players.filter(p => !p.is_human && !p.character_persona).map((player) => (
-            <div key={player.player_id} className="space-y-2 p-3 bg-white rounded-lg border">
-              <div className="flex items-center gap-2 mb-2">
-                <Avatar name={player.character_name} size="sm" color="secondary" />
-                <span className="font-medium">{player.character_name}</span>
+            <>
+              <div className="text-sm text-gray-600 mb-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
+                💡 各AIプレイヤーのキャラクター特徴を入力して、一括でペルソナを生成できます
               </div>
               
-              <Input
-                size="sm"
-                placeholder="例: 冷静沈着, 探偵, 30代"
-                value={personaKeywords[player.player_id] || ''}
-                onChange={(e) => setPersonaKeywords(prev => ({
-                  ...prev,
-                  [player.player_id]: e.target.value
-                }))}
-                isDisabled={generatingPersona === player.player_id}
-              />
-              
-              <Button
-                size="sm"
-                color="secondary"
-                onClick={() => handleGeneratePersona(player.player_id)}
-                isDisabled={
-                  !personaKeywords[player.player_id]?.trim() || 
-                  generatingPersona !== null
-                }
-                isLoading={generatingPersona === player.player_id}
-                className="w-full"
-              >
-                {generatingPersona === player.player_id ? 'ペルソナ生成中...' : 'ペルソナ生成'}
-              </Button>
-            </div>
-          ))}
+              <div className="space-y-4">
+                {/* 各AIプレイヤーのキーワード入力 */}
+                {players.filter(p => !p.is_human && !p.character_persona).map((player) => (
+                  <div key={player.player_id} className="space-y-2 p-3 bg-white rounded-lg border">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Avatar name={player.character_name} size="sm" color="secondary" />
+                      <span className="font-medium">{player.character_name}</span>
+                      {generatingPersona === player.player_id && (
+                        <Chip size="sm" color="warning" variant="flat">
+                          生成中...
+                        </Chip>
+                      )}
+                    </div>
+                    
+                    <textarea
+                      className="w-full p-2 border border-gray-300 rounded-lg resize-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 text-sm"
+                      rows={2}
+                      placeholder="例: 冷静沈着, 探偵, 30代, 鋭い観察力"
+                      value={personaKeywords[player.player_id] || ''}
+                      onChange={(e) => setPersonaKeywords(prev => ({
+                        ...prev,
+                        [player.player_id]: e.target.value
+                      }))}
+                      disabled={generatingPersona !== null}
+                    />
+                  </div>
+                ))}
+                
+                {/* 一括生成ボタン */}
+                <div className="pt-2">
+                  <Button
+                    size="lg"
+                    color="primary"
+                    onClick={handleBulkGeneratePersona}
+                    isDisabled={
+                      generatingPersona !== null ||
+                      !players.filter(p => !p.is_human && !p.character_persona).some(p => personaKeywords[p.player_id]?.trim())
+                    }
+                    isLoading={generatingPersona !== null}
+                    className="w-full"
+                    startContent={generatingPersona ? null : <span>🎭</span>}
+                  >
+                    {generatingPersona ? 'ペルソナ生成中...' : 'すべてのペルソナを一括生成'}
+                  </Button>
+                  
+                  {players.filter(p => !p.is_human && !p.character_persona).some(p => personaKeywords[p.player_id]?.trim()) && (
+                    <p className="text-xs text-gray-600 mt-2 text-center">
+                      💡 キーワードが入力されたキャラクターのペルソナを順次生成します
+                    </p>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
         </div>
       )}
 

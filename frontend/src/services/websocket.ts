@@ -22,7 +22,7 @@ export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 're
 class WebSocketService {
   private socket: Socket | null = null;
   private currentRoomId: string | null = null;
-  private serverUrl: string = 'http://localhost:8000';
+  private serverUrl: string = import.meta.env.VITE_API_BASE_URL?.replace('/api', '') || 'http://localhost:8000';
   private connectionStatus: ConnectionStatus = 'disconnected';
   private reconnectAttempts: number = 0;
   private maxReconnectAttempts: number = 5;

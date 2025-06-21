@@ -553,11 +553,11 @@ def create_room(db: Session, room: RoomCreate, host_name: str) -> Room:
     db.add(db_room)
     db.flush()
 
-    for i in range(room.human_players):
-        name = host_name if i == 0 else f"参加者{i+1}"
-        human_player = Player(room_id=db_room.room_id, character_name=name, is_human=True)
-        db.add(human_player)
+    # ホストプレイヤーのみを作成（他の人間プレイヤーは後から参加）
+    host_player = Player(room_id=db_room.room_id, character_name=host_name, is_human=True)
+    db.add(host_player)
     
+    # AIプレイヤーを作成
     for i in range(room.ai_players):
         ai_player = Player(
             room_id=db_room.room_id, character_name=f"AIプレイヤー{i+1}", is_human=False
