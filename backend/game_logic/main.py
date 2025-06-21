@@ -1711,9 +1711,17 @@ async def handle_transition_to_vote(room_id: uuid.UUID, db: Session = Depends(ge
     return db_room
 
 @app.post("/api/rooms/{room_id}/join", response_model=JoinRoomResponse)
-async def handle_join_room(room_id: uuid.UUID, player_name: str, db: Session = Depends(get_db)):
+async def handle_join_room(
+    room_id: uuid.UUID, 
+    player_name: str = None,  # クエリパラメータ用
+    db: Session = Depends(get_db)
+):
     """プレイヤーが部屋に参加"""
     try:
+        if not player_name:
+            raise HTTPException(status_code=400, detail="player_name parameter is required")
+        
+        logger.info(f"Player join request: room_id={room_id}, player_name='{player_name}'")
         result = join_room_as_player(db, room_id, player_name)
         
         # WebSocketで新しいプレイヤーの参加を通知
@@ -2297,7 +2305,21 @@ async def debug_middleware(request: Request, call_next):
         raise
 
 # --- WebSocket Setup ---
-sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
+# Cloud Run用のCORS設定（フロントエンドのドメインを明示的に指定）
+allowed_origins = [
+    "https://werewolf-frontend-483231515533.asia-northeast1.run.app",  # Production frontend
+    "http://localhost:3000",  # Local development
+    "http://localhost:5173",  # Vite default port
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:5173"
+]
+
+sio = socketio.AsyncServer(
+    async_mode="asgi", 
+    cors_allowed_origins=allowed_origins,
+    logger=True,
+    engineio_logger=True
+)
 app_sio = socketio.ASGIApp(sio, app)
 @sio.event
 async def connect(sid, environ): 

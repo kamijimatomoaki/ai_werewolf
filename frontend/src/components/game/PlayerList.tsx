@@ -169,10 +169,10 @@ export default function PlayerList({
               <div className="space-y-4">
                 {/* 各AIプレイヤーのキーワード入力 */}
                 {players.filter(p => !p.is_human && !p.character_persona).map((player) => (
-                  <div key={player.player_id} className="space-y-2 p-3 bg-white rounded-lg border">
+                  <div key={player.player_id} className="space-y-2 p-3 bg-gray-700 rounded-lg border border-gray-600">
                     <div className="flex items-center gap-2 mb-2">
                       <Avatar name={player.character_name} size="sm" color="secondary" />
-                      <span className="font-medium">{player.character_name}</span>
+                      <span className="font-medium text-white">{player.character_name}</span>
                       {generatingPersona === player.player_id && (
                         <Chip size="sm" color="warning" variant="flat">
                           生成中...
@@ -181,7 +181,7 @@ export default function PlayerList({
                     </div>
                     
                     <textarea
-                      className="w-full p-2 border border-gray-300 rounded-lg resize-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 text-sm"
+                      className="w-full p-2 bg-gray-800 border border-gray-500 rounded-lg resize-none focus:border-red-500 focus:ring-1 focus:ring-red-500 text-sm text-white placeholder-gray-400"
                       rows={2}
                       placeholder="例: 冷静沈着, 探偵, 30代, 鋭い観察力"
                       value={personaKeywords[player.player_id] || ''}

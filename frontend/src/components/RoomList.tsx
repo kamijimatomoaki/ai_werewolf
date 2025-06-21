@@ -73,8 +73,11 @@ export default function RoomList({ onRoomJoin, onSpectatorJoin }: RoomListProps)
       setError(null);
       
       // バリデーション
-      if (newRoom.total_players !== newRoom.human_players + newRoom.ai_players) {
-        throw new Error('総プレイヤー数は人間プレイヤー数とAIプレイヤー数の合計と一致する必要があります');
+      if (newRoom.total_players < 5 || newRoom.total_players > 12) {
+        throw new Error('プレイヤー数は5〜12人の範囲で設定してください');
+      }
+      if (newRoom.human_players < 1) {
+        throw new Error('人間プレイヤーは最低1人必要です');
       }
       
       const createdRoom = await apiService.createRoom(newRoom, hostName || 'ホスト');
@@ -317,36 +320,55 @@ export default function RoomList({ onRoomJoin, onSpectatorJoin }: RoomListProps)
                     onChange={(e) => setNewRoom(prev => ({ ...prev, room_name: e.target.value }))}
                   />
                   
-                  <div className="grid grid-cols-3 gap-4">
-                    <Input
-                      label="総プレイヤー数"
-                      type="number"
-                      min={5}
-                      max={12}
-                      value={String(newRoom.total_players)}
-                      onChange={(e) => setNewRoom(prev => ({ ...prev, total_players: Number(e.target.value) }))}
-                    />
-                    
+                  <div className="grid grid-cols-2 gap-4">
                     <Input
                       label="人間プレイヤー"
                       type="number"
                       min={1}
-                      max={newRoom.total_players}
+                      max={8}
                       value={String(newRoom.human_players)}
-                      onChange={(e) => setNewRoom(prev => ({ ...prev, human_players: Number(e.target.value) }))}
+                      onChange={(e) => {
+                        const humanPlayers = Number(e.target.value);
+                        setNewRoom(prev => ({ 
+                          ...prev, 
+                          human_players: humanPlayers,
+                          total_players: humanPlayers + prev.ai_players
+                        }));
+                      }}
                     />
                     
                     <Input
                       label="AIプレイヤー"
                       type="number"
                       min={0}
+                      max={8}
                       value={String(newRoom.ai_players)}
-                      onChange={(e) => setNewRoom(prev => ({ 
-                        ...prev, 
-                        ai_players: Number(e.target.value),
-                        total_players: newRoom.human_players + Number(e.target.value)
-                      }))}
+                      onChange={(e) => {
+                        const aiPlayers = Number(e.target.value);
+                        setNewRoom(prev => ({ 
+                          ...prev, 
+                          ai_players: aiPlayers,
+                          total_players: prev.human_players + aiPlayers
+                        }));
+                      }}
                     />
+                  </div>
+                  
+                  {/* 総プレイヤー数の表示 */}
+                  <div className="p-3 bg-gray-800 rounded-lg border border-gray-700">
+                    <div className="flex justify-between items-center">
+                      <span className="text-gray-300">総プレイヤー数:</span>
+                      <span className="text-white font-semibold text-lg">{newRoom.total_players}人</span>
+                    </div>
+                    <div className="flex justify-between items-center text-sm text-gray-400 mt-1">
+                      <span>人間: {newRoom.human_players}人</span>
+                      <span>AI: {newRoom.ai_players}人</span>
+                    </div>
+                    {(newRoom.total_players < 5 || newRoom.total_players > 12) && (
+                      <p className="text-red-400 text-xs mt-2">
+                        ※ 推奨プレイヤー数は5〜12人です
+                      </p>
+                    )}
                   </div>
                   
                   <Switch
