@@ -280,14 +280,14 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
 
   if (!room) {
     return (
-      <div className="max-w-4xl mx-auto p-6">
+      <div className="max-w-4xl mx-auto p-6 bg-gray-900 text-white min-h-screen">
         <Button onClick={onBackToLobby} className="mb-4">
           ← ロビーに戻る
         </Button>
         {loading ? (
-          <div className="text-center py-8">読み込み中...</div>
+          <div className="text-center py-8 text-gray-300">読み込み中...</div>
         ) : (
-          <div className="text-center py-8 text-red-600">
+          <div className="text-center py-8 text-red-400">
             部屋が見つかりません
           </div>
         )}
@@ -314,7 +314,7 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
                                   currentPlayerId;
 
   return (
-    <div className="max-w-6xl mx-auto p-6">
+    <div className="max-w-6xl mx-auto p-6 bg-gray-900 text-white min-h-screen">
       {/* ヘッダー */}
       <div className="flex justify-between items-center mb-6">
         <Button onClick={onBackToLobby} variant="bordered">
@@ -344,14 +344,14 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
       </div>
 
       {error && (
-        <Card className="mb-4 p-4 bg-red-50 border-red-200 text-red-800">
+        <Card className="mb-4 p-4 bg-red-900 border-red-700 text-red-200">
           <p className="font-semibold">エラー: {error}</p>
         </Card>
       )}
 
       {/* 接続状態警告 */}
       {!isConnected && (
-        <Card className="mb-4 p-4 bg-orange-50 border-orange-200">
+        <Card className="mb-4 p-4 bg-orange-900 border-orange-700">
           <ConnectionStatus showReconnectButton={true} />
         </Card>
       )}
@@ -415,9 +415,9 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
 
           {/* 夜フェーズUI（管理者用） */}
           {room.status === 'night' && !shouldShowSeerPanel && !shouldShowBodyguardPanel && currentPlayer?.is_human && (
-            <Card className="mb-4 p-4 bg-blue-50 border-blue-200">
-              <h3 className="font-semibold mb-3 text-blue-800">夜フェーズ</h3>
-              <p className="text-blue-700 mb-4">人狼が活動する時間です...</p>
+            <Card className="mb-4 p-4 bg-blue-900 border-blue-700">
+              <h3 className="font-semibold mb-3 text-blue-200">夜フェーズ</h3>
+              <p className="text-blue-300 mb-4">人狼が活動する時間です...</p>
               
               <Button
                 color="secondary"
@@ -432,9 +432,9 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
           
           {/* 夜フェーズ（占い師以外の役職向けメッセージ） */}
           {room.status === 'night' && !shouldShowSeerPanel && currentPlayer?.is_alive && (
-            <Card className="mb-4 p-4 bg-gray-50 border-gray-200">
-              <h4 className="font-medium text-gray-700 mb-2">夜の時間</h4>
-              <p className="text-sm text-gray-600">
+            <Card className="mb-4 p-4 bg-gray-800 border-gray-700">
+              <h4 className="font-medium text-gray-200 mb-2">夜の時間</h4>
+              <p className="text-sm text-gray-300">
                 {currentPlayer?.role === 'werewolf' 
                   ? '人狼たちが相談する時間です...' 
                   : '静かに朝を待ちましょう...'}

@@ -1,3 +1,21 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* ダークモードのベーススタイル */
+body {
+  @apply bg-gray-900 text-white;
+}
+
+/* 人狼ゲーム用のカスタムスタイル */
+.werewolf-card {
+  @apply bg-gray-800/90 border-gray-700 backdrop-blur-sm;
+}
+
+.werewolf-button-primary {
+  @apply bg-red-700 hover:bg-red-600 focus:ring-red-500;
+}
+
+.werewolf-button-secondary {
+  @apply bg-gray-700 hover:bg-gray-600 border-gray-600;
+}

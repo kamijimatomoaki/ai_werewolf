@@ -5,6 +5,7 @@ import { Input } from "@heroui/input";
 import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, useDisclosure } from "@heroui/modal";
 import { Chip } from "@heroui/chip";
 import { Switch } from "@heroui/switch";
+import keyVisual from '@/assets/key_visual.png';
 
 import { apiService } from '@/services/api';
 import { usePlayer } from '@/contexts/PlayerContext';
@@ -183,43 +184,76 @@ export default function RoomList({ onRoomJoin, onSpectatorJoin }: RoomListProps)
 
   return (
     <div className="max-w-6xl mx-auto p-6">
+      {/* キービジュアルヘッダー */}
+      <div className="text-center mb-8">
+        <img 
+          src={keyVisual} 
+          alt="人狼ゲーム" 
+          className="mx-auto mb-4 max-w-md w-full h-auto rounded-lg shadow-2xl border border-gray-700"
+        />
+        <h1 className="text-4xl font-bold text-white mb-2 drop-shadow-lg">
+          AI人狼オンライン
+        </h1>
+        <p className="text-gray-300 text-lg">AIと一緒に楽しむ心理戦ゲーム</p>
+      </div>
+      
+      {/* コントロール部分 */}
       <div className="flex justify-between items-center mb-6">
-        <h1 className="text-3xl font-bold">人狼ゲーム - 部屋一覧</h1>
+        <h2 className="text-2xl font-bold text-white">部屋一覧</h2>
         <div className="flex gap-3">
-          <Button color="secondary" variant="bordered" onClick={fetchRooms}>
+          <Button 
+            color="secondary" 
+            variant="bordered" 
+            onClick={fetchRooms}
+            className="border-gray-600 text-gray-300 hover:bg-gray-700"
+          >
             更新
           </Button>
-          <Button color="primary" onPress={onOpen}>
+          <Button 
+            color="primary" 
+            onPress={onOpen}
+            className="bg-red-700 hover:bg-red-600 text-white shadow-lg"
+          >
             部屋を作成
           </Button>
         </div>
       </div>
 
       {error && (
-        <Card className="mb-4 p-4 bg-red-50 border-red-200 text-red-800">
+        <Card className="mb-4 p-4 bg-red-900/80 border-red-600 text-red-200">
           <p className="font-semibold">エラー: {error}</p>
         </Card>
       )}
 
       {loading ? (
         <div className="text-center py-8">
-          <p className="text-lg">読み込み中...</p>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-red-500 mx-auto mb-4"></div>
+          <p className="text-lg text-gray-300">読み込み中...</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {rooms.length === 0 ? (
-            <div className="col-span-full text-center py-8">
-              <p className="text-lg text-gray-500">現在利用可能な部屋がありません</p>
-              <Button color="primary" className="mt-4" onPress={onOpen}>
+            <div className="col-span-full text-center py-12">
+              <div className="mb-6">
+                <div className="text-6xl mb-4">🌙</div>
+                <p className="text-xl text-gray-300 mb-2">静寂の夜が続いています...</p>
+                <p className="text-gray-400">現在利用可能な部屋がありません</p>
+              </div>
+              <Button 
+                color="primary" 
+                size="lg"
+                className="bg-red-700 hover:bg-red-600 text-white shadow-lg px-8" 
+                onPress={onOpen}
+              >
                 最初の部屋を作成
               </Button>
             </div>
           ) : (
             rooms.map((room) => (
-              <Card key={room.room_id} className="p-4 hover:shadow-lg transition-shadow">
+              <Card key={room.room_id} className="p-4 bg-gray-800/90 border-gray-700 hover:bg-gray-800 hover:shadow-xl transition-all duration-300">
                 <div className="space-y-3">
                   <div className="flex justify-between items-start">
-                    <h3 className="text-xl font-semibold">
+                    <h3 className="text-xl font-semibold text-white">
                       {room.room_name || `部屋 ${room.room_id.slice(0, 8)}`}
                     </h3>
                     <Chip color={getStatusColor(room.status)} variant="flat" size="sm">
@@ -227,7 +261,7 @@ export default function RoomList({ onRoomJoin, onSpectatorJoin }: RoomListProps)
                     </Chip>
                   </div>
                   
-                  <div className="space-y-1 text-sm text-gray-600">
+                  <div className="space-y-1 text-sm text-gray-400">
                     <p>総プレイヤー数: {room.total_players}人</p>
                     <p>人間プレイヤー: {room.human_players}人</p>
                     <p>AIプレイヤー: {room.ai_players}人</p>
@@ -236,7 +270,7 @@ export default function RoomList({ onRoomJoin, onSpectatorJoin }: RoomListProps)
                   <div className="flex gap-2">
                     <Button 
                       color="primary" 
-                      className="flex-1"
+                      className="flex-1 bg-red-700 hover:bg-red-600"
                       onClick={() => handleStartJoinRoom(room.room_id)}
                       isDisabled={room.status !== 'waiting'}
                     >
@@ -245,7 +279,7 @@ export default function RoomList({ onRoomJoin, onSpectatorJoin }: RoomListProps)
                     <Button 
                       color="secondary" 
                       variant="bordered"
-                      className="flex-1"
+                      className="flex-1 border-gray-600 text-gray-300 hover:bg-gray-700"
                       onClick={() => handleStartSpectatorJoin(room)}
                       isDisabled={room.status === 'waiting' || room.status === 'finished'}
                     >
@@ -260,7 +294,7 @@ export default function RoomList({ onRoomJoin, onSpectatorJoin }: RoomListProps)
       )}
 
       {/* 部屋作成モーダル */}
-      <Modal isOpen={isOpen} onOpenChange={onOpenChange} size="2xl">
+      <Modal isOpen={isOpen} onOpenChange={onOpenChange} size="2xl" className="dark">
         <ModalContent>
           {(onClose) => (
             <>
@@ -341,7 +375,7 @@ export default function RoomList({ onRoomJoin, onSpectatorJoin }: RoomListProps)
       </Modal>
 
       {/* 部屋参加モーダル */}
-      <Modal isOpen={isJoinOpen} onOpenChange={onJoinOpenChange}>
+      <Modal isOpen={isJoinOpen} onOpenChange={onJoinOpenChange} className="dark">
         <ModalContent>
           {(onClose) => (
             <>

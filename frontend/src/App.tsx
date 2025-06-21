@@ -3,6 +3,7 @@ import RoomList from '@/components/RoomList';
 import GameRoom from '@/components/GameRoom';
 import SpectatorLayout from '@/components/layout/SpectatorLayout';
 import ErrorBoundary from '@/components/ui/ErrorBoundary';
+import backgroundImage from '@/assets/background.jpg';
 
 type AppView = 'lobby' | 'room' | 'spectator';
 
@@ -34,28 +35,39 @@ function App() {
 
   return (
     <ErrorBoundary>
-      <div className="min-h-screen bg-gradient-to-br from-blue-500 to-purple-600">
-        {currentView === 'lobby' ? (
-          <RoomList 
-            onRoomJoin={handleRoomJoin} 
-            onSpectatorJoin={handleSpectatorJoin}
-          />
-        ) : currentView === 'room' ? (
-          currentRoomId && (
-            <GameRoom 
-              roomId={currentRoomId}
-              onBackToLobby={handleBackToLobby}
+      <div className="min-h-screen bg-gray-900 text-white relative overflow-hidden">
+        {/* 背景画像 */}
+        <div 
+          className="absolute inset-0 bg-cover bg-center bg-no-repeat opacity-20"
+          style={{ backgroundImage: `url(${backgroundImage})` }}
+        />
+        {/* ダークオーバーレイ */}
+        <div className="absolute inset-0 bg-black bg-opacity-60" />
+        
+        {/* メインコンテンツ */}
+        <div className="relative z-10">
+          {currentView === 'lobby' ? (
+            <RoomList 
+              onRoomJoin={handleRoomJoin} 
+              onSpectatorJoin={handleSpectatorJoin}
             />
-          )
-        ) : currentView === 'spectator' ? (
-          currentRoomId && currentSpectatorId && (
-            <SpectatorLayout
-              roomId={currentRoomId}
-              spectatorId={currentSpectatorId}
-              onBackToLobby={handleBackToLobby}
-            />
-          )
-        ) : null}
+          ) : currentView === 'room' ? (
+            currentRoomId && (
+              <GameRoom 
+                roomId={currentRoomId}
+                onBackToLobby={handleBackToLobby}
+              />
+            )
+          ) : currentView === 'spectator' ? (
+            currentRoomId && currentSpectatorId && (
+              <SpectatorLayout
+                roomId={currentRoomId}
+                spectatorId={currentSpectatorId}
+                onBackToLobby={handleBackToLobby}
+              />
+            )
+          ) : null}
+        </div>
       </div>
     </ErrorBoundary>
   );
