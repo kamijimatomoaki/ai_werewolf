@@ -1184,6 +1184,195 @@ def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid.UUID)
         # エラー時のフォールバック
         return "..."
 
+def generate_ai_vote_decision(db: Session, room_id: uuid.UUID, ai_player, possible_targets) -> Player:
+    """
+    LLMベースのAI投票先決定
+    """
+    try:
+        if GOOGLE_PROJECT_ID and GOOGLE_LOCATION:
+            # ゲーム状況を収集
+            room = get_room(db, room_id)
+            recent_logs = db.query(GameLog).filter(
+                GameLog.room_id == room_id,
+                GameLog.day_number == room.day_number,
+                GameLog.event_type == "speech"
+            ).order_by(GameLog.created_at.desc()).limit(10).all()
+            
+            # 投票用プロンプトを構築
+            prompt = build_ai_vote_prompt(ai_player, room, possible_targets, recent_logs)
+            
+            model = GenerativeModel("gemini-1.5-flash")
+            response = model.generate_content(prompt)
+            
+            # レスポンスからプレイヤー名を抽出
+            decision_text = response.text.strip()
+            
+            # プレイヤー名でマッチング
+            for target in possible_targets:
+                if target.character_name in decision_text:
+                    logger.info(f"AI {ai_player.character_name} decided to vote for {target.character_name} via LLM")
+                    return target
+            
+            # マッチしなかった場合は最初のターゲット
+            logger.warning(f"AI {ai_player.character_name} LLM vote decision unclear: {decision_text}, using first target")
+            return possible_targets[0]
+            
+    except Exception as e:
+        logger.error(f"Error in AI vote decision: {e}")
+    
+    # フォールバック: ランダム選択
+    return random.choice(possible_targets)
+
+def build_ai_vote_prompt(ai_player, room, possible_targets, recent_logs) -> str:
+    """
+    AI投票用プロンプトを構築
+    """
+    # 役職毎の戦略
+    role_strategy = {
+        'villager': '人狼を探して投票することが目標です。最も疑わしい行動をしたプレイヤーを選んでください。',
+        'werewolf': '人狼として村人を除去することが目標です。人狼以外のプレイヤーを選んでください。',
+        'seer': '占い師として人狼を探して投票することが目標です。占い結果を考慮して選んでください。',
+        'bodyguard': 'ボディガードとして人狼を探して投票することが目標です。'
+    }
+    
+    # 最近の発言履歴
+    conversation_summary = ""
+    if recent_logs:
+        conversation_summary = "最近の発言:\n"
+        for log in reversed(recent_logs[-5:]):
+            if log.event_type == "speech" and log.actor:
+                # Round情報を削除して表示
+                content = log.content.replace(f"Round {room.current_round or 1}: ", "")
+                conversation_summary += f"- {log.actor.character_name}: {content}\n"
+    
+    # 投票対象一覧
+    target_list = ", ".join([t.character_name for t in possible_targets])
+    
+    prompt = f"""
+あなたは人狼ゲームの参加者「{ai_player.character_name}」で、役職は{ai_player.role}です。
+
+【役職と戦略】
+{role_strategy.get(ai_player.role, '村人として行動してください。')}
+
+【現在の状況】
+- ゲーム日数: {room.day_number}日目
+- 生存プレイヤー数: {len([p for p in room.players if p.is_alive])}
+- 投票フェーズです
+
+{conversation_summary}
+
+【投票対象】
+{target_list}
+
+上記の情報を踏まえて、あなたの役職の目標に最も適した投票先を一人選んでください。
+
+プレイヤー名のみを答えてください：
+"""
+    
+    return prompt
+
+def generate_ai_attack_decision(db: Session, room_id: uuid.UUID, werewolf, possible_victims) -> Player:
+    """
+    LLMベースの人狼襲撃先決定
+    """
+    try:
+        if GOOGLE_PROJECT_ID and GOOGLE_LOCATION:
+            room = get_room(db, room_id)
+            prompt = f"""
+あなたは人狼「{werewolf.character_name}」です。今夜襲撃するターゲットを選んでください。
+
+【戦略】
+- 最も脅威となるプレイヤーを選ぶ
+- 占い師やボディガードなどの特殊役職を優先する
+- 疑いをかけてくるプレイヤーを除去する
+
+【襲撃対象】
+{', '.join([v.character_name for v in possible_victims])}
+
+プレイヤー名のみを答えてください：
+"""
+            
+            model = GenerativeModel("gemini-1.5-flash")
+            response = model.generate_content(prompt)
+            decision_text = response.text.strip()
+            
+            for victim in possible_victims:
+                if victim.character_name in decision_text:
+                    logger.info(f"Werewolf {werewolf.character_name} decided to attack {victim.character_name} via LLM")
+                    return victim
+    except Exception as e:
+        logger.error(f"Error in AI attack decision: {e}")
+    
+    return random.choice(possible_victims)
+
+def generate_ai_investigate_decision(db: Session, room_id: uuid.UUID, seer, alive_players) -> Player:
+    """
+    LLMベースの占い師占い先決定
+    """
+    try:
+        if GOOGLE_PROJECT_ID and GOOGLE_LOCATION:
+            room = get_room(db, room_id)
+            prompt = f"""
+あなたは占い師「{seer.character_name}」です。今夜占うターゲットを選んでください。
+
+【戦略】
+- 最も疑わしいプレイヤーを占う
+- 人狼を見つけて明日の議論で告発する
+- 白であることが確定したプレイヤーを信頼する
+
+【占い対象】
+{', '.join([p.character_name for p in alive_players])}
+
+プレイヤー名のみを答えてください：
+"""
+            
+            model = GenerativeModel("gemini-1.5-flash")
+            response = model.generate_content(prompt)
+            decision_text = response.text.strip()
+            
+            for player in alive_players:
+                if player.character_name in decision_text:
+                    logger.info(f"Seer {seer.character_name} decided to investigate {player.character_name} via LLM")
+                    return player
+    except Exception as e:
+        logger.error(f"Error in AI investigate decision: {e}")
+    
+    return random.choice(alive_players)
+
+def generate_ai_protect_decision(db: Session, room_id: uuid.UUID, bodyguard, alive_players) -> Player:
+    """
+    LLMベースのボディガード守り先決定
+    """
+    try:
+        if GOOGLE_PROJECT_ID and GOOGLE_LOCATION:
+            room = get_room(db, room_id)
+            prompt = f"""
+あなたはボディガード「{bodyguard.character_name}」です。今夜守るターゲットを選んでください。
+
+【戦略】
+- 最も重要なプレイヤーを守る
+- 占い師などの特殊役職を優先する
+- 人狼に狙われそうなプレイヤーを予測する
+
+【守り対象】
+{', '.join([p.character_name for p in alive_players])}
+
+プレイヤー名のみを答えてください：
+"""
+            
+            model = GenerativeModel("gemini-1.5-flash")
+            response = model.generate_content(prompt)
+            decision_text = response.text.strip()
+            
+            for player in alive_players:
+                if player.character_name in decision_text:
+                    logger.info(f"Bodyguard {bodyguard.character_name} decided to protect {player.character_name} via LLM")
+                    return player
+    except Exception as e:
+        logger.error(f"Error in AI protect decision: {e}")
+    
+    return random.choice(alive_players)
+
 def generate_fallback_ai_speech(ai_player, room, db) -> str:
     """フォールバック用のAI発言生成"""
     try:
@@ -1290,7 +1479,9 @@ def build_ai_speech_prompt(ai_player: Player, room: Room, recent_logs: List[Game
         conversation_history = "最近の会話:\n"
         for log in reversed(recent_logs[-5:]):  # 最新5件
             if log.event_type == "speech" and log.actor:
-                conversation_history += f"- {log.actor.character_name}: {log.content}\n"
+                # Round情報を削除して表示
+                clean_content = log.content.replace(f"Round {getattr(room, 'current_round', 1)}: ", "")
+                conversation_history += f"- {log.actor.character_name}: {clean_content}\n"
     
     prompt = f"""
 あなたは人狼ゲームの参加者「{ai_player.character_name}」です。
@@ -2072,6 +2263,22 @@ async def handle_auto_progress(room_id: uuid.UUID, db: Session = Depends(get_db)
             
             # AIプレイヤーの場合、自動発言
             if not current_player.is_human:
+                # 現在のラウンドで既に発言済みかチェック
+                current_round = room.current_round or 1
+                already_spoken = db.query(GameLog).filter(
+                    GameLog.room_id == room_id,
+                    GameLog.phase == "day_discussion",
+                    GameLog.event_type == "speech",
+                    GameLog.actor_player_id == current_player.player_id,
+                    GameLog.content.like(f"%Round {current_round}:%")
+                ).first()
+                
+                if already_spoken:
+                    return {
+                        "auto_progressed": False,
+                        "message": f"{current_player.character_name} has already spoken in round {current_round}"
+                    }
+                
                 speech = generate_ai_speech(db, room_id, current_player.player_id)
                 updated_room = speak_logic(db, room_id, current_player.player_id, speech)
                 
@@ -2119,7 +2326,8 @@ async def handle_auto_progress(room_id: uuid.UUID, db: Session = Depends(get_db)
                 possible_targets = [p for p in room.players if p.is_alive and p.player_id != ai_player.player_id]
                 
                 if possible_targets:
-                    target = random.choice(possible_targets)
+                    # LLMベースの投票先決定
+                    target = generate_ai_vote_decision(db, room_id, ai_player, possible_targets)
                     vote_result = process_vote(db, room_id, ai_player.player_id, target.player_id)
                     
                     # WebSocketで投票を通知
@@ -2150,6 +2358,137 @@ async def handle_auto_progress(room_id: uuid.UUID, db: Session = Depends(get_db)
     except Exception as e:
         logger.error(f"Error in auto progress: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to auto progress game")
+
+@app.get("/api/rooms/{room_id}/summary")
+async def get_game_summary(room_id: uuid.UUID, db: Session = Depends(get_db)):
+    """
+    ゲーム状況のサマリーを生成
+    """
+    try:
+        room = get_room(db, room_id)
+        if not room:
+            raise HTTPException(status_code=404, detail="Room not found")
+        
+        # ゲームサマリーを生成
+        summary = generate_game_summary(db, room_id)
+        
+        return {
+            "room_id": str(room_id),
+            "day_number": room.day_number,
+            "current_phase": room.status,
+            "summary": summary
+        }
+        
+    except Exception as e:
+        logger.error(f"Error generating game summary: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to generate game summary")
+
+def generate_game_summary(db: Session, room_id: uuid.UUID) -> dict:
+    """
+    ゲーム状況の包括的なサマリーを生成
+    """
+    try:
+        room = get_room(db, room_id)
+        if not room:
+            return {}
+        
+        # 全ゲームログを取得
+        all_logs = db.query(GameLog).filter(
+            GameLog.room_id == room_id
+        ).order_by(GameLog.created_at.asc()).all()
+        
+        if GOOGLE_PROJECT_ID and GOOGLE_LOCATION:
+            # LLMでサマリーを生成
+            prompt = build_game_summary_prompt(room, all_logs)
+            
+            model = GenerativeModel("gemini-1.5-flash")
+            response = model.generate_content(prompt)
+            
+            llm_summary = response.text.strip()
+        else:
+            llm_summary = "サマリー機能は現在利用できません。"
+        
+        # 基本統計を生成
+        alive_players = [p for p in room.players if p.is_alive]
+        dead_players = [p for p in room.players if not p.is_alive]
+        
+        # 日別活動を集計
+        daily_activities = {}
+        for day in range(1, room.day_number + 1):
+            day_logs = [log for log in all_logs if log.day_number == day]
+            daily_activities[f"日{day}"] = {
+                "発言数": len([log for log in day_logs if log.event_type == "speech"]),
+                "投票数": len([log for log in day_logs if log.event_type == "vote"]),
+                "重要イベント": [log.content for log in day_logs if log.event_type in ["execution", "attack", "investigate"]]
+            }
+        
+        return {
+            "llm_summary": llm_summary,
+            "player_status": {
+                "生存者": [{
+                    "name": p.character_name,
+                    "type": "AI" if not p.is_human else "人間"
+                } for p in alive_players],
+                "死亡者": [{
+                    "name": p.character_name,
+                    "type": "AI" if not p.is_human else "人間"
+                } for p in dead_players]
+            },
+            "daily_activities": daily_activities,
+            "current_phase": {
+                "day": room.day_number,
+                "phase": room.status,
+                "round": getattr(room, 'current_round', 1) if room.status == 'day_discussion' else None
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in generate_game_summary: {e}")
+        return {"error": "サマリー生成に失敗しました"}
+
+def build_game_summary_prompt(room, all_logs) -> str:
+    """
+    ゲームサマリー用プロンプトを構築
+    """
+    # プレイヤー情報
+    alive_players = [p for p in room.players if p.is_alive]
+    dead_players = [p for p in room.players if not p.is_alive]
+    
+    # 重要なイベントを抽出
+    important_events = []
+    for log in all_logs:
+        if log.event_type in ["execution", "attack", "investigate", "game_start"]:
+            important_events.append(f"日{log.day_number}: {log.content}")
+    
+    # 発言をサマリー
+    recent_speeches = []
+    speech_logs = [log for log in all_logs if log.event_type == "speech"]
+    for log in speech_logs[-10:]:  # 最新10件
+        if log.actor:
+            content = log.content.replace(f"Round {room.current_round or 1}: ", "")
+            recent_speeches.append(f"{log.actor.character_name}: {content}")
+    
+    prompt = f"""
+人狼ゲームの現在の状況をサマリーしてください。
+
+【ゲーム情報】
+- 現在: {room.day_number}日目の{'昼の議論' if room.status == 'day_discussion' else '投票' if room.status == 'day_vote' else '夜'}フェーズ
+- 生存者: {', '.join([p.character_name for p in alive_players])}
+- 死亡者: {', '.join([p.character_name for p in dead_players]) if dead_players else 'なし'}
+
+【重要な出来事】
+{chr(10).join(important_events) if important_events else '特になし'}
+
+【最近の発言】
+{chr(10).join(recent_speeches) if recent_speeches else 'まだ発言なし'}
+
+以下の点で150文字程度でサマリーしてください：
+1. 現在の状況と勢力関係
+2. 疑いをかけられているプレイヤー
+3. 今後の展望や注目ポイント
+"""
+    
+    return prompt
 
 @app.post("/api/rooms/{room_id}/auto_vote")
 async def handle_auto_vote(room_id: uuid.UUID, db: Session = Depends(get_db)):
