@@ -90,8 +90,8 @@ export default function PlayerList({
   const hasUnsetPersonas = players.some(p => !p.is_human && !p.character_persona);
 
   return (
-    <Card className="p-4">
-      <h2 className="text-xl font-semibold mb-4">
+    <Card className="p-4 bg-gray-800/70 border-gray-600/50 backdrop-blur-sm">
+      <h2 className="text-xl font-semibold mb-4 text-white">
         プレイヤー ({players.length}/{totalPlayers})
       </h2>
       
@@ -138,9 +138,9 @@ export default function PlayerList({
                   )}
                   {player.character_persona && (
                     <div className="w-full mt-2">
-                      <Card className="p-2 bg-gradient-to-r from-purple-100 to-pink-100">
-                        <p className="text-xs font-medium text-gray-700">ペルソナ:</p>
-                        <p className="text-sm text-gray-800 mt-1">{player.character_persona.persona_description}</p>
+                      <Card className="p-3 bg-gradient-to-r from-purple-600/20 to-pink-600/20 border border-purple-400/30 backdrop-blur-sm">
+                        <p className="text-xs font-medium text-purple-200">ペルソナ:</p>
+                        <p className="text-sm text-gray-200 mt-1">{player.character_persona.persona_description}</p>
                       </Card>
                     </div>
                   )}
@@ -157,19 +157,19 @@ export default function PlayerList({
           <h3 className="font-semibold text-lg">AIペルソナ一括設定</h3>
           
           {players.filter(p => !p.is_human && !p.character_persona).length === 0 ? (
-            <div className="text-sm text-gray-600 p-4 bg-green-50 rounded-lg border border-green-200">
+            <div className="text-sm text-green-200 p-4 bg-green-600/20 rounded-lg border border-green-500/30 backdrop-blur-sm">
               ✅ すべてのAIプレイヤーにペルソナが設定されました
             </div>
           ) : (
             <>
-              <div className="text-sm text-gray-600 mb-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
+              <div className="text-sm text-blue-200 mb-4 p-3 bg-blue-600/20 rounded-lg border border-blue-500/30 backdrop-blur-sm">
                 💡 各AIプレイヤーのキャラクター特徴を入力して、一括でペルソナを生成できます
               </div>
               
               <div className="space-y-4">
                 {/* 各AIプレイヤーのキーワード入力 */}
                 {players.filter(p => !p.is_human && !p.character_persona).map((player) => (
-                  <div key={player.player_id} className="space-y-2 p-3 bg-gray-700 rounded-lg border border-gray-600">
+                  <div key={player.player_id} className="space-y-2 p-4 bg-gradient-to-r from-gray-700/60 to-gray-600/60 rounded-lg border border-gray-500/40 backdrop-blur-sm">
                     <div className="flex items-center gap-2 mb-2">
                       <Avatar name={player.character_name} size="sm" color="secondary" />
                       <span className="font-medium text-white">{player.character_name}</span>
@@ -181,7 +181,7 @@ export default function PlayerList({
                     </div>
                     
                     <textarea
-                      className="w-full p-2 bg-gray-800 border border-gray-500 rounded-lg resize-none focus:border-red-500 focus:ring-1 focus:ring-red-500 text-sm text-white placeholder-gray-400"
+                      className="w-full p-3 bg-gray-700/80 border border-gray-400/50 rounded-lg resize-none focus:border-red-400 focus:ring-2 focus:ring-red-400/30 text-sm text-white placeholder-gray-300 backdrop-blur-sm transition-all"
                       rows={2}
                       placeholder="例: 冷静沈着, 探偵, 30代, 鋭い観察力"
                       value={personaKeywords[player.player_id] || ''}

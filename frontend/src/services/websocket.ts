@@ -22,7 +22,7 @@ export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 're
 class WebSocketService {
   private socket: Socket | null = null;
   private currentRoomId: string | null = null;
-  private serverUrl: string = import.meta.env.VITE_API_BASE_URL?.replace('/api', '') || 'http://localhost:8000';
+  private serverUrl: string = this.getWebSocketUrl();
   private connectionStatus: ConnectionStatus = 'disconnected';
   private reconnectAttempts: number = 0;
   private maxReconnectAttempts: number = 5;
@@ -32,10 +32,30 @@ class WebSocketService {
   private heartbeatInterval: NodeJS.Timeout | null = null;
   private connectionListeners: ((status: ConnectionStatus) => void)[] = [];
 
-  connect(serverUrl: string = 'http://localhost:8000'): Promise<void> {
+  // WebSocket URLを適切に生成
+  private getWebSocketUrl(): string {
+    const apiBaseUrl = import.meta.env.VITE_API_BASE_URL;
+    console.log('API_BASE_URL:', apiBaseUrl);
+    console.log('VITE_API_BASE_URL env var:', import.meta.env.VITE_API_BASE_URL);
+    
+    if (apiBaseUrl) {
+      // Cloud Run環境の場合
+      const url = apiBaseUrl.replace('/api', '');
+      console.log('WebSocket URL (production):', url);
+      return url;
+    } else {
+      // ローカル開発環境の場合
+      console.log('WebSocket URL (development): http://localhost:8000');
+      return 'http://localhost:8000';
+    }
+  }
+
+  connect(serverUrl?: string): Promise<void> {
     return new Promise((resolve, reject) => {
       try {
-        this.serverUrl = serverUrl;
+        // serverUrlが指定されていない場合は自動生成されたURLを使用
+        this.serverUrl = serverUrl || this.getWebSocketUrl();
+        console.log('Connecting to WebSocket:', this.serverUrl);
         this.setConnectionStatus('connecting');
         
         // 既存の接続があれば切断
@@ -43,11 +63,13 @@ class WebSocketService {
           this.socket.disconnect();
         }
 
-        this.socket = io(serverUrl, {
+        this.socket = io(this.serverUrl, {
           transports: ['websocket', 'polling'],
           autoConnect: true,
           reconnection: false, // 自動再接続を無効化（カスタムロジックを使用）
-          timeout: 10000, // 接続タイムアウト（10秒）
+          timeout: 20000, // 接続タイムアウト（20秒に延長）
+          forceNew: true, // 強制的に新しい接続を作成
+          withCredentials: false,
         });
 
         this.socket.on('connect', () => {

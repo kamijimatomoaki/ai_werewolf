@@ -223,7 +223,7 @@ export default function RoomList({ onRoomJoin, onSpectatorJoin }: RoomListProps)
       </div>
 
       {error && (
-        <Card className="mb-4 p-4 bg-red-900/80 border-red-600 text-red-200">
+        <Card className="mb-4 p-4 bg-red-900/40 border-red-500/60 text-red-200 backdrop-blur-sm">
           <p className="font-semibold">エラー: {error}</p>
         </Card>
       )}
@@ -253,7 +253,7 @@ export default function RoomList({ onRoomJoin, onSpectatorJoin }: RoomListProps)
             </div>
           ) : (
             rooms.map((room) => (
-              <Card key={room.room_id} className="p-4 bg-gray-800/90 border-gray-700 hover:bg-gray-800 hover:shadow-xl transition-all duration-300">
+              <Card key={room.room_id} className="p-4 bg-gray-800/70 border-gray-600/50 hover:bg-gray-700/80 hover:shadow-2xl hover:border-red-500/30 transition-all duration-300 backdrop-blur-sm">
                 <div className="space-y-3">
                   <div className="flex justify-between items-start">
                     <h3 className="text-xl font-semibold text-white">
@@ -355,19 +355,25 @@ export default function RoomList({ onRoomJoin, onSpectatorJoin }: RoomListProps)
                   </div>
                   
                   {/* 総プレイヤー数の表示 */}
-                  <div className="p-3 bg-gray-800 rounded-lg border border-gray-700">
+                  <div className="p-4 bg-gradient-to-r from-gray-700/50 to-gray-600/50 rounded-lg border border-gray-500/30 backdrop-blur-sm">
                     <div className="flex justify-between items-center">
-                      <span className="text-gray-300">総プレイヤー数:</span>
-                      <span className="text-white font-semibold text-lg">{newRoom.total_players}人</span>
+                      <span className="text-gray-200">総プレイヤー数:</span>
+                      <span className="text-white font-bold text-xl bg-red-600/20 px-3 py-1 rounded-full">{newRoom.total_players}人</span>
                     </div>
-                    <div className="flex justify-between items-center text-sm text-gray-400 mt-1">
-                      <span>人間: {newRoom.human_players}人</span>
-                      <span>AI: {newRoom.ai_players}人</span>
+                    <div className="flex justify-between items-center text-sm text-gray-300 mt-2">
+                      <span className="flex items-center gap-1">
+                        <div className="w-2 h-2 bg-blue-400 rounded-full"></div>
+                        人間: {newRoom.human_players}人
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <div className="w-2 h-2 bg-purple-400 rounded-full"></div>
+                        AI: {newRoom.ai_players}人
+                      </span>
                     </div>
                     {(newRoom.total_players < 5 || newRoom.total_players > 12) && (
-                      <p className="text-red-400 text-xs mt-2">
-                        ※ 推奨プレイヤー数は5〜12人です
-                      </p>
+                      <div className="mt-3 p-2 bg-yellow-600/20 border border-yellow-500/30 rounded text-yellow-200 text-xs">
+                        ⚠️ 推奨プレイヤー数は5〜12人です
+                      </div>
                     )}
                   </div>
                   

@@ -35,14 +35,14 @@ function App() {
 
   return (
     <ErrorBoundary>
-      <div className="min-h-screen bg-gray-900 text-white relative overflow-hidden">
+      <div className="min-h-screen bg-gradient-to-br from-gray-800 via-gray-900 to-black text-white relative overflow-hidden">
         {/* 背景画像 */}
         <div 
-          className="absolute inset-0 bg-cover bg-center bg-no-repeat opacity-20"
+          className="absolute inset-0 bg-cover bg-center bg-no-repeat opacity-15"
           style={{ backgroundImage: `url(${backgroundImage})` }}
         />
-        {/* ダークオーバーレイ */}
-        <div className="absolute inset-0 bg-black bg-opacity-60" />
+        {/* ソフトなオーバーレイ */}
+        <div className="absolute inset-0 bg-gradient-to-br from-red-900/20 via-purple-900/10 to-blue-900/20" />
         
         {/* メインコンテンツ */}
         <div className="relative z-10">
