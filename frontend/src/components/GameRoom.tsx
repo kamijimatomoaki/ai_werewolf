@@ -398,7 +398,7 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
         </div>
 
         {/* ゲーム進行エリア - 独立スクロール */}
-        <div className="lg:col-span-2 h-full overflow-y-auto scrollbar-thin scrollbar-thumb-gray-600 scrollbar-track-gray-800 flex flex-col">
+        <div className="lg:col-span-2 h-full overflow-y-auto scrollbar-thin scrollbar-thumb-gray-600 scrollbar-track-gray-800 flex flex-col space-y-4">
           {/* ゲーム制御コンポーネント */}
           <GameControls
             gameStatus={room.status}

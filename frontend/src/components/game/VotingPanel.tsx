@@ -139,7 +139,7 @@ export default function VotingPanel({
           ) : (
             <>
               {/* 投票対象一覧 */}
-              <div className="space-y-2 max-h-60 overflow-y-auto">
+              <div className="space-y-2 max-h-48 overflow-y-auto scrollbar-thin">
                 {votableTargets.map((player) => (
                   <div
                     key={player.player_id}
@@ -211,13 +211,6 @@ export default function VotingPanel({
                 </div>
               </div>
 
-              {/* 投票のヒント */}
-              <div className="p-3 bg-gradient-to-r from-blue-600/20 to-purple-600/20 border border-blue-500/30 rounded-lg backdrop-blur-sm">
-                <p className="text-xs text-blue-200">
-                  💡 これまでの議論を振り返り、最も怪しいと思うプレイヤーに投票しましょう。
-                  投票は一度しかできません。
-                </p>
-              </div>
             </>
           )}
         </div>

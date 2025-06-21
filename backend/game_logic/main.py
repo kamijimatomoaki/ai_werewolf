@@ -157,6 +157,7 @@ class Room(Base):
     day_number = Column(Integer, default=1)
     turn_order = Column(JSON, nullable=True)
     current_turn_index = Column(Integer, default=0)
+    current_round = Column(Integer, default=1)
     # 【追加】公開・非公開設定
     is_private = Column(Boolean, default=False, nullable=False)
     # 【修正】created_at を再追加
@@ -591,6 +592,7 @@ def start_game_logic(db: Session, room_id: uuid.UUID) -> Room:
     db_room.day_number = 1
     db_room.turn_order = [str(pid) for pid in player_ids]
     db_room.current_turn_index = 0
+    db_room.current_round = 1
     
     create_game_log(db, room_id, "day_discussion", "game_start", content="ゲームが開始されました。")
     
@@ -610,57 +612,80 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
 
     turn_order = db_room.turn_order
     current_index = db_room.current_turn_index
+    current_round = db_room.current_round or 1
     
     if turn_order[current_index] != str(player_id):
         raise HTTPException(status_code=403, detail="It's not your turn.")
 
-    # 現在のフェーズでのプレイヤーの発言回数をチェック (最大3回)
-    current_phase_speeches = db.query(GameLog).filter(
+    # 現在のラウンドでのプレイヤーの発言回数をチェック (ラウンドあたり1回)
+    current_round_speeches = db.query(GameLog).filter(
         GameLog.room_id == room_id,
         GameLog.phase == "day_discussion",
         GameLog.event_type == "speech",
-        GameLog.actor_player_id == player_id
+        GameLog.actor_player_id == player_id,
+        GameLog.content.like(f"%Round {current_round}:%")
     ).count()
     
-    if current_phase_speeches >= 3:
-        raise HTTPException(status_code=403, detail="You have already made 3 speeches this turn.")
+    if current_round_speeches >= 1:
+        raise HTTPException(status_code=403, detail=f"You have already spoken in round {current_round}.")
 
-    create_game_log(db, room_id, "day_discussion", "speech", actor_player_id=player_id, content=statement)
+    # ラウンド情報を含む発言を記録
+    round_statement = f"Round {current_round}: {statement}"
+    create_game_log(db, room_id, "day_discussion", "speech", actor_player_id=player_id, content=round_statement)
     
-    # 発言回数を再確認（今回の発言を含む）
-    updated_speech_count = current_phase_speeches + 1
+    # 次のプレイヤーに移行
+    next_index = (current_index + 1) % len(turn_order)
     
-    # 3回発言したら次のプレイヤーに移行
-    if updated_speech_count >= 3:
-        next_index = (current_index + 1)
-        if next_index >= len(turn_order):
-            # 全員が3回ずつ発言したかチェック
-            all_players_finished = True
-            for player_uuid_str in turn_order:
-                player_speech_count = db.query(GameLog).filter(
-                    GameLog.room_id == room_id,
-                    GameLog.phase == "day_discussion",
-                    GameLog.event_type == "speech",
-                    GameLog.actor_player_id == uuid.UUID(player_uuid_str)
-                ).count()
-                if player_speech_count < 3:
-                    all_players_finished = False
-                    break
-            
-            if all_players_finished:
-                db_room.status = 'day_vote'
-                logger.info(f"All players have made 3 speeches each in room {room_id}. Moving to vote phase.")
+    # 全員が今ラウンドで発言したかチェック
+    if next_index == 0:  # 一周した
+        # 全員が今ラウンドで発言したか確認
+        round_complete = True
+        for player_uuid_str in turn_order:
+            player_round_speeches = db.query(GameLog).filter(
+                GameLog.room_id == room_id,
+                GameLog.phase == "day_discussion",
+                GameLog.event_type == "speech",
+                GameLog.actor_player_id == uuid.UUID(player_uuid_str),
+                GameLog.content.like(f"%Round {current_round}:%")
+            ).count()
+            if player_round_speeches == 0:
+                round_complete = False
+                break
+        
+        if round_complete:
+            if current_round >= 3:
+                # 3ラウンド完了、投票フェーズへ
+                db.execute(
+                    text("UPDATE rooms SET status = :status WHERE room_id = :room_id"),
+                    {"status": "day_vote", "room_id": str(room_id)}
+                )
+                logger.info(f"All 3 speech rounds completed in room {room_id}. Moving to vote phase.")
             else:
-                # まだ全員が3回発言していない場合、最初のプレイヤーに戻る
-                db_room.current_turn_index = 0
-                logger.info(f"Starting new speech round in room {room_id}.")
+                # 次のラウンドへ
+                db.execute(
+                    text("UPDATE rooms SET current_round = :round, current_turn_index = 0 WHERE room_id = :room_id"),
+                    {"round": current_round + 1, "room_id": str(room_id)}
+                )
+                logger.info(f"Round {current_round} completed in room {room_id}. Starting round {current_round + 1}.")
         else:
-            db_room.current_turn_index = next_index
-            current_player_id = turn_order[db_room.current_turn_index]
-            logger.info(f"Turn advanced in room {room_id} to player {current_player_id}.")
-
+            # まだ今ラウンドで発言していないプレイヤーがいる
+            db.execute(
+                text("UPDATE rooms SET current_turn_index = :index WHERE room_id = :room_id"),
+                {"index": next_index, "room_id": str(room_id)}
+            )
+    else:
+        db.execute(
+            text("UPDATE rooms SET current_turn_index = :index WHERE room_id = :room_id"),
+            {"index": next_index, "room_id": str(room_id)}
+        )
+    
     db.commit()
+    
+    # 更新されたデータを取得
     db.refresh(db_room)
+    current_player_id = db_room.turn_order[db_room.current_turn_index]
+    logger.info(f"Turn advanced in room {room_id} to player {current_player_id} (Round {db_room.current_round}).")
+    
     return db_room
 
 def create_game_log(db: Session, room_id: uuid.UUID, phase: str, event_type: str, actor_player_id: Optional[uuid.UUID] = None, content: Optional[str] = None):
@@ -803,22 +828,29 @@ def process_vote(db: Session, room_id: uuid.UUID, voter_id: uuid.UUID, target_id
     # 投票を記録（プレイヤー名を使用）
     create_game_log(db, room_id, "day_vote", "vote", actor_player_id=voter_id, content=f"voted for {target_player.character_name}")
     
-    # 現在の投票を集計（ログから）
+    # 現在の投票を集計（ログから）- 各プレイヤーの最新投票のみを取得
     vote_logs = db.query(GameLog).filter(
         GameLog.room_id == room_id,
         GameLog.event_type == "vote",
         GameLog.phase == "day_vote"
-    ).all()
+    ).order_by(GameLog.created_at.desc()).all()
     
     vote_counts = {}
     voters = set()
+    latest_votes = {}  # player_id -> latest vote target
     
+    # 最新の投票のみを取得（一人一票）
     for log in vote_logs:
         if log.actor_player_id:
-            # 最新の投票のみをカウント（一人一票）
-            voters.add(str(log.actor_player_id))
-            target_name = log.content.replace("voted for ", "")
-            vote_counts[target_name] = vote_counts.get(target_name, 0) + 1
+            player_id_str = str(log.actor_player_id)
+            if player_id_str not in latest_votes:
+                # この投票者の最初の（最新の）投票を記録
+                latest_votes[player_id_str] = log.content.replace("voted for ", "")
+                voters.add(player_id_str)
+    
+    # 最新投票のみをカウント
+    for target_name in latest_votes.values():
+        vote_counts[target_name] = vote_counts.get(target_name, 0) + 1
     
     # 生存中の人間プレイヤー数を確認
     living_human_players = [p for p in db_room.players if p.is_alive and p.is_human]
@@ -833,14 +865,24 @@ def process_vote(db: Session, room_id: uuid.UUID, voter_id: uuid.UUID, target_id
             if len(most_voted) == 1:
                 # 単独最多票
                 voted_out_name = most_voted[0]
-                voted_out_player = db.query(Player).filter(Player.character_name == voted_out_name).first()
+                voted_out_player = db.query(Player).filter(
+                    Player.character_name == voted_out_name,
+                    Player.room_id == room_id
+                ).first()
                 if voted_out_player:
-                    voted_out_player.is_alive = False
+                    # SQLAlchemyの属性更新ではなく、直接SQL更新を使用
+                    db.execute(
+                        text("UPDATE players SET is_alive = false WHERE player_id = :player_id"),
+                        {"player_id": str(voted_out_player.player_id)}
+                    )
                 
                 create_game_log(db, room_id, "day_vote", "execution", content=f"{voted_out_player.character_name} was voted out")
                 
                 # 夜フェーズに移行
-                db_room.status = 'night'
+                db.execute(
+                    text("UPDATE rooms SET status = :status WHERE room_id = :room_id"),
+                    {"status": "night", "room_id": str(room_id)}
+                )
                 db.commit()
                 
                 return VoteResult(
@@ -851,7 +893,10 @@ def process_vote(db: Session, room_id: uuid.UUID, voter_id: uuid.UUID, target_id
                 )
             else:
                 # 同票 - 夜フェーズに移行
-                db_room.status = 'night'
+                db.execute(
+                    text("UPDATE rooms SET status = :status WHERE room_id = :room_id"),
+                    {"status": "night", "room_id": str(room_id)}
+                )
                 create_game_log(db, room_id, "phase_transition", "同票のため誰も追放されませんでした。夜フェーズに移行します。")
                 return VoteResult(
                     vote_counts=vote_counts,
@@ -861,7 +906,10 @@ def process_vote(db: Session, room_id: uuid.UUID, voter_id: uuid.UUID, target_id
                 )
         else:
             # 無投票 - 夜フェーズに移行
-            db_room.status = 'night'
+            db.execute(
+                text("UPDATE rooms SET status = :status WHERE room_id = :room_id"),
+                {"status": "night", "room_id": str(room_id)}
+            )
             create_game_log(db, room_id, "phase_transition", "投票がありませんでした。夜フェーズに移行します。")
             return VoteResult(
                 vote_counts={},
@@ -945,6 +993,7 @@ def process_night_actions(db: Session, room_id: uuid.UUID) -> Dict[str, Any]:
         db_room.day_number += 1
         db_room.status = 'day_discussion'
         db_room.current_turn_index = 0
+        db_room.current_round = 1
         
         # 生存者でターン順序を再構築
         living_players = [p for p in db_room.players if p.is_alive]
@@ -1082,15 +1131,21 @@ def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid.UUID)
                 'day_number': room.day_number,
                 'phase': room.status,
                 'alive_count': len([p for p in room.players if p.is_alive]),
-                'total_players': len(room.players)
+                'total_players': len(room.players),
+                'all_players': [{
+                    'name': p.character_name,
+                    'is_alive': p.is_alive,
+                    'is_human': p.is_human,
+                    'role': p.role if p.player_id == ai_player.player_id else 'unknown'  # 自分の役職のみ公開
+                } for p in room.players]
             }
             
-            # 最近のメッセージを取得
+            # 全てのチャットログを取得（現在の日）
             recent_logs = db.query(GameLog).filter(
                 GameLog.room_id == room_id,
                 GameLog.day_number == room.day_number,
                 GameLog.event_type == "speech"
-            ).order_by(GameLog.created_at.desc()).limit(5).all()
+            ).order_by(GameLog.created_at.asc()).all()  # 時系列順で全取得
             
             recent_messages = []
             for log in recent_logs:
