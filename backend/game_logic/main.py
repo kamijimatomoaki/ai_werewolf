@@ -1725,9 +1725,12 @@ async def handle_join_room(room_id: uuid.UUID, player_name: str, db: Session = D
         
         return result
         
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
     except Exception as e:
         logger.error(f"Error in join room: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to join room")
+        raise HTTPException(status_code=500, detail=f"Failed to join room: {str(e)}")
 
 @app.get("/api/auth/verify")
 def handle_verify_session(session_token: str, db: Session = Depends(get_db)):
