@@ -38,11 +38,11 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
-# Gunicornでアプリケーションを起動
-CMD exec gunicorn game_logic.main:app \
+# Gunicornでアプリケーション（Socket.IO付き）を起動
+CMD exec gunicorn game_logic.main:app_sio \
     --bind 0.0.0.0:${PORT} \
     --worker-class uvicorn.workers.UvicornWorker \
-    --workers 2 \
+    --workers 1 \
     --threads 4 \
     --timeout 300 \
     --keep-alive 5 \
