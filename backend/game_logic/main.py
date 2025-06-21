@@ -1087,7 +1087,26 @@ def generate_fallback_ai_speech(ai_player, room, db) -> str:
             prompt = build_ai_speech_prompt(ai_player, room, recent_logs)
             
             model = GenerativeModel("gemini-1.5-flash")
-            response = model.generate_content(prompt)
+            
+            # タイムアウト付きでVertex AI APIを呼び出し
+            import asyncio
+            from functools import partial
+            
+            async def generate_with_timeout():
+                loop = asyncio.get_event_loop()
+                # 30秒のタイムアウトでVertex AI APIを呼び出し
+                return await asyncio.wait_for(
+                    loop.run_in_executor(None, partial(model.generate_content, prompt)),
+                    timeout=30.0
+                )
+            
+            try:
+                # 非同期でタイムアウト付き実行
+                import asyncio
+                response = asyncio.get_event_loop().run_until_complete(generate_with_timeout())
+            except asyncio.TimeoutError:
+                logger.warning(f"Vertex AI API timeout for {ai_player.character_name}")
+                raise Exception("AI generation timeout")
             
             speech = response.text.strip()
             if len(speech) > 200:

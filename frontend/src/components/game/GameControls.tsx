@@ -57,14 +57,16 @@ export default function GameControls({
     return (
       <div className="space-y-4">
         {/* 現在の発言者表示 */}
-        <Card className="p-4 bg-yellow-50 border-yellow-200">
+        <Card className="p-4 bg-gradient-to-r from-yellow-600/20 to-orange-600/20 border border-yellow-500/30 backdrop-blur-sm">
           <div className="flex items-center gap-3">
-            <Avatar name={currentPlayer.character_name} size="sm" />
+            <Avatar name={currentPlayer.character_name} size="sm" color="warning" />
             <div>
-              <p className="font-semibold">現在の発言者</p>
-              <p className="text-lg">{currentPlayer.character_name}</p>
+              <p className="font-semibold text-yellow-200">現在の発言者</p>
+              <p className="text-lg text-white">{currentPlayer.character_name}</p>
               {!isMyTurn && (
-                <p className="text-sm text-gray-600">発言を待っています...</p>
+                <p className="text-sm text-yellow-300">
+                  {currentPlayer.character_name} の発言を待っています...
+                </p>
               )}
             </div>
           </div>
@@ -72,8 +74,8 @@ export default function GameControls({
 
         {/* 発言入力（自分のターンの時） */}
         {isMyTurn && (
-          <Card className="p-4">
-            <h3 className="font-semibold mb-3">あなたの発言</h3>
+          <Card className="p-4 bg-gray-800/70 border-gray-600/50 backdrop-blur-sm">
+            <h3 className="font-semibold mb-3 text-white">あなたの発言</h3>
             <Textarea
               placeholder="議論に参加しましょう..."
               value={statement}
@@ -85,11 +87,11 @@ export default function GameControls({
             />
             
             <div className="flex justify-between items-center mb-3">
-              <span className="text-sm text-gray-500">
+              <span className="text-sm text-gray-300">
                 {statement.length}/500文字
               </span>
               {statement.length > 450 && (
-                <span className="text-sm text-orange-600">
+                <span className="text-sm text-orange-400">
                   文字数制限に注意
                 </span>
               )}

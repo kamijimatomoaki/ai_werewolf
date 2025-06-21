@@ -198,6 +198,18 @@ class ApiService {
     if (!response.ok) throw new Error('Failed to initialize database');
     return response.json();
   }
+
+  // AI自動進行
+  async autoProgress(roomId: string): Promise<{ message: string }> {
+    const response = await fetch(`${API_BASE_URL}/rooms/${roomId}/auto_progress`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+    if (!response.ok) throw new Error('Failed to auto progress');
+    return response.json();
+  }
 }
 
 export const apiService = new ApiService();

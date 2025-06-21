@@ -55,12 +55,39 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
       
       setRoom(roomData);
       setLogs(logsData);
+      
+      // AI自動進行のチェック
+      checkForAIAutoProgress(roomData);
     } catch (err: any) {
       setError(err.message || 'データの取得に失敗しました');
     } finally {
       setLoading(false);
     }
   };
+
+  // AI自動進行のチェック
+  const checkForAIAutoProgress = useCallback(async (roomData: any) => {
+    // 昼の議論フェーズかつ、現在のプレイヤーがAIの場合、自動進行を呼び出す
+    if (roomData.status === 'day_discussion' && 
+        roomData.turn_order && 
+        roomData.current_turn_index !== undefined) {
+      
+      const currentPlayerId = roomData.turn_order[roomData.current_turn_index];
+      const currentPlayer = roomData.players.find((p: any) => p.player_id === currentPlayerId);
+      
+      if (currentPlayer && !currentPlayer.is_human) {
+        // AIプレイヤーの番の場合、3秒待ってから自動進行を呼び出す
+        console.log(`AI player turn detected: ${currentPlayer.character_name}`);
+        setTimeout(async () => {
+          try {
+            await apiService.autoProgress(roomId);
+          } catch (error) {
+            console.error('AI auto progress failed:', error);
+          }
+        }, 3000); // 3秒の遅延を追加してUI更新を待つ
+      }
+    }
+  }, [roomId]);
 
   // ゲーム開始
   const handleStartGame = async () => {

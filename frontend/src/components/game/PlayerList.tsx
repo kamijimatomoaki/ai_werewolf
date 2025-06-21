@@ -140,7 +140,16 @@ export default function PlayerList({
                     <div className="w-full mt-2">
                       <Card className="p-3 bg-gradient-to-r from-purple-600/20 to-pink-600/20 border border-purple-400/30 backdrop-blur-sm">
                         <p className="text-xs font-medium text-purple-200">ペルソナ:</p>
-                        <p className="text-sm text-gray-200 mt-1">{player.character_persona.persona_description}</p>
+                        <p className="text-sm text-gray-200 mt-1">
+                          {player.character_persona.age}歳の{player.character_persona.gender}。
+                          {player.character_persona.personality}。
+                          {player.character_persona.speech_style}で話す。
+                          {player.character_persona.background && (
+                            <span className="block mt-1 text-xs text-gray-300">
+                              背景: {player.character_persona.background}
+                            </span>
+                          )}
+                        </p>
                       </Card>
                     </div>
                   )}
