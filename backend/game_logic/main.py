@@ -1483,12 +1483,7 @@ def join_room_as_player(db: Session, room_id: uuid.UUID, player_name: str) -> Jo
     if not db_room:
         raise HTTPException(status_code=404, detail="Room not found")
     
-    # 部屋に空きがあるかチェック
-    current_human_players = len([p for p in db_room.players if p.is_human])
-    if current_human_players >= db_room.human_players:
-        raise HTTPException(status_code=400, detail="Room is full")
-    
-    # 既に同じ名前のプレイヤーがいるかチェック
+    # 既に同じ名前のプレイヤーがいるかチェック（満員チェックより先に実行）
     existing_player = next((p for p in db_room.players if p.character_name == player_name), None)
     if existing_player:
         # 既存プレイヤーとして再接続
@@ -1499,6 +1494,11 @@ def join_room_as_player(db: Session, room_id: uuid.UUID, player_name: str) -> Jo
             room_id=str(room_id),
             session_token=session_token
         )
+    
+    # 新規プレイヤーの場合のみ部屋に空きがあるかチェック
+    current_human_players = len([p for p in db_room.players if p.is_human])
+    if current_human_players >= db_room.human_players:
+        raise HTTPException(status_code=400, detail="Room is full")
     
     # 新しいプレイヤーを作成
     new_player = Player(
