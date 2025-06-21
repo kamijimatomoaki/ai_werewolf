@@ -218,6 +218,13 @@ class SpectatorMessage(Base):
     room = relationship("Room")
     spectator = relationship("Spectator")
 
+# 起動時にテーブルを自動作成
+try:
+    Base.metadata.create_all(bind=engine)
+    logger.info("Database tables created/verified at startup")
+except Exception as e:
+    logger.warning(f"Failed to create database tables at startup: {e}")
+
 # --- Pydantic Schemas (`schemas.py` に相当) ---
 class PersonaInput(BaseModel):
     keywords: str = Field(description="キャラクター特徴のキーワード", examples=["冷静沈着, 探偵, 30代"])
