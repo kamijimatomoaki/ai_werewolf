@@ -111,7 +111,7 @@ export default function PlayerList({
                 {player.character_name.charAt(0)}
               </div>
               <div className="flex-1 min-w-0">
-                <p className={`font-medium truncate ${!player.is_alive ? 'opacity-60' : ''}`}>
+                <p className={`font-medium truncate text-white ${!player.is_alive ? 'opacity-60' : ''}`}>
                   {player.character_name}
                   {player.player_id === currentPlayerId && " (あなた)"}
                 </p>
@@ -215,7 +215,7 @@ export default function PlayerList({
                   </button>
                   
                   {players.filter(p => !p.is_human && !p.character_persona).some(p => personaKeywords[p.player_id]?.trim()) && (
-                    <p className="text-xs text-gray-600 mt-2 text-center">
+                    <p className="text-xs text-gray-300 mt-2 text-center">
                       💡 キーワードが入力されたキャラクターのペルソナを順次生成します
                     </p>
                   )}
@@ -230,8 +230,8 @@ export default function PlayerList({
       {gameStatus === 'waiting' && onStartGame && (
         <div className="mt-6">
           {!canStartGame && (
-            <div className="mb-3 p-3 bg-yellow-50 rounded-lg border border-yellow-200">
-              <p className="text-sm text-yellow-700">
+            <div className="mb-3 p-3 bg-yellow-900/20 rounded-lg border border-yellow-500/30">
+              <p className="text-sm text-yellow-200">
                 {players.length < totalPlayers 
                   ? `ゲーム開始には${totalPlayers - players.length}人の参加が必要です`
                   : hasUnsetPersonas
@@ -254,8 +254,8 @@ export default function PlayerList({
 
       {/* ゲーム状態情報 */}
       {gameStatus !== 'waiting' && (
-        <div className="mt-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
-          <p className="text-sm text-blue-700">
+        <div className="mt-4 p-3 bg-blue-900/20 rounded-lg border border-blue-500/30">
+          <p className="text-sm text-blue-200">
             ゲーム進行中 - 生存者: {players.filter(p => p.is_alive).length}人
           </p>
         </div>

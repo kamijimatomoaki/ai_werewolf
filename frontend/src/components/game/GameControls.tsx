@@ -7,7 +7,6 @@ interface GameControlsProps {
   isMyTurn: boolean;
   currentPlayer?: PlayerInfo;
   onSpeak: (statement: string) => Promise<void>;
-  onTransitionToVote?: () => Promise<void>;
   onStartGame?: () => Promise<void>;
   isLoading?: boolean;
 }
@@ -17,7 +16,6 @@ export default function GameControls({
   isMyTurn,
   currentPlayer,
   onSpeak,
-  onTransitionToVote,
   onStartGame,
   isLoading = false
 }: GameControlsProps) {
@@ -38,15 +36,6 @@ export default function GameControls({
     }
   };
 
-  const handleTransitionToVote = async () => {
-    if (!onTransitionToVote) return;
-    
-    try {
-      await onTransitionToVote();
-    } catch (error) {
-      // エラーハンドリングは親コンポーネントで行う
-    }
-  };
 
   // 現在の発言者表示
   if (gameStatus === 'day_discussion' && currentPlayer) {
@@ -104,22 +93,14 @@ export default function GameControls({
                 {isSpeaking ? '発言中...' : '発言する'}
               </button>
               
-              {onTransitionToVote && (
-                <button
-                  onClick={handleTransitionToVote}
-                  disabled={isLoading || isSpeaking}
-                  className="px-4 py-2 border border-yellow-500 text-yellow-400 hover:bg-yellow-500 hover:text-white disabled:border-gray-600 disabled:text-gray-500 disabled:cursor-not-allowed rounded transition-colors"
-                >
-                  投票フェーズへ
-                </button>
-              )}
             </div>
 
             {/* 発言のヒント */}
-            <div className="mt-3 p-3 bg-gray-50 rounded-lg">
-              <p className="text-xs text-gray-600">
+            <div className="mt-3 p-3 bg-gray-700/80 rounded-lg border border-gray-600/50">
+              <p className="text-xs text-gray-300">
                 💡 他のプレイヤーの発言をよく聞いて、疑問点があれば質問してみましょう。
                 相手の反応から何かが見えてくるかもしれません。
+                3ラウンド終了後、自動的に投票フェーズに移行します。
               </p>
             </div>
           </div>
@@ -127,16 +108,16 @@ export default function GameControls({
 
         {/* 待機中のメッセージ */}
         {!isMyTurn && (
-          <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg">
+          <div className="p-4 bg-gray-800/70 border border-gray-600/50 rounded-lg backdrop-blur-sm">
             <div className="text-center">
-              <p className="text-gray-600 mb-2">
+              <p className="text-gray-200 mb-2">
                 {currentPlayer.character_name} の発言を待っています
               </p>
               <div className="flex justify-center">
                 <div className="animate-pulse flex space-x-1">
-                  <div className="w-2 h-2 bg-gray-400 rounded-full"></div>
-                  <div className="w-2 h-2 bg-gray-400 rounded-full"></div>
-                  <div className="w-2 h-2 bg-gray-400 rounded-full"></div>
+                  <div className="w-2 h-2 bg-gray-500 rounded-full"></div>
+                  <div className="w-2 h-2 bg-gray-500 rounded-full"></div>
+                  <div className="w-2 h-2 bg-gray-500 rounded-full"></div>
                 </div>
               </div>
             </div>

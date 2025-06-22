@@ -184,19 +184,6 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
     }
   };
 
-  // 投票フェーズへの移行
-  const handleTransitionToVote = async () => {
-    try {
-      setLoading(true);
-      const updatedRoom = await apiService.transitionToVote(roomId);
-      setRoom(updatedRoom);
-      await fetchRoomData();
-    } catch (err: any) {
-      setError(err.message || '投票フェーズへの移行に失敗しました');
-    } finally {
-      setLoading(false);
-    }
-  };
 
   // 夜のアクション実行
   const handleNightAction = async () => {
@@ -449,7 +436,6 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
             isMyTurn={isMyTurn}
             currentPlayer={currentSpeaker}
             onSpeak={handleSpeak}
-            onTransitionToVote={handleTransitionToVote}
             isLoading={loading}
           />
 
