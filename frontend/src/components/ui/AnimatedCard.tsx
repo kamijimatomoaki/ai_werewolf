@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { Card } from '@heroui/card';
 import { cardAnimations, cardStyles } from '@/animations/cardAnimations';
 
 interface AnimatedCardProps {
@@ -95,8 +94,8 @@ export function AnimatedCard({
       onMouseLeave={handleMouseLeave}
     >
       {/* フロント面 */}
-      <Card
-        className={`w-full h-full ${flipTrigger === 'click' ? 'cursor-pointer' : ''}`}
+      <div
+        className={`w-full h-full bg-white border border-gray-200 rounded-lg p-4 ${flipTrigger === 'click' ? 'cursor-pointer' : ''}`}
         style={{
           ...getCardStyle(),
           backfaceVisibility: 'hidden',
@@ -104,12 +103,12 @@ export function AnimatedCard({
         }}
       >
         {children}
-      </Card>
+      </div>
 
       {/* バック面（バックコンテンツがある場合） */}
       {backContent && (
-        <Card
-          className="absolute inset-0 w-full h-full"
+        <div
+          className="absolute inset-0 w-full h-full bg-white border border-gray-200 rounded-lg p-4"
           style={{
             ...getCardStyle(),
             ...cardStyles.flipCardBack,
@@ -118,7 +117,7 @@ export function AnimatedCard({
           }}
         >
           {backContent}
-        </Card>
+        </div>
       )}
 
       {/* ローディングオーバーレイ（アニメーション中） */}

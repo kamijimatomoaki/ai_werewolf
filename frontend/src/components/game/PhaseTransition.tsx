@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from 'react';
-import { Card, CardBody } from '@heroui/card';
 import { 
   PhaseTransitionConfig, 
   getPhaseIcon, 
@@ -89,8 +88,8 @@ export function PhaseTransition({
           transition: 'all 1s cubic-bezier(0.4, 0.0, 0.2, 1)'
         }}
       >
-        <Card className="w-96 mx-auto bg-white/90 backdrop-blur-sm border-0 shadow-2xl">
-          <CardBody className="text-center p-8">
+        <div className="w-96 mx-auto bg-white/90 backdrop-blur-sm border-0 rounded-lg shadow-2xl">
+          <div className="text-center p-8">
             {/* フェーズアイコン */}
             <div className="mb-6">
               <div 
@@ -148,8 +147,8 @@ export function PhaseTransition({
                 />
               </div>
             </div>
-          </CardBody>
-        </Card>
+          </div>
+        </div>
       </div>
 
       {/* パーティクル効果（条件付き） */}

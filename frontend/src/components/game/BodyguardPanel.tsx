@@ -1,7 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { Card, CardBody, CardHeader } from '@heroui/card';
-import { Button } from '@heroui/button';
-import { Chip } from '@heroui/chip';
 import { useBodyguardProtection } from '@/hooks/useBodyguardProtection';
 
 interface PlayerInfo {
@@ -51,8 +48,8 @@ export function BodyguardPanel({ roomId, playerId, isActive, className = "" }: B
   }
 
   return (
-    <Card className={`w-full max-w-2xl mx-auto ${className}`}>
-      <CardHeader className="pb-2">
+    <div className={`w-full max-w-2xl mx-auto bg-white border border-gray-200 rounded-lg ${className}`}>
+      <div className="p-4 pb-2 border-b border-gray-200">
         <div className="flex items-center gap-3">
           <div className="text-2xl">🛡️</div>
           <div>
@@ -62,9 +59,9 @@ export function BodyguardPanel({ roomId, playerId, isActive, className = "" }: B
             </p>
           </div>
         </div>
-      </CardHeader>
+      </div>
       
-      <CardBody className="space-y-4">
+      <div className="p-4 space-y-4">
         {/* エラー表示 */}
         {error && (
           <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
@@ -93,9 +90,9 @@ export function BodyguardPanel({ roomId, playerId, isActive, className = "" }: B
             <div>
               <h4 className="font-medium mb-3 flex items-center gap-2">
                 <span>守る対象を選択</span>
-                <Chip size="sm" color="secondary" variant="flat">
+                <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800 border border-gray-200">
                   {availableTargets.length}人
-                </Chip>
+                </span>
               </h4>
               
               {availableTargets.length === 0 ? (
@@ -145,16 +142,13 @@ export function BodyguardPanel({ roomId, playerId, isActive, className = "" }: B
 
             {/* 実行ボタン */}
             <div className="flex justify-center pt-2">
-              <Button
-                color="primary"
-                size="lg"
-                onPress={handleProtect}
-                isDisabled={!selectedTargetId || !canProtect || isProtecting}
-                isLoading={isProtecting}
-                className="min-w-32"
+              <button
+                onClick={handleProtect}
+                disabled={!selectedTargetId || !canProtect || isProtecting}
+                className="min-w-32 px-6 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
               >
                 {isProtecting ? '守り中...' : '守りを実行'}
-              </Button>
+              </button>
             </div>
 
             {/* 制限事項の説明 */}
@@ -172,8 +166,8 @@ export function BodyguardPanel({ roomId, playerId, isActive, className = "" }: B
             他のプレイヤーの行動完了をお待ちください...
           </div>
         )}
-      </CardBody>
-    </Card>
+      </div>
+    </div>
   );
 }
 

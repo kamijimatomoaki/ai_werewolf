@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { Card } from "@heroui/card";
-import { Button } from "@heroui/button";
-import { Chip } from "@heroui/chip";
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+
 // Switch コンポーネントの代替実装
 const Switch = ({ children, isSelected, onValueChange, size }: { 
   children: React.ReactNode; 
@@ -19,8 +19,6 @@ const Switch = ({ children, isSelected, onValueChange, size }: {
     {children}
   </label>
 );
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 
 import { GameLogInfo } from '@/types/api';
 
@@ -147,44 +145,42 @@ export default function GameLog({
   };
 
   return (
-    <Card className="p-4">
+    <div className="p-4 bg-white border border-gray-200 rounded-lg">
       {/* ヘッダー */}
       <div className="flex justify-between items-center mb-4">
         <div className="flex items-center gap-2">
           <ChatIcon className="w-5 h-5" />
           <h2 className="text-xl font-semibold">ゲームログ</h2>
-          <Chip size="sm" variant="flat">
+          <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800 border border-gray-200">
             {filteredLogs.length}件
-          </Chip>
+          </span>
         </div>
 
         <div className="flex items-center gap-2">
-          <Button
-            size="sm"
-            variant="ghost"
-            startContent={<FilterIcon className="w-4 h-4" />}
+          <button
             onClick={() => setShowFilter(!showFilter)}
+            className="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-800 bg-transparent hover:bg-gray-100 rounded transition-colors flex items-center gap-2"
           >
+            <FilterIcon className="w-4 h-4" />
             フィルタ
-          </Button>
+          </button>
 
           {onRefresh && (
-            <Button
-              size="sm"
-              variant="ghost"
-              startContent={<RefreshIcon className="w-4 h-4" />}
+            <button
               onClick={handleRefresh}
-              isLoading={isLoading}
+              disabled={isLoading}
+              className="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-800 bg-transparent hover:bg-gray-100 rounded transition-colors flex items-center gap-2 disabled:opacity-50"
             >
+              <RefreshIcon className="w-4 h-4" />
               更新
-            </Button>
+            </button>
           )}
         </div>
       </div>
 
       {/* フィルタ設定 */}
       {showFilter && (
-        <Card className="p-3 mb-4 bg-gray-50">
+        <div className="p-3 mb-4 bg-gray-50 border border-gray-200 rounded-lg">
           <div className="space-y-2">
             <h4 className="text-sm font-medium">表示するログの種類:</h4>
             <div className="grid grid-cols-2 gap-2">
@@ -227,7 +223,7 @@ export default function GameLog({
               </Switch>
             </div>
           </div>
-        </Card>
+        </div>
       )}
 
       {/* ログ表示エリア */}
@@ -246,13 +242,18 @@ export default function GameLog({
             <div key={log.log_id} className="border-l-4 border-blue-200 pl-4 py-2 bg-white rounded-r-lg">
               {/* ログヘッダー */}
               <div className="flex items-center gap-2 text-sm text-gray-600 mb-1">
-                <Chip 
-                  size="sm" 
-                  variant="flat"
-                  color={getEventTypeColor(log.event_type)}
+                <span 
+                  className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                    getEventTypeColor(log.event_type) === 'primary' ? 'bg-blue-100 text-blue-800 border border-blue-200' :
+                    getEventTypeColor(log.event_type) === 'secondary' ? 'bg-gray-100 text-gray-800 border border-gray-200' :
+                    getEventTypeColor(log.event_type) === 'success' ? 'bg-green-100 text-green-800 border border-green-200' :
+                    getEventTypeColor(log.event_type) === 'warning' ? 'bg-yellow-100 text-yellow-800 border border-yellow-200' :
+                    getEventTypeColor(log.event_type) === 'danger' ? 'bg-red-100 text-red-800 border border-red-200' :
+                    'bg-gray-100 text-gray-800 border border-gray-200'
+                  }`}
                 >
                   {getEventTypeLabel(log.event_type)}
-                </Chip>
+                </span>
                 
                 {log.actor && (
                   <span className="font-medium">{log.actor.character_name}</span>
@@ -285,6 +286,6 @@ export default function GameLog({
           </div>
         </div>
       )}
-    </Card>
+    </div>
   );
 }

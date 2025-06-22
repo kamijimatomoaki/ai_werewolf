@@ -1,17 +1,4 @@
-import { Button } from "@heroui/button";
-import { Kbd } from "@heroui/kbd";
-import { Link } from "@heroui/link";
-import { Input } from "@heroui/input";
-import {
-  Navbar as HeroUINavbar,
-  NavbarBrand,
-  NavbarContent,
-  NavbarItem,
-  NavbarMenuToggle,
-  NavbarMenu,
-  NavbarMenuItem,
-} from "@heroui/navbar";
-import { link as linkStyles } from "@heroui/theme";
+import { useState } from "react";
 import clsx from "clsx";
 
 import { siteConfig } from "@/config/site";
@@ -22,123 +9,165 @@ import {
   DiscordIcon,
   HeartFilledIcon,
   SearchIcon,
+  Logo,
 } from "@/components/icons";
-import { Logo } from "@/components/icons";
 
 export const Navbar = () => {
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+
   const searchInput = (
-    <Input
-      aria-label="Search"
-      classNames={{
-        inputWrapper: "bg-default-100",
-        input: "text-sm",
-      }}
-      endContent={
-        <Kbd className="hidden lg:inline-block" keys={["command"]}>
-          K
-        </Kbd>
-      }
-      labelPlacement="outside"
-      placeholder="Search..."
-      startContent={
-        <SearchIcon className="text-base text-default-400 pointer-events-none flex-shrink-0" />
-      }
-      type="search"
-    />
+    <div className="relative">
+      <SearchIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+      <input
+        aria-label="Search"
+        className="w-full pl-10 pr-4 py-2 text-sm bg-gray-800 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-blue-500"
+        placeholder="Search..."
+        type="search"
+      />
+    </div>
   );
 
   return (
-    <HeroUINavbar maxWidth="xl" position="sticky">
-      <NavbarContent className="basis-1/5 sm:basis-full" justify="start">
-        <NavbarBrand className="gap-3 max-w-fit">
-          <Link
-            className="flex justify-start items-center gap-1"
-            color="foreground"
-            href="/"
-          >
-            <Logo />
-            <p className="font-bold text-inherit">ACME</p>
-          </Link>
-        </NavbarBrand>
-        <div className="hidden lg:flex gap-4 justify-start ml-2">
-          {siteConfig.navItems.map((item) => (
-            <NavbarItem key={item.href}>
-              <Link
+    <nav className="fixed top-0 inset-x-0 z-40 bg-gray-900/90 backdrop-blur-md border-b border-gray-700">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="flex justify-between items-center h-16">
+          {/* Logo and Brand */}
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <Logo />
+              <p className="font-bold text-xl text-white">ACME</p>
+            </div>
+          </div>
+
+          {/* Desktop Navigation */}
+          <div className="hidden md:flex items-center gap-6">
+            {siteConfig.navItems.map((item) => (
+              <a
+                key={item.href}
                 className={clsx(
-                  linkStyles({ color: "foreground" }),
-                  "data-[active=true]:text-primary data-[active=true]:font-medium",
+                  "text-sm font-medium transition-colors hover:text-blue-400",
+                  "text-gray-300"
                 )}
-                color="foreground"
                 href={item.href}
               >
                 {item.label}
-              </Link>
-            </NavbarItem>
-          ))}
-        </div>
-      </NavbarContent>
+              </a>
+            ))}
+          </div>
 
-      <NavbarContent
-        className="hidden sm:flex basis-1/5 sm:basis-full"
-        justify="end"
-      >
-        <NavbarItem className="hidden sm:flex gap-2">
-          <Link isExternal href={siteConfig.links.twitter} title="Twitter">
-            <TwitterIcon className="text-default-500" />
-          </Link>
-          <Link isExternal href={siteConfig.links.discord} title="Discord">
-            <DiscordIcon className="text-default-500" />
-          </Link>
-          <Link isExternal href={siteConfig.links.github} title="GitHub">
-            <GithubIcon className="text-default-500" />
-          </Link>
-          <ThemeSwitch />
-        </NavbarItem>
-        <NavbarItem className="hidden lg:flex">{searchInput}</NavbarItem>
-        <NavbarItem className="hidden md:flex">
-          <Button
-            isExternal
-            as={Link}
-            className="text-sm font-normal text-default-600 bg-default-100"
-            href={siteConfig.links.sponsor}
-            startContent={<HeartFilledIcon className="text-danger" />}
-            variant="flat"
-          >
-            Sponsor
-          </Button>
-        </NavbarItem>
-      </NavbarContent>
-
-      <NavbarContent className="sm:hidden basis-1 pl-4" justify="end">
-        <Link isExternal href={siteConfig.links.github}>
-          <GithubIcon className="text-default-500" />
-        </Link>
-        <ThemeSwitch />
-        <NavbarMenuToggle />
-      </NavbarContent>
-
-      <NavbarMenu>
-        {searchInput}
-        <div className="mx-4 mt-2 flex flex-col gap-2">
-          {siteConfig.navMenuItems.map((item, index) => (
-            <NavbarMenuItem key={`${item}-${index}`}>
-              <Link
-                color={
-                  index === 2
-                    ? "primary"
-                    : index === siteConfig.navMenuItems.length - 1
-                      ? "danger"
-                      : "foreground"
-                }
-                href="#"
-                size="lg"
+          {/* Search and Actions */}
+          <div className="hidden md:flex items-center gap-4">
+            <div className="w-64">
+              {searchInput}
+            </div>
+            <div className="flex items-center gap-2">
+              <a
+                className="p-2 text-gray-400 hover:text-white transition-colors"
+                href={siteConfig.links.github}
+                target="_blank"
+                rel="noopener noreferrer"
               >
-                {item.label}
-              </Link>
-            </NavbarMenuItem>
-          ))}
+                <GithubIcon className="w-5 h-5" />
+              </a>
+              <a
+                className="p-2 text-gray-400 hover:text-white transition-colors"
+                href={siteConfig.links.twitter}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <TwitterIcon className="w-5 h-5" />
+              </a>
+              <a
+                className="p-2 text-gray-400 hover:text-white transition-colors"
+                href={siteConfig.links.discord}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <DiscordIcon className="w-5 h-5" />
+              </a>
+              <a
+                className="inline-flex items-center gap-2 px-3 py-1.5 text-sm bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors"
+                href={siteConfig.links.sponsor}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <HeartFilledIcon className="w-4 h-4" />
+                Sponsor
+              </a>
+              <ThemeSwitch />
+            </div>
+          </div>
+
+          {/* Mobile menu button */}
+          <div className="md:hidden">
+            <button
+              className="p-2 text-gray-400 hover:text-white transition-colors"
+              onClick={() => setIsMenuOpen(!isMenuOpen)}
+            >
+              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            </button>
+          </div>
         </div>
-      </NavbarMenu>
-    </HeroUINavbar>
+
+        {/* Mobile menu */}
+        {isMenuOpen && (
+          <div className="md:hidden py-4 border-t border-gray-700">
+            <div className="flex flex-col gap-4">
+              <div className="px-2">
+                {searchInput}
+              </div>
+              {siteConfig.navItems.map((item) => (
+                <a
+                  key={item.href}
+                  className="px-2 py-2 text-sm font-medium text-gray-300 hover:text-blue-400 transition-colors"
+                  href={item.href}
+                  onClick={() => setIsMenuOpen(false)}
+                >
+                  {item.label}
+                </a>
+              ))}
+              <div className="flex items-center gap-2 px-2 pt-2 border-t border-gray-700">
+                <a
+                  className="p-2 text-gray-400 hover:text-white transition-colors"
+                  href={siteConfig.links.github}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <GithubIcon className="w-5 h-5" />
+                </a>
+                <a
+                  className="p-2 text-gray-400 hover:text-white transition-colors"
+                  href={siteConfig.links.twitter}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <TwitterIcon className="w-5 h-5" />
+                </a>
+                <a
+                  className="p-2 text-gray-400 hover:text-white transition-colors"
+                  href={siteConfig.links.discord}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <DiscordIcon className="w-5 h-5" />
+                </a>
+                <a
+                  className="inline-flex items-center gap-2 px-3 py-1.5 text-sm bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors"
+                  href={siteConfig.links.sponsor}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <HeartFilledIcon className="w-4 h-4" />
+                  Sponsor
+                </a>
+                <ThemeSwitch />
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </nav>
   );
 };

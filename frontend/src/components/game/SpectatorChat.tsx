@@ -1,7 +1,4 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Card, CardBody, CardHeader } from '@heroui/card';
-import { Button } from '@heroui/button';
-import { Input } from '@heroui/input';
 
 interface SpectatorChatMessage {
   message_id: string;
@@ -64,15 +61,15 @@ export function SpectatorChat({ roomId, spectatorId, messages, onSendMessage }: 
   };
 
   return (
-    <Card className="h-96 flex flex-col">
-      <CardHeader className="pb-2">
+    <div className="h-96 flex flex-col bg-white border border-gray-200 rounded-lg">
+      <div className="p-4 pb-2 border-b border-gray-200">
         <div className="flex items-center gap-2">
           <span className="text-lg">💬</span>
           <h3 className="text-lg font-semibold">観戦者チャット</h3>
         </div>
-      </CardHeader>
+      </div>
       
-      <CardBody className="flex flex-col h-full p-0">
+      <div className="flex flex-col h-full p-0">
         {/* メッセージ表示エリア */}
         <div className="flex-1 overflow-y-auto p-4 space-y-3 min-h-0">
           {messages.length === 0 ? (
@@ -105,25 +102,23 @@ export function SpectatorChat({ roomId, spectatorId, messages, onSendMessage }: 
         {/* メッセージ入力エリア */}
         <div className="p-4 border-t border-gray-200">
           <div className="flex gap-2">
-            <Input
+            <input
+              type="text"
               value={newMessage}
               onChange={(e) => setNewMessage(e.target.value)}
               onKeyDown={handleKeyPress}
               placeholder="観戦者とチャット..."
               maxLength={500}
-              isDisabled={isSending}
-              className="flex-1"
+              disabled={isSending}
+              className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-blue-500 disabled:bg-gray-100 disabled:cursor-not-allowed"
             />
-            <Button
-              color="primary"
-              size="md"
-              onPress={handleSendMessage}
-              isDisabled={!newMessage.trim() || isSending}
-              isLoading={isSending}
-              className="min-w-16"
+            <button
+              onClick={handleSendMessage}
+              disabled={!newMessage.trim() || isSending}
+              className="min-w-16 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
             >
-              送信
-            </Button>
+              {isSending ? '送信中...' : '送信'}
+            </button>
           </div>
           
           {/* 文字数制限表示 */}
@@ -132,8 +127,8 @@ export function SpectatorChat({ roomId, spectatorId, messages, onSendMessage }: 
             <span>{newMessage.length}/500</span>
           </div>
         </div>
-      </CardBody>
-    </Card>
+      </div>
+    </div>
   );
 }
 

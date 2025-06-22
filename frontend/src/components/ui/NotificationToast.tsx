@@ -1,6 +1,4 @@
 import React, { useEffect, useState } from 'react';
-import { Card, CardBody } from '@heroui/card';
-import { Button } from '@heroui/button';
 import { uiAnimations } from '@/animations/uiAnimations';
 
 interface NotificationToastProps {
@@ -110,10 +108,10 @@ export function NotificationToast({
         show ? 'translate-x-0 opacity-100' : 'translate-x-full opacity-0'
       } ${className}`}
     >
-      <Card 
-        className={`w-80 ${styles.bgColor} ${styles.borderColor} border shadow-lg`}
+      <div 
+        className={`w-80 ${styles.bgColor} ${styles.borderColor} border border-gray-200 rounded-lg shadow-lg`}
       >
-        <CardBody className="p-4">
+        <div className="p-4">
           <div className="flex items-start space-x-3">
             {/* アイコン */}
             <div className="text-lg mt-0.5">
@@ -134,14 +132,12 @@ export function NotificationToast({
               {/* アクションボタン */}
               {action && (
                 <div className="mt-3">
-                  <Button
-                    size="sm"
-                    color="primary"
-                    variant="bordered"
-                    onPress={action.onClick}
+                  <button
+                    onClick={action.onClick}
+                    className="px-3 py-1.5 text-sm border border-blue-300 hover:bg-blue-50 text-blue-700 rounded transition-colors"
                   >
                     {action.label}
-                  </Button>
+                  </button>
                 </div>
               )}
             </div>
@@ -166,8 +162,8 @@ export function NotificationToast({
               </div>
             </div>
           )}
-        </CardBody>
-      </Card>
+        </div>
+      </div>
     </div>
   );
 }

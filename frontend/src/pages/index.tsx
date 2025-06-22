@@ -1,8 +1,3 @@
-import { Link } from "@heroui/link";
-import { Snippet } from "@heroui/snippet";
-import { Code } from "@heroui/code";
-import { button as buttonStyles } from "@heroui/theme";
-
 import { siteConfig } from "@/config/site";
 import { title, subtitle } from "@/components/primitives";
 import { GithubIcon } from "@/components/icons";
@@ -25,34 +20,32 @@ export default function IndexPage() {
         </div>
 
         <div className="flex gap-3">
-          <Link
-            isExternal
-            className={buttonStyles({
-              color: "primary",
-              radius: "full",
-              variant: "shadow",
-            })}
+          <a
             href={siteConfig.links.docs}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-full shadow-lg transition-colors"
           >
             Documentation
-          </Link>
-          <Link
-            isExternal
-            className={buttonStyles({ variant: "bordered", radius: "full" })}
+          </a>
+          <a
             href={siteConfig.links.github}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="px-6 py-3 border border-gray-300 hover:bg-gray-50 text-gray-700 rounded-full transition-colors flex items-center gap-2"
           >
             <GithubIcon size={20} />
             GitHub
-          </Link>
+          </a>
         </div>
 
         <div className="mt-8">
-          <Snippet hideCopyButton hideSymbol variant="bordered">
+          <div className="p-4 border border-gray-300 rounded-lg bg-gray-50">
             <span>
               Get started by editing{" "}
-              <Code color="primary">pages/index.tsx</Code>
+              <code className="px-2 py-1 bg-blue-100 text-blue-800 rounded text-sm font-mono">pages/index.tsx</code>
             </span>
-          </Snippet>
+          </div>
         </div>
       </section>
     </DefaultLayout>

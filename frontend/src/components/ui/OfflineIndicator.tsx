@@ -1,7 +1,4 @@
 import React from 'react';
-import { Card } from "@heroui/card";
-import { Button } from "@heroui/button";
-import { Chip } from "@heroui/chip";
 
 // アイコンコンポーネント
 const WifiOffIcon = ({ className }: { className?: string }) => (
@@ -116,24 +113,25 @@ export default function OfflineIndicator({
   if (compact) {
     return (
       <div className={`flex items-center gap-2 ${className}`}>
-        <Chip
-          color={connectionDisplay.color}
-          variant="flat"
-          size="sm"
-          startContent={connectionDisplay.icon}
+        <span
+          className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium gap-1 ${
+            connectionDisplay.color === 'danger' ? 'bg-red-100 text-red-800 border border-red-200' :
+            connectionDisplay.color === 'warning' ? 'bg-yellow-100 text-yellow-800 border border-yellow-200' :
+            connectionDisplay.color === 'success' ? 'bg-green-100 text-green-800 border border-green-200' :
+            'bg-gray-100 text-gray-800 border border-gray-200'
+          }`}
         >
+          {connectionDisplay.icon}
           {connectionDisplay.text}
-        </Chip>
+        </span>
         {onRetry && (isOffline || connectionQuality === 'poor') && (
-          <Button
-            size="sm"
-            variant="ghost"
+          <button
             onClick={onRetry}
-            isLoading={isReconnecting}
-            className="min-w-0 px-2"
+            disabled={isReconnecting}
+            className="min-w-0 px-2 py-1 text-gray-600 hover:text-gray-800 bg-transparent hover:bg-gray-100 rounded transition-colors disabled:opacity-50"
           >
             <RefreshIcon className="w-4 h-4" />
-          </Button>
+          </button>
         )}
       </div>
     );
@@ -145,7 +143,7 @@ export default function OfflineIndicator({
   }
 
   return (
-    <Card className={`p-4 ${className}`}>
+    <div className={`p-4 bg-white border border-gray-200 rounded-lg ${className}`}>
       <div className="flex items-start gap-3">
         <div className="flex-shrink-0 mt-0.5">
           {connectionDisplay.icon}
@@ -156,13 +154,16 @@ export default function OfflineIndicator({
             <h4 className="font-medium text-gray-900">
               {connectionDisplay.text}
             </h4>
-            <Chip
-              color={connectionDisplay.color}
-              variant="flat"
-              size="sm"
+            <span
+              className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                connectionDisplay.color === 'danger' ? 'bg-red-100 text-red-800 border border-red-200' :
+                connectionDisplay.color === 'warning' ? 'bg-yellow-100 text-yellow-800 border border-yellow-200' :
+                connectionDisplay.color === 'success' ? 'bg-green-100 text-green-800 border border-green-200' :
+                'bg-gray-100 text-gray-800 border border-gray-200'
+              }`}
             >
               {isReconnecting ? '再接続中' : connectionDisplay.text}
-            </Chip>
+            </span>
           </div>
           
           <p className="text-sm text-gray-600 mb-3">
@@ -172,26 +173,26 @@ export default function OfflineIndicator({
           {/* アクションボタン */}
           {onRetry && (isOffline || connectionQuality === 'poor') && (
             <div className="flex gap-2">
-              <Button
-                size="sm"
-                color={connectionDisplay.color}
-                variant="bordered"
+              <button
                 onClick={onRetry}
-                isLoading={isReconnecting}
-                startContent={!isReconnecting ? <RefreshIcon className="w-4 h-4" /> : undefined}
+                disabled={isReconnecting}
+                className={`px-3 py-1.5 text-sm border rounded transition-colors flex items-center gap-2 disabled:opacity-50 ${
+                  connectionDisplay.color === 'danger' ? 'border-red-300 hover:bg-red-50 text-red-700' :
+                  connectionDisplay.color === 'warning' ? 'border-yellow-300 hover:bg-yellow-50 text-yellow-700' :
+                  'border-gray-300 hover:bg-gray-50 text-gray-700'
+                }`}
               >
+                {!isReconnecting && <RefreshIcon className="w-4 h-4" />}
                 {isReconnecting ? '再接続中...' : '再接続'}
-              </Button>
+              </button>
               
               {isOffline && (
-                <Button
-                  size="sm"
-                  variant="ghost"
+                <button
                   onClick={() => window.location.reload()}
-                  className="text-gray-600"
+                  className="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-800 bg-transparent hover:bg-gray-100 rounded transition-colors"
                 >
                   ページ再読み込み
-                </Button>
+                </button>
               )}
             </div>
           )}
@@ -211,6 +212,6 @@ export default function OfflineIndicator({
           )}
         </div>
       </div>
-    </Card>
+    </div>
   );
 }

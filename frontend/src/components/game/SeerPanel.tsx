@@ -1,9 +1,4 @@
 import { useState } from 'react';
-import { Button } from "@heroui/button";
-import { Card } from "@heroui/card";
-import { Avatar } from "@heroui/avatar";
-import { Chip } from "@heroui/chip";
-import { Divider } from "@heroui/divider";
 // アイコンをSVGコンポーネントとして定義
 const EyeIcon = ({ className }: { className?: string }) => (
   <svg className={className} fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
@@ -62,7 +57,7 @@ export default function SeerPanel({ roomId, playerId, isActive, className }: See
   }
 
   return (
-    <Card className={`p-4 bg-purple-50 border-purple-200 ${className}`}>
+    <div className={`p-4 bg-purple-50 border border-purple-200 rounded-lg ${className}`}>
       <div className="flex items-center gap-3 mb-4">
         <EyeIcon className="w-6 h-6 text-purple-600" />
         <div>
@@ -90,24 +85,24 @@ export default function SeerPanel({ roomId, playerId, isActive, className }: See
             </p>
             <div className="flex items-center gap-2">
               <span className="text-sm">結果:</span>
-              <Chip 
-                color={investigationResult.result === '人狼' ? 'danger' : 'success'}
-                variant="flat"
-                size="sm"
+              <span 
+                className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                  investigationResult.result === '人狼' 
+                    ? 'bg-red-100 text-red-800 border border-red-200' 
+                    : 'bg-green-100 text-green-800 border border-green-200'
+                }`}
               >
                 {investigationResult.result}
-              </Chip>
+              </span>
             </div>
             <p className="text-xs text-gray-600">{investigationResult.message}</p>
           </div>
-          <Button
-            size="sm"
-            variant="ghost"
+          <button
             onClick={clearResult}
-            className="mt-2"
+            className="mt-2 px-3 py-1 text-sm text-gray-600 hover:text-gray-800 bg-transparent hover:bg-gray-100 rounded transition-colors"
           >
             結果を閉じる
-          </Button>
+          </button>
         </div>
       )}
 
@@ -128,19 +123,23 @@ export default function SeerPanel({ roomId, playerId, isActive, className }: See
                 onClick={() => handleTargetSelect(target.player_id)}
               >
                 <div className="flex items-center gap-3">
-                  <Avatar 
-                    name={target.character_name} 
-                    size="sm"
-                    color={target.is_human ? "primary" : "secondary"}
-                  />
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white ${
+                    target.is_human ? 'bg-blue-500' : 'bg-gray-500'
+                  }`}>
+                    {target.character_name.charAt(0)}
+                  </div>
                   <div className="flex-1">
                     <p className="font-medium text-gray-900">
                       {target.character_name}
                     </p>
                     <div className="flex gap-1 mt-1">
-                      <Chip size="sm" variant="flat" color={target.is_human ? "primary" : "secondary"}>
+                      <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                        target.is_human 
+                          ? 'bg-blue-100 text-blue-800 border border-blue-200' 
+                          : 'bg-gray-100 text-gray-800 border border-gray-200'
+                      }`}>
                         {target.is_human ? "人間" : "AI"}
-                      </Chip>
+                      </span>
                     </div>
                   </div>
                   {selectedTargetId === target.player_id && (
@@ -151,28 +150,26 @@ export default function SeerPanel({ roomId, playerId, isActive, className }: See
             ))}
           </div>
 
-          <Divider />
+          <hr className="border-gray-200" />
 
           <div className="flex gap-3">
-            <Button
-              color="secondary"
+            <button
               onClick={handleInvestigate}
-              isLoading={isInvestigating}
-              isDisabled={!selectedTargetId || !canInvestigate}
-              className="flex-1"
-              startContent={<EyeIcon className="w-4 h-4" />}
+              disabled={!selectedTargetId || !canInvestigate || isInvestigating}
+              className="flex-1 px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white rounded-lg transition-colors flex items-center justify-center gap-2"
             >
+              <EyeIcon className="w-4 h-4" />
               {isInvestigating ? '占い中...' : '占う'}
-            </Button>
+            </button>
             
             {selectedTargetId && (
-              <Button
-                variant="bordered"
+              <button
                 onClick={() => setSelectedTargetId('')}
-                isDisabled={isInvestigating}
+                disabled={isInvestigating}
+                className="px-4 py-2 border border-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed text-gray-700 rounded-lg transition-colors"
               >
                 選択解除
-              </Button>
+              </button>
             )}
           </div>
         </div>
@@ -201,6 +198,6 @@ export default function SeerPanel({ roomId, playerId, isActive, className }: See
           </p>
         </div>
       )}
-    </Card>
+    </div>
   );
 }

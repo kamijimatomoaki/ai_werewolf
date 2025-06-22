@@ -1,6 +1,4 @@
 import React, { Component, ErrorInfo, ReactNode } from 'react';
-import { Card } from "@heroui/card";
-import { Button } from "@heroui/button";
 
 // エラー情報の型定義
 interface ErrorDetails {
@@ -46,7 +44,7 @@ const DefaultErrorFallback: React.FC<{
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4 bg-gray-50">
-      <Card className="max-w-2xl w-full p-6">
+      <div className="max-w-2xl w-full p-6 bg-white border border-gray-200 rounded-lg">
         <div className="text-center">
           {/* エラーアイコン */}
           <div className="mx-auto w-16 h-16 mb-4 text-red-500">
@@ -66,50 +64,43 @@ const DefaultErrorFallback: React.FC<{
 
           {/* アクションボタン */}
           <div className="flex flex-col sm:flex-row gap-3 justify-center mb-6">
-            <Button
-              color="primary"
+            <button
               onClick={retry}
-              className="min-w-[120px]"
+              className="min-w-[120px] px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
             >
               再試行
-            </Button>
+            </button>
             
-            <Button
-              variant="bordered"
+            <button
               onClick={() => window.location.reload()}
-              className="min-w-[120px]"
+              className="min-w-[120px] px-4 py-2 border border-gray-300 hover:bg-gray-50 text-gray-700 rounded-lg transition-colors"
             >
               ページ再読み込み
-            </Button>
+            </button>
             
-            <Button
-              variant="ghost"
+            <button
               onClick={() => window.location.href = '/'}
-              className="min-w-[120px]"
+              className="min-w-[120px] px-4 py-2 text-gray-600 hover:text-gray-800 bg-transparent hover:bg-gray-100 rounded-lg transition-colors"
             >
               ホームに戻る
-            </Button>
+            </button>
           </div>
 
           {/* エラー詳細トグル */}
           <div className="border-t pt-4">
-            <Button
-              variant="ghost"
-              size="sm"
+            <button
               onClick={() => setShowDetails(!showDetails)}
-              className="text-gray-500"
+              className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700 bg-transparent hover:bg-gray-100 rounded transition-colors"
             >
               {showDetails ? '詳細を隠す' : 'エラー詳細を表示'}
-            </Button>
+            </button>
             
-            <Button
-              variant="ghost"
-              size="sm"
+            <button
               onClick={handleReportError}
-              className="ml-3 text-gray-500"
+              className="ml-3 px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700 bg-transparent hover:bg-gray-100 rounded transition-colors"
             >
               エラーを報告
-            </Button>
+            </button>
           </div>
 
           {/* エラー詳細情報 */}
@@ -144,7 +135,7 @@ const DefaultErrorFallback: React.FC<{
             </div>
           )}
         </div>
-      </Card>
+      </div>
     </div>
   );
 };
