@@ -1,9 +1,4 @@
 import { useState, useEffect } from 'react';
-import { Button } from "@heroui/button";
-import { Card } from "@heroui/card";
-import { Chip } from "@heroui/chip";
-import { Tabs, Tab } from "@heroui/tabs";
-import { Spinner } from "@heroui/spinner";
 
 interface GameSummaryProps {
   roomId: string;
@@ -52,6 +47,7 @@ export default function GameSummary({ roomId, isOpen, onClose }: GameSummaryProp
   const [summaryData, setSummaryData] = useState<SummaryData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<'overview' | 'players' | 'activity'>('overview');
 
   const fetchSummary = async () => {
     try {
@@ -102,186 +98,203 @@ export default function GameSummary({ roomId, isOpen, onClose }: GameSummaryProp
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <Card className="w-full max-w-4xl max-h-[90vh] overflow-hidden bg-gray-900 border-gray-700">
+      <div className="w-full max-w-4xl max-h-[90vh] overflow-hidden bg-gray-900 border border-gray-700 rounded-lg">
         <div className="p-6">
           <div className="flex justify-between items-center mb-6">
             <div className="flex items-center gap-3">
               <InfoIcon className="w-6 h-6 text-blue-400" />
               <h2 className="text-xl font-bold text-white">ゲーム状況サマリー</h2>
             </div>
-            <Button
-              variant="bordered"
-              color="danger"
+            <button
+              className="px-3 py-1 text-sm border border-red-500 text-red-400 hover:bg-red-500 hover:text-white rounded transition-colors"
               onClick={onClose}
-              size="sm"
             >
               閉じる
-            </Button>
+            </button>
           </div>
 
           {loading && (
             <div className="flex justify-center items-center py-12">
-              <Spinner size="lg" />
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
               <span className="ml-3 text-gray-300">サマリーを生成中...</span>
             </div>
           )}
 
           {error && (
-            <Card className="p-4 bg-red-900/50 border-red-700 mb-4">
+            <div className="p-4 bg-red-900/50 border border-red-700 rounded-lg mb-4">
               <p className="text-red-200">{error}</p>
-              <Button
-                size="sm"
-                color="danger"
-                variant="bordered"
+              <button
+                className="mt-2 px-3 py-1 text-sm border border-red-500 text-red-400 hover:bg-red-500 hover:text-white rounded transition-colors"
                 onClick={fetchSummary}
-                className="mt-2"
               >
                 再試行
-              </Button>
-            </Card>
+              </button>
+            </div>
           )}
 
           {summaryData && (
             <div className="max-h-[70vh] overflow-y-auto scrollbar-thin">
-              <Tabs
-                variant="underlined"
-                color="primary"
-                className="w-full"
-                classNames={{
-                  tabList: "gap-6 w-full relative rounded-none p-0 border-b border-gray-700",
-                  cursor: "w-full bg-blue-500",
-                  tab: "max-w-fit px-0 h-12",
-                  tabContent: "group-data-[selected=true]:text-blue-400"
-                }}
-              >
-                <Tab key="overview" title="概要">
-                  <div className="space-y-4 pt-4">
-                    {/* 現在の状況 */}
-                    <Card className="p-4 bg-gray-800 border-gray-700">
-                      <div className="flex items-center gap-2 mb-3">
-                        <ClockIcon className="w-5 h-5 text-orange-400" />
-                        <h3 className="font-semibold text-white">現在の状況</h3>
-                      </div>
-                      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                        <div>
-                          <p className="text-gray-400 text-sm">ゲーム日数</p>
-                          <p className="text-white font-medium">{summaryData.summary.current_phase.day}日目</p>
-                        </div>
-                        <div>
-                          <p className="text-gray-400 text-sm">フェーズ</p>
-                          <Chip 
-                            color={getPhaseColor(summaryData.summary.current_phase.phase) as any}
-                            variant="flat"
-                            size="sm"
-                          >
-                            {getPhaseLabel(summaryData.summary.current_phase.phase)}
-                          </Chip>
-                        </div>
-                        {summaryData.summary.current_phase.round && (
-                          <div>
-                            <p className="text-gray-400 text-sm">ラウンド</p>
-                            <p className="text-white font-medium">{summaryData.summary.current_phase.round}/3</p>
-                          </div>
-                        )}
-                      </div>
-                    </Card>
+              {/* Tab Navigation */}
+              <div className="border-b border-gray-700 mb-4">
+                <div className="flex space-x-8">
+                  <button
+                    className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                      activeTab === 'overview'
+                        ? 'border-blue-500 text-blue-400'
+                        : 'border-transparent text-gray-400 hover:text-gray-300'
+                    }`}
+                    onClick={() => setActiveTab('overview')}
+                  >
+                    概要
+                  </button>
+                  <button
+                    className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                      activeTab === 'players'
+                        ? 'border-blue-500 text-blue-400'
+                        : 'border-transparent text-gray-400 hover:text-gray-300'
+                    }`}
+                    onClick={() => setActiveTab('players')}
+                  >
+                    プレイヤー
+                  </button>
+                  <button
+                    className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                      activeTab === 'activity'
+                        ? 'border-blue-500 text-blue-400'
+                        : 'border-transparent text-gray-400 hover:text-gray-300'
+                    }`}
+                    onClick={() => setActiveTab('activity')}
+                  >
+                    活動履歴
+                  </button>
+                </div>
+              </div>
 
-                    {/* AIサマリー */}
-                    <Card className="p-4 bg-gray-800 border-gray-700">
-                      <h3 className="font-semibold text-white mb-3">状況分析</h3>
-                      <p className="text-gray-300 leading-relaxed">
-                        {summaryData.summary.llm_summary}
-                      </p>
-                    </Card>
+              {/* Tab Content */}
+              {activeTab === 'overview' && (
+                <div className="space-y-4">
+                  {/* 現在の状況 */}
+                  <div className="p-4 bg-gray-800 border border-gray-700 rounded-lg">
+                    <div className="flex items-center gap-2 mb-3">
+                      <ClockIcon className="w-5 h-5 text-orange-400" />
+                      <h3 className="font-semibold text-white">現在の状況</h3>
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                      <div>
+                        <p className="text-gray-400 text-sm">ゲーム日数</p>
+                        <p className="text-white font-medium">{summaryData.summary.current_phase.day}日目</p>
+                      </div>
+                      <div>
+                        <p className="text-gray-400 text-sm">フェーズ</p>
+                        <span className={`inline-block px-2 py-1 text-xs rounded ${
+                          getPhaseColor(summaryData.summary.current_phase.phase) === 'success' ? 'bg-green-500/20 text-green-400' :
+                          getPhaseColor(summaryData.summary.current_phase.phase) === 'warning' ? 'bg-yellow-500/20 text-yellow-400' :
+                          getPhaseColor(summaryData.summary.current_phase.phase) === 'danger' ? 'bg-red-500/20 text-red-400' :
+                          'bg-gray-500/20 text-gray-400'
+                        }`}>
+                          {getPhaseLabel(summaryData.summary.current_phase.phase)}
+                        </span>
+                      </div>
+                      {summaryData.summary.current_phase.round && (
+                        <div>
+                          <p className="text-gray-400 text-sm">ラウンド</p>
+                          <p className="text-white font-medium">{summaryData.summary.current_phase.round}/3</p>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </Tab>
 
-                <Tab key="players" title="プレイヤー">
-                  <div className="space-y-4 pt-4">
-                    {/* 生存者 */}
-                    <Card className="p-4 bg-gray-800 border-gray-700">
+                  {/* AIサマリー */}
+                  <div className="p-4 bg-gray-800 border border-gray-700 rounded-lg">
+                    <h3 className="font-semibold text-white mb-3">状況分析</h3>
+                    <p className="text-gray-300 leading-relaxed">
+                      {summaryData.summary.llm_summary}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {activeTab === 'players' && (
+                <div className="space-y-4">
+                  {/* 生存者 */}
+                  <div className="p-4 bg-gray-800 border border-gray-700 rounded-lg">
+                    <div className="flex items-center gap-2 mb-3">
+                      <UserIcon className="w-5 h-5 text-green-400" />
+                      <h3 className="font-semibold text-white">生存者 ({summaryData.summary.player_status.生存者.length}人)</h3>
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                      {summaryData.summary.player_status.生存者.map((player, index) => (
+                        <div key={index} className="flex items-center gap-2 p-2 bg-gray-700 rounded">
+                          <span className="text-white text-sm">{player.name}</span>
+                          <span className={`px-2 py-1 text-xs rounded ${
+                            player.type === "人間" ? "bg-blue-500/20 text-blue-400" : "bg-gray-500/20 text-gray-400"
+                          }`}>
+                            {player.type}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* 死亡者 */}
+                  {summaryData.summary.player_status.死亡者.length > 0 && (
+                    <div className="p-4 bg-gray-800 border border-gray-700 rounded-lg">
                       <div className="flex items-center gap-2 mb-3">
-                        <UserIcon className="w-5 h-5 text-green-400" />
-                        <h3 className="font-semibold text-white">生存者 ({summaryData.summary.player_status.生存者.length}人)</h3>
+                        <UserIcon className="w-5 h-5 text-red-400" />
+                        <h3 className="font-semibold text-white">死亡者 ({summaryData.summary.player_status.死亡者.length}人)</h3>
                       </div>
                       <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-                        {summaryData.summary.player_status.生存者.map((player, index) => (
-                          <div key={index} className="flex items-center gap-2 p-2 bg-gray-700 rounded">
-                            <span className="text-white text-sm">{player.name}</span>
-                            <Chip 
-                              size="sm" 
-                              variant="flat"
-                              color={player.type === "人間" ? "primary" : "secondary"}
-                            >
+                        {summaryData.summary.player_status.死亡者.map((player, index) => (
+                          <div key={index} className="flex items-center gap-2 p-2 bg-gray-700 rounded opacity-60">
+                            <span className="text-gray-300 text-sm line-through">{player.name}</span>
+                            <span className={`px-2 py-1 text-xs rounded ${
+                              player.type === "人間" ? "bg-blue-500/20 text-blue-400" : "bg-gray-500/20 text-gray-400"
+                            }`}>
                               {player.type}
-                            </Chip>
+                            </span>
                           </div>
                         ))}
                       </div>
-                    </Card>
+                    </div>
+                  )}
+                </div>
+              )}
 
-                    {/* 死亡者 */}
-                    {summaryData.summary.player_status.死亡者.length > 0 && (
-                      <Card className="p-4 bg-gray-800 border-gray-700">
-                        <div className="flex items-center gap-2 mb-3">
-                          <UserIcon className="w-5 h-5 text-red-400" />
-                          <h3 className="font-semibold text-white">死亡者 ({summaryData.summary.player_status.死亡者.length}人)</h3>
+              {activeTab === 'activity' && (
+                <div className="space-y-4">
+                  {Object.entries(summaryData.summary.daily_activities).map(([day, activities]: [string, any]) => (
+                    <div key={day} className="p-4 bg-gray-800 border border-gray-700 rounded-lg">
+                      <h3 className="font-semibold text-white mb-3">{day}</h3>
+                      <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-3">
+                        <div>
+                          <p className="text-gray-400 text-sm">発言数</p>
+                          <p className="text-white font-medium">{activities.発言数}回</p>
                         </div>
-                        <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-                          {summaryData.summary.player_status.死亡者.map((player, index) => (
-                            <div key={index} className="flex items-center gap-2 p-2 bg-gray-700 rounded opacity-60">
-                              <span className="text-gray-300 text-sm line-through">{player.name}</span>
-                              <Chip 
-                                size="sm" 
-                                variant="flat"
-                                color={player.type === "人間" ? "primary" : "secondary"}
-                              >
-                                {player.type}
-                              </Chip>
-                            </div>
-                          ))}
+                        <div>
+                          <p className="text-gray-400 text-sm">投票数</p>
+                          <p className="text-white font-medium">{activities.投票数}票</p>
                         </div>
-                      </Card>
-                    )}
-                  </div>
-                </Tab>
-
-                <Tab key="activity" title="活動履歴">
-                  <div className="space-y-4 pt-4">
-                    {Object.entries(summaryData.summary.daily_activities).map(([day, activities]: [string, any]) => (
-                      <Card key={day} className="p-4 bg-gray-800 border-gray-700">
-                        <h3 className="font-semibold text-white mb-3">{day}</h3>
-                        <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-3">
-                          <div>
-                            <p className="text-gray-400 text-sm">発言数</p>
-                            <p className="text-white font-medium">{activities.発言数}回</p>
-                          </div>
-                          <div>
-                            <p className="text-gray-400 text-sm">投票数</p>
-                            <p className="text-white font-medium">{activities.投票数}票</p>
+                      </div>
+                      {activities.重要イベント.length > 0 && (
+                        <div>
+                          <p className="text-gray-400 text-sm mb-2">重要な出来事</p>
+                          <div className="space-y-1">
+                            {activities.重要イベント.map((event: string, index: number) => (
+                              <p key={index} className="text-gray-300 text-sm bg-gray-700 p-2 rounded">
+                                {event}
+                              </p>
+                            ))}
                           </div>
                         </div>
-                        {activities.重要イベント.length > 0 && (
-                          <div>
-                            <p className="text-gray-400 text-sm mb-2">重要な出来事</p>
-                            <div className="space-y-1">
-                              {activities.重要イベント.map((event: string, index: number) => (
-                                <p key={index} className="text-gray-300 text-sm bg-gray-700 p-2 rounded">
-                                  {event}
-                                </p>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                      </Card>
-                    ))}
-                  </div>
-                </Tab>
-              </Tabs>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>
-      </Card>
+      </div>
     </div>
   );
 }

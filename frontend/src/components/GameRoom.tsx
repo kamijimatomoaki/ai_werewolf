@@ -1,7 +1,4 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Button } from "@heroui/button";
-import { Card } from "@heroui/card";
-import { Chip } from "@heroui/chip";
 
 import { apiService, VoteResult } from '@/services/api';
 import { websocketService } from '@/services/websocket';
@@ -395,31 +392,33 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
         </div>
         <div className="flex items-center gap-2">
           <ConnectionStatus compact={true} showReconnectButton={false} />
-          <Button
-            color="primary"
-            variant="bordered"
+          <button
+            className="px-3 py-1 text-sm border border-blue-500 text-blue-400 hover:bg-blue-500 hover:text-white rounded transition-colors"
             onClick={() => setShowSummary(true)}
-            size="sm"
           >
             📊 サマリー
-          </Button>
-          <Button color="secondary" onClick={fetchRoomData} isLoading={loading}>
-            更新
-          </Button>
+          </button>
+          <button 
+            className="px-3 py-1 text-sm bg-gray-600 text-white hover:bg-gray-700 rounded transition-colors disabled:opacity-50"
+            onClick={fetchRoomData} 
+            disabled={loading}
+          >
+            {loading ? '更新中...' : '更新'}
+          </button>
         </div>
       </div>
 
       {error && (
-        <Card className="mb-4 p-4 bg-red-900 border-red-700 text-red-200">
+        <div className="mb-4 p-4 bg-red-900 border border-red-700 rounded-lg text-red-200">
           <p className="font-semibold">エラー: {error}</p>
-        </Card>
+        </div>
       )}
 
       {/* 接続状態警告 */}
       {!isConnected && (
-        <Card className="mb-4 p-4 bg-orange-900 border-orange-700">
+        <div className="mb-4 p-4 bg-orange-900 border border-orange-700 rounded-lg">
           <ConnectionStatus showReconnectButton={true} />
-        </Card>
+        </div>
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[calc(100vh-12rem)]">
