@@ -279,8 +279,12 @@ class RootAgent:
     def _format_coming_out_speech(self, coming_out_output: str, player_info: Dict) -> str:
         """カミングアウト発言をフォーマット"""
         # 基本的にはエージェントの出力を使用
-        if len(coming_out_output) > 100:
-            coming_out_output = coming_out_output[:97] + "..."
+        if len(coming_out_output) > 500:
+            cutoff_point = coming_out_output.rfind('。', 0, 497)
+            if cutoff_point > 100:
+                coming_out_output = coming_out_output[:cutoff_point + 1]
+            else:
+                coming_out_output = coming_out_output[:497] + "..."
         
         return coming_out_output
     

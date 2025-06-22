@@ -635,27 +635,33 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
     # ターンを進める前に生存プレイヤーのみを考慮
     alive_players = [pid for pid in turn_order if get_player(db, uuid.UUID(pid)) and get_player(db, uuid.UUID(pid)).is_alive]
     
+    # デバッグログ追加
+    logger.info(f"Alive players count: {len(alive_players)}, alive_players: {alive_players}")
+    
     # 次のプレイヤーを生存者の中から探す
     def find_next_alive_player(start_index: int) -> int:
-        attempts = 0
-        max_attempts = len(turn_order) * 2  # 無限ループ防止
+        if len(alive_players) <= 1:
+            # 生存プレイヤーが1人以下の場合、ゲーム終了すべき
+            logger.warning(f"Only {len(alive_players)} alive players remaining")
+            return start_index
         
-        while attempts < max_attempts:
-            next_idx = (start_index + attempts + 1) % len(turn_order)
+        # 次の生存プレイヤーを探す（現在のプレイヤーをスキップ）
+        for attempt in range(1, len(turn_order)):
+            next_idx = (start_index + attempt) % len(turn_order)
             next_player_id = turn_order[next_idx]
             next_player = get_player(db, uuid.UUID(next_player_id))
             if next_player and next_player.is_alive:
+                logger.info(f"Found next alive player at index {next_idx}: {next_player.character_name}")
                 return next_idx
-            attempts += 1
         
-        # フォールバック: 最初の生存プレイヤーを返す
-        for i, pid in enumerate(turn_order):
-            player = get_player(db, uuid.UUID(pid))
-            if player and player.is_alive:
-                return i
-        return 0  # 最後のフォールバック
+        # フォールバック: 現在のプレイヤーを返す（エラー状態）
+        logger.error("Could not find next alive player, returning current index")
+        return start_index
     
     next_index = find_next_alive_player(current_index)
+    
+    # デバッグログ追加
+    logger.info(f"Turn progression: current_index={current_index}, next_index={next_index}, turn_order={turn_order}")
     
     # シンプルなターン進行 - 常に次のプレイヤーに進む
     db.execute(
@@ -1420,8 +1426,13 @@ def generate_fallback_ai_speech(ai_player, room, db) -> str:
                 raise Exception("AI generation timeout")
             
             speech = response.text.strip()
-            if len(speech) > 200:
-                speech = speech[:197] + "..."
+            # より長い文字数制限に変更し、自然な切断を実装
+            if len(speech) > 500:
+                cutoff_point = speech.rfind('。', 0, 497)
+                if cutoff_point > 100:
+                    speech = speech[:cutoff_point + 1]
+                else:
+                    speech = speech[:497] + "..."
             
             # デバッグ: 生成された発言をログ出力
             logger.info(f"Generated speech for {ai_player.character_name}: '{speech}'")

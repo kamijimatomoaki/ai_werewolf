@@ -266,8 +266,8 @@ export default function GameLog({
 
               {/* ログ内容 */}
               {log.content && (
-                <div className="prose prose-sm max-w-none prose-invert">
-                  <div className="whitespace-pre-wrap break-words text-gray-200">
+                <div className="mt-2">
+                  <div className="whitespace-pre-wrap break-words text-gray-200 leading-relaxed">
                     {log.content}
                   </div>
                 </div>
