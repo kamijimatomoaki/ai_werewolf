@@ -614,8 +614,14 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
     current_index = db_room.current_turn_index
     current_round = db_room.current_round or 1
     
-    if turn_order[current_index] != str(player_id):
-        raise HTTPException(status_code=403, detail="It's not your turn.")
+    # ターン検証を改善 - インデックス範囲もチェック
+    if current_index >= len(turn_order) or turn_order[current_index] != str(player_id):
+        current_player_name = "不明"
+        if current_index < len(turn_order):
+            current_player = get_player(db, uuid.UUID(turn_order[current_index]))
+            if current_player:
+                current_player_name = current_player.character_name
+        raise HTTPException(status_code=403, detail=f"It's not your turn. Current turn: {current_player_name}")
 
     # 現在のラウンドでのプレイヤーの発言回数をチェック (ラウンドあたり1回)
     current_round_speeches = db.query(GameLog).filter(
@@ -636,11 +642,24 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
     # 次のプレイヤーに移行
     next_index = (current_index + 1) % len(turn_order)
     
-    # 全員が今ラウンドで発言したかチェック
-    if next_index == 0:  # 一周した
-        # 全員が今ラウンドで発言したか確認
-        round_complete = True
-        for player_uuid_str in turn_order:
+    # ターンを進める前に生存プレイヤーのみを考慮
+    alive_players = [pid for pid in turn_order if get_player(db, uuid.UUID(pid)) and get_player(db, uuid.UUID(pid)).is_alive]
+    
+    # 次のプレイヤーを生存者の中から探す
+    def find_next_alive_player(start_index: int) -> int:
+        for i in range(len(turn_order)):
+            next_idx = (start_index + i + 1) % len(turn_order)
+            next_player_id = turn_order[next_idx]
+            next_player = get_player(db, uuid.UUID(next_player_id))
+            if next_player and next_player.is_alive:
+                return next_idx
+        return 0  # フォールバック
+    
+    next_index = find_next_alive_player(current_index)
+    
+    # ラウンド完了チェック - 生存プレイヤー全員が発言したかチェック
+    def check_round_complete() -> bool:
+        for player_uuid_str in alive_players:
             player_round_speeches = db.query(GameLog).filter(
                 GameLog.room_id == room_id,
                 GameLog.phase == "day_discussion",
@@ -649,31 +668,29 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
                 GameLog.content.like(f"%Round {current_round}:%")
             ).count()
             if player_round_speeches == 0:
-                round_complete = False
-                break
-        
-        if round_complete:
-            if current_round >= 3:
-                # 3ラウンド完了、投票フェーズへ
-                db.execute(
-                    text("UPDATE rooms SET status = :status WHERE room_id = :room_id"),
-                    {"status": "day_vote", "room_id": str(room_id)}
-                )
-                logger.info(f"All 3 speech rounds completed in room {room_id}. Moving to vote phase.")
-            else:
-                # 次のラウンドへ
-                db.execute(
-                    text("UPDATE rooms SET current_round = :round, current_turn_index = 0 WHERE room_id = :room_id"),
-                    {"round": current_round + 1, "room_id": str(room_id)}
-                )
-                logger.info(f"Round {current_round} completed in room {room_id}. Starting round {current_round + 1}.")
-        else:
-            # まだ今ラウンドで発言していないプレイヤーがいる
+                return False
+        return True
+    
+    # ラウンド完了判定
+    if check_round_complete():
+        if current_round >= 3:
+            # 3ラウンド完了、投票フェーズへ
             db.execute(
-                text("UPDATE rooms SET current_turn_index = :index WHERE room_id = :room_id"),
-                {"index": next_index, "room_id": str(room_id)}
+                text("UPDATE rooms SET status = :status, current_turn_index = 0 WHERE room_id = :room_id"),
+                {"status": "day_vote", "room_id": str(room_id)}
             )
+            create_game_log(db, room_id, "day_discussion", "phase_transition", content="議論終了。投票フェーズに移行します。")
+            logger.info(f"All 3 speech rounds completed in room {room_id}. Moving to vote phase.")
+        else:
+            # 次のラウンドへ
+            db.execute(
+                text("UPDATE rooms SET current_round = :round, current_turn_index = 0 WHERE room_id = :room_id"),
+                {"round": current_round + 1, "room_id": str(room_id)}
+            )
+            create_game_log(db, room_id, "day_discussion", "phase_transition", content=f"ラウンド{current_round}終了。ラウンド{current_round + 1}を開始します。")
+            logger.info(f"Round {current_round} completed in room {room_id}. Starting round {current_round + 1}.")
     else:
+        # まだ今ラウンドで発言していないプレイヤーがいる
         db.execute(
             text("UPDATE rooms SET current_turn_index = :index WHERE room_id = :room_id"),
             {"index": next_index, "room_id": str(room_id)}
@@ -2280,12 +2297,27 @@ async def handle_auto_progress(room_id: uuid.UUID, db: Session = Depends(get_db)
                         "message": f"{current_player.character_name} has already spoken in round {current_round}"
                     }
                 
+                # より厳密な同時実行防止 - 現在のターンプレイヤーの再確認
+                # DB から最新の room 情報を再取得
+                latest_room = get_room(db, room_id)
+                if not latest_room or not latest_room.turn_order or latest_room.current_turn_index is None:
+                    return {"auto_progressed": False, "message": "Room state invalid"}
+                
+                # 最新のターン情報で再検証
+                latest_current_player_id = latest_room.turn_order[latest_room.current_turn_index]
+                if latest_current_player_id != str(current_player.player_id):
+                    logger.info(f"Turn changed while processing. Expected: {current_player.character_name}, Actual: {latest_current_player_id}")
+                    return {
+                        "auto_progressed": False,
+                        "message": f"Turn changed during processing. Current player: {latest_current_player_id}"
+                    }
+                
                 # 他のAIプレイヤーが発言中でないかチェック（同時実行防止）
                 active_ai_speech = db.query(GameLog).filter(
                     GameLog.room_id == room_id,
-                    GameLog.phase == "day_discussion",
+                    GameLog.phase == "day_discussion", 
                     GameLog.event_type == "speech",
-                    GameLog.created_at >= func.datetime('now', '-30 seconds')
+                    GameLog.created_at >= func.datetime('now', '-10 seconds')
                 ).order_by(GameLog.created_at.desc()).first()
                 
                 if active_ai_speech and active_ai_speech.actor_player_id != current_player.player_id:
@@ -2295,8 +2327,15 @@ async def handle_auto_progress(room_id: uuid.UUID, db: Session = Depends(get_db)
                         "message": "Another AI player just spoke, waiting for turn order"
                     }
                 
-                speech = generate_ai_speech(db, room_id, current_player.player_id)
-                updated_room = speak_logic(db, room_id, current_player.player_id, speech)
+                try:
+                    speech = generate_ai_speech(db, room_id, current_player.player_id)
+                    updated_room = speak_logic(db, room_id, current_player.player_id, speech)
+                except HTTPException as e:
+                    logger.warning(f"AI speech failed for {current_player.character_name}: {e.detail}")
+                    return {
+                        "auto_progressed": False,
+                        "message": f"AI speech failed: {e.detail}"
+                    }
                 
                 # 最新のルーム情報を再取得して確実な情報を取得
                 latest_room = get_room(db, room_id)
