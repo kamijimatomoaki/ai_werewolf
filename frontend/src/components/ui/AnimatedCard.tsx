@@ -95,7 +95,7 @@ export function AnimatedCard({
     >
       {/* フロント面 */}
       <div
-        className={`w-full h-full bg-white border border-gray-200 rounded-lg p-4 ${flipTrigger === 'click' ? 'cursor-pointer' : ''}`}
+        className={`w-full h-full bg-gray-800/80 border border-gray-600/50 rounded-lg p-4 ${flipTrigger === 'click' ? 'cursor-pointer' : ''}`}
         style={{
           ...getCardStyle(),
           backfaceVisibility: 'hidden',
@@ -108,7 +108,7 @@ export function AnimatedCard({
       {/* バック面（バックコンテンツがある場合） */}
       {backContent && (
         <div
-          className="absolute inset-0 w-full h-full bg-white border border-gray-200 rounded-lg p-4"
+          className="absolute inset-0 w-full h-full bg-gray-800/80 border border-gray-600/50 rounded-lg p-4"
           style={{
             ...getCardStyle(),
             ...cardStyles.flipCardBack,
@@ -122,7 +122,7 @@ export function AnimatedCard({
 
       {/* ローディングオーバーレイ（アニメーション中） */}
       {isAnimating && (
-        <div className="absolute inset-0 bg-white bg-opacity-50 flex items-center justify-center z-10 rounded-lg">
+        <div className="absolute inset-0 bg-gray-800 bg-opacity-50 flex items-center justify-center z-10 rounded-lg">
           <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
         </div>
       )}
