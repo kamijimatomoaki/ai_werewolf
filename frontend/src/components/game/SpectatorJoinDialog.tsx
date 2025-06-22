@@ -61,7 +61,7 @@ export default function SpectatorJoinDialog({ isOpen, roomName, onClose, onJoin 
                 onClick={handleClose}
                 className="text-gray-400 hover:text-gray-600"
               >
-                ×
+                &times;
               </button>
             )}
           </div>
@@ -125,5 +125,3 @@ export default function SpectatorJoinDialog({ isOpen, roomName, onClose, onJoin 
     </div>
   );
 }
-
-export default SpectatorJoinDialog;

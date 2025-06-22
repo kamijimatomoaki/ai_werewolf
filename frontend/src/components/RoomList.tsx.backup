@@ -298,10 +298,11 @@ export default function RoomList({ onRoomJoin, onSpectatorJoin }: RoomListProps)
                   onClick={() => setIsOpen(false)}
                   className="text-gray-400 hover:text-white"
                 >
-                  ✕
+                  ×
                 </button>
               </div>
               <div className="space-y-4 mb-6">
+                <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">ホスト名</label>
                   <input
@@ -312,7 +313,7 @@ export default function RoomList({ onRoomJoin, onSpectatorJoin }: RoomListProps)
                     className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-blue-500"
                   />
                 </div>
-                
+                  
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">部屋名</label>
                   <input
@@ -323,70 +324,70 @@ export default function RoomList({ onRoomJoin, onSpectatorJoin }: RoomListProps)
                     className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-blue-500"
                   />
                 </div>
-                
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-300 mb-2">人間プレイヤー</label>
-                    <input
-                      type="number"
-                      min={1}
-                      max={8}
-                      value={String(newRoom.human_players)}
-                      onChange={(e) => {
-                        const humanPlayers = Number(e.target.value);
-                        setNewRoom(prev => ({ 
-                          ...prev, 
-                          human_players: humanPlayers,
-                          total_players: humanPlayers + prev.ai_players
-                        }));
-                      }}
-                      className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
-                    />
+                  
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-300 mb-2">人間プレイヤー</label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={8}
+                        value={String(newRoom.human_players)}
+                        onChange={(e) => {
+                          const humanPlayers = Number(e.target.value);
+                          setNewRoom(prev => ({ 
+                            ...prev, 
+                            human_players: humanPlayers,
+                            total_players: humanPlayers + prev.ai_players
+                          }));
+                        }}
+                        className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
+                      />
+                    </div>
+                    
+                    <div>
+                      <label className="block text-sm font-medium text-gray-300 mb-2">AIプレイヤー</label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={8}
+                        value={String(newRoom.ai_players)}
+                        onChange={(e) => {
+                          const aiPlayers = Number(e.target.value);
+                          setNewRoom(prev => ({ 
+                            ...prev, 
+                            ai_players: aiPlayers,
+                            total_players: prev.human_players + aiPlayers
+                          }));
+                        }}
+                        className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
+                      />
+                    </div>
                   </div>
                   
-                  <div>
-                    <label className="block text-sm font-medium text-gray-300 mb-2">AIプレイヤー</label>
-                    <input
-                      type="number"
-                      min={0}
-                      max={8}
-                      value={String(newRoom.ai_players)}
-                      onChange={(e) => {
-                        const aiPlayers = Number(e.target.value);
-                        setNewRoom(prev => ({ 
-                          ...prev, 
-                          ai_players: aiPlayers,
-                          total_players: prev.human_players + aiPlayers
-                        }));
-                      }}
-                      className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
-                    />
-                  </div>
-                </div>
-                
-                {/* 総プレイヤー数の表示 */}
-                <div className="p-4 bg-gradient-to-r from-gray-700/50 to-gray-600/50 rounded-lg border border-gray-500/30 backdrop-blur-sm">
-                  <div className="flex justify-between items-center">
-                    <span className="text-gray-200">総プレイヤー数:</span>
-                    <span className="text-white font-bold text-xl bg-red-600/20 px-3 py-1 rounded-full">{newRoom.total_players}人</span>
-                  </div>
-                  <div className="flex justify-between items-center text-sm text-gray-300 mt-2">
-                    <span className="flex items-center gap-1">
-                      <div className="w-2 h-2 bg-blue-400 rounded-full"></div>
-                      人間: {newRoom.human_players}人
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <div className="w-2 h-2 bg-purple-400 rounded-full"></div>
-                      AI: {newRoom.ai_players}人
-                    </span>
-                  </div>
-                  {(newRoom.total_players < 5 || newRoom.total_players > 12) && (
-                    <div className="mt-3 p-2 bg-yellow-600/20 border border-yellow-500/30 rounded text-yellow-200 text-xs">
-                      ⚠️ 推奨プレイヤー数は5〜12人です
+                  {/* 総プレイヤー数の表示 */}
+                  <div className="p-4 bg-gradient-to-r from-gray-700/50 to-gray-600/50 rounded-lg border border-gray-500/30 backdrop-blur-sm">
+                    <div className="flex justify-between items-center">
+                      <span className="text-gray-200">総プレイヤー数:</span>
+                      <span className="text-white font-bold text-xl bg-red-600/20 px-3 py-1 rounded-full">{newRoom.total_players}人</span>
                     </div>
-                  )}
-                </div>
-                
+                    <div className="flex justify-between items-center text-sm text-gray-300 mt-2">
+                      <span className="flex items-center gap-1">
+                        <div className="w-2 h-2 bg-blue-400 rounded-full"></div>
+                        人間: {newRoom.human_players}人
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <div className="w-2 h-2 bg-purple-400 rounded-full"></div>
+                        AI: {newRoom.ai_players}人
+                      </span>
+                    </div>
+                    {(newRoom.total_players < 5 || newRoom.total_players > 12) && (
+                      <div className="mt-3 p-2 bg-yellow-600/20 border border-yellow-500/30 rounded text-yellow-200 text-xs">
+                        ⚠️ 推奨プレイヤー数は5〜12人です
+                      </div>
+                    )}
+                  </div>
+                  
                 <div className="flex items-center gap-3">
                   <input
                     type="checkbox"
@@ -430,7 +431,7 @@ export default function RoomList({ onRoomJoin, onSpectatorJoin }: RoomListProps)
                   onClick={() => setIsJoinOpen(false)}
                   className="text-gray-400 hover:text-white"
                 >
-                  ✕
+                  ×
                 </button>
               </div>
               <div className="mb-6">
