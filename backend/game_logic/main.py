@@ -639,21 +639,28 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
     round_statement = f"Round {current_round}: {statement}"
     create_game_log(db, room_id, "day_discussion", "speech", actor_player_id=player_id, content=round_statement)
     
-    # 次のプレイヤーに移行
-    next_index = (current_index + 1) % len(turn_order)
-    
     # ターンを進める前に生存プレイヤーのみを考慮
     alive_players = [pid for pid in turn_order if get_player(db, uuid.UUID(pid)) and get_player(db, uuid.UUID(pid)).is_alive]
     
     # 次のプレイヤーを生存者の中から探す
     def find_next_alive_player(start_index: int) -> int:
-        for i in range(len(turn_order)):
-            next_idx = (start_index + i + 1) % len(turn_order)
+        attempts = 0
+        max_attempts = len(turn_order) * 2  # 無限ループ防止
+        
+        while attempts < max_attempts:
+            next_idx = (start_index + attempts + 1) % len(turn_order)
             next_player_id = turn_order[next_idx]
             next_player = get_player(db, uuid.UUID(next_player_id))
             if next_player and next_player.is_alive:
                 return next_idx
-        return 0  # フォールバック
+            attempts += 1
+        
+        # フォールバック: 最初の生存プレイヤーを返す
+        for i, pid in enumerate(turn_order):
+            player = get_player(db, uuid.UUID(pid))
+            if player and player.is_alive:
+                return i
+        return 0  # 最後のフォールバック
     
     next_index = find_next_alive_player(current_index)
     
@@ -682,13 +689,20 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
             create_game_log(db, room_id, "day_discussion", "phase_transition", content="議論終了。投票フェーズに移行します。")
             logger.info(f"All 3 speech rounds completed in room {room_id}. Moving to vote phase.")
         else:
-            # 次のラウンドへ
+            # 次のラウンドへ - 最初の生存プレイヤーから開始
+            first_alive_index = 0
+            for i, pid in enumerate(turn_order):
+                player = get_player(db, uuid.UUID(pid))
+                if player and player.is_alive:
+                    first_alive_index = i
+                    break
+            
             db.execute(
-                text("UPDATE rooms SET current_round = :round, current_turn_index = 0 WHERE room_id = :room_id"),
-                {"round": current_round + 1, "room_id": str(room_id)}
+                text("UPDATE rooms SET current_round = :round, current_turn_index = :index WHERE room_id = :room_id"),
+                {"round": current_round + 1, "index": first_alive_index, "room_id": str(room_id)}
             )
             create_game_log(db, room_id, "day_discussion", "phase_transition", content=f"ラウンド{current_round}終了。ラウンド{current_round + 1}を開始します。")
-            logger.info(f"Round {current_round} completed in room {room_id}. Starting round {current_round + 1}.")
+            logger.info(f"Round {current_round} completed in room {room_id}. Starting round {current_round + 1} with player index {first_alive_index}.")
     else:
         # まだ今ラウンドで発言していないプレイヤーがいる
         db.execute(
@@ -1401,7 +1415,7 @@ def generate_fallback_ai_speech(ai_player, room, db) -> str:
             ).order_by(GameLog.created_at.desc()).limit(10).all()
             
             # プロンプトを構築
-            prompt = build_ai_speech_prompt(ai_player, room, recent_logs)
+            prompt = build_ai_speech_prompt(ai_player, room, recent_logs, db)
             
             model = GenerativeModel("gemini-1.5-flash")
             
@@ -1470,7 +1484,26 @@ def get_strategic_coming_out_decision(ai_player: Player, room: Room, recent_logs
     
     return ""
 
-def build_ai_speech_prompt(ai_player: Player, room: Room, recent_logs: List[GameLog]) -> str:
+def get_character_speech_history(db: Session, room_id: uuid.UUID, player_id: uuid.UUID) -> List[str]:
+    """特定のキャラクターの過去の発言履歴を全て取得"""
+    speech_logs = db.query(GameLog).filter(
+        GameLog.room_id == room_id,
+        GameLog.actor_player_id == player_id,
+        GameLog.event_type == "speech"
+    ).order_by(GameLog.created_at.asc()).all()
+    
+    speeches = []
+    for log in speech_logs:
+        if log.content:
+            # Round情報を削除してクリーンな発言のみを取得
+            clean_speech = log.content
+            if "Round " in clean_speech and ": " in clean_speech:
+                clean_speech = clean_speech.split(": ", 1)[1]
+            speeches.append(clean_speech)
+    
+    return speeches
+
+def build_ai_speech_prompt(ai_player: Player, room: Room, recent_logs: List[GameLog], db: Session) -> str:
     """AI発言生成用のプロンプトを構築"""
     
     # 戦略的カミングアウトをチェック
@@ -1485,16 +1518,45 @@ def build_ai_speech_prompt(ai_player: Player, room: Room, recent_logs: List[Game
         'seer': '占い師として、調査結果を元に人狼を見つけることが目標です。状況を見てカミングアウトを検討してください。'
     }
     
-    # ペルソナ情報
+    # ペルソナ情報を詳細に展開
     persona_info = ""
+    speech_style_instruction = ""
     if ai_player.character_persona:
-        persona_info = f"キャラクター設定: {ai_player.character_persona}"
+        persona = ai_player.character_persona
+        persona_info = f"""
+# あなたのキャラクター設定
+- 名前: {ai_player.character_name}
+- 年齢: {persona.get('age', '不明')}歳
+- 性別: {persona.get('gender', '不明')}
+- 性格: {persona.get('personality', '普通')}
+- 話し方: {persona.get('speech_style', '普通')}
+- 背景: {persona.get('background', '特になし')}"""
+        
+        # 話し方の柔軟な指示（パターンマッチングではなく、直接的な指示）
+        speech_style = persona.get('speech_style', '')
+        if speech_style:
+            speech_style_instruction = f"必ず「{speech_style}」という話し方で一貫して発言してください。この口調を絶対に変えないでください。"
+        else:
+            speech_style_instruction = "自然で一貫した話し方を心がけてください。"
     
-    # 最近の会話履歴
+    # そのキャラクターの過去の発言履歴を全て取得
+    character_speech_history = get_character_speech_history(db, room.room_id, ai_player.player_id)
+    character_consistency_info = ""
+    if character_speech_history:
+        # 最近の3-5発言を一貫性確認用に表示
+        recent_character_speeches = character_speech_history[-5:] if len(character_speech_history) > 5 else character_speech_history
+        character_consistency_info = f"""
+# あなたの過去の発言履歴（一貫性を保つため）
+これまでのあなたの発言例:
+{chr(10).join([f'- "{speech}"' for speech in recent_character_speeches])}
+
+重要: 上記の発言例と同じ口調・性格で話してください。話し方を変えないでください。"""
+    
+    # 最近の全体会話履歴
     conversation_history = ""
     if recent_logs:
-        conversation_history = "最近の会話:\n"
-        for log in reversed(recent_logs[-5:]):  # 最新5件
+        conversation_history = "最近の全体会話:\n"
+        for log in reversed(recent_logs[-8:]):  # 最新8件に拡大
             if log.event_type == "speech" and log.actor:
                 # Round情報を削除して表示
                 clean_content = log.content.replace(f"Round {getattr(room, 'current_round', 1)}: ", "")
@@ -1510,13 +1572,18 @@ def build_ai_speech_prompt(ai_player: Player, room: Room, recent_logs: List[Game
 - 現在は{room.day_number}日目の{('昼の議論' if room.status == 'day_discussion' else '投票' if room.status == 'day_vote' else '夜')}フェーズです
 - 生存プレイヤー数: {len([p for p in room.players if p.is_alive])}人
 
-# あなたの設定
 {persona_info if persona_info else "特別な設定はありません。自然体で発言してください。"}
+
+{character_consistency_info}
 
 {conversation_history}
 
-# 指示
-上記の状況を踏まえて、あなたの役職と性格に合った発言を1つ生成してください。
+# 最重要な発言指示
+{speech_style_instruction}
+過去の発言例がある場合は、必ずその口調と完全に同じ話し方で発言してください。
+キャラクターの一貫性を絶対に保ち、話し方や性格を変えないでください。
+
+# その他の指示
 - 50文字以内で簡潔に
 - 自然で人間らしい発言
 - 役職の目標に沿った内容
@@ -1953,7 +2020,7 @@ def handle_generate_persona(player_id: uuid.UUID, persona_input: PersonaInput, d
       "gender": "性別 (例: 男性, 女性, 不明)",
       "age": "年齢 (整数)",
       "personality": "性格や特徴 (例: 冷静沈着で論理的、疑い深い、感情的な発言が多い)",
-      "speech_style": "口調 (例: 丁寧語、タメ口、古風な話し方、無口)",
+      "speech_style": "口調 (例: 丁寧語、タメ口、古風な話し方、無口、関西弁、のだ口調、である調、だっぺ口調、方言など自由に)",
       "background": "キャラクターの背景設定 (例: 村の医者、旅の詩人、元騎士団長)"
     }}
     """
@@ -1981,20 +2048,46 @@ def handle_ai_discussion(request: DiscussionRequest):
             
             history_text = "\n".join([f"{h.get('speaker', 'Unknown')}: {h.get('text', '')}" for h in request.discussion_history[-5:]])
             
+            # ペルソナから話し方を抽出（柔軟な対応）
+            persona_data = persona_info.get('character_persona', {})
+            speech_style = persona_data.get('speech_style', '')
+            speech_instruction = ""
+            
+            if speech_style:
+                speech_instruction = f"必ず「{speech_style}」という話し方で一貫して発言してください。この口調を絶対に変えないでください。"
+            else:
+                speech_instruction = "自然で一貫した話し方を心がけてください。"
+
             prompt = f"""
-            あなたは人狼ゲームに参加している{persona_info.get('character_name', 'プレイヤー')}です。
-            ペルソナ情報: {json.dumps(persona_info.get('character_persona', {}), ensure_ascii=False)}
-            役職: {persona_info.get('role', '不明')}
-            
+            あなたは人狼ゲームの参加者「{persona_info.get('character_name', 'プレイヤー')}」です。
+
+            # あなたのキャラクター設定
+            - 名前: {persona_info.get('character_name', 'プレイヤー')}
+            - 年齢: {persona_data.get('age', '不明')}歳
+            - 性別: {persona_data.get('gender', '不明')}
+            - 性格: {persona_data.get('personality', '普通')}
+            - 話し方: {persona_data.get('speech_style', '普通')}
+            - 背景: {persona_data.get('background', '特になし')}
+            - 役職: {persona_info.get('role', '不明')}
+
+            # 最重要な話し方指示
+            {speech_instruction}
+            絶対にキャラクター設定の話し方を変えないでください。一貫性を保ってください。
+
+            # ゲーム状況
             現在は{request.current_day}日目の{request.current_phase}フェーズです。
-            
-            これまでの議論:
-            {history_text}
-            
             生存プレイヤー: {', '.join(request.living_player_names)}
-            
-            あなたのキャラクターらしい発言を200文字以内で生成してください。
-            自然な会話として、疑問を投げかけたり、推理を述べたり、他の人の意見に反応してください。
+
+            # これまでの議論
+            {history_text}
+
+            # 発言指示
+            - あなたのキャラクター設定と話し方に完全に合った発言を200文字以内で生成
+            - 自然な会話として、疑問を投げかけたり、推理を述べたり、他の人の意見に反応
+            - キャラクターの性格と口調を絶対に一貫して保つ
+            - 設定された話し方を必ず守る
+
+            発言:
             """
             
             response = model.generate_content(prompt)
