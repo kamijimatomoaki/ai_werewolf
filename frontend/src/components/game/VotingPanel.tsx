@@ -1,9 +1,4 @@
 import { useState } from 'react';
-import { Button } from "@heroui/button";
-import { Card } from "@heroui/card";
-import { Avatar } from "@heroui/avatar";
-import { Chip } from "@heroui/chip";
-import { Divider } from "@heroui/divider";
 
 import { PlayerInfo } from '@/types/api';
 import { VoteResult } from '@/services/api';
@@ -83,18 +78,20 @@ export default function VotingPanel({
               return (
                 <div key={playerId} className="flex justify-between items-center p-3 bg-gradient-to-r from-gray-800/80 to-gray-700/80 border border-gray-600/50 rounded-lg backdrop-blur-sm">
                   <div className="flex items-center gap-3">
-                    <Avatar name={player?.character_name || '不明'} size="sm" />
+                    <div className="w-8 h-8 rounded-full bg-gray-500 text-white flex items-center justify-center text-xs font-bold">
+                      {(player?.character_name || '不明').charAt(0)}
+                    </div>
                     <span className="font-medium text-gray-200">{player?.character_name || '不明'}</span>
                   </div>
-                  <Chip size="sm" color="danger" variant="flat">
+                  <span className="px-2 py-1 text-xs rounded bg-red-500/20 text-red-400">
                     {count}票
-                  </Chip>
+                  </span>
                 </div>
               );
             })}
           </div>
 
-          <Divider />
+          <hr className="border-gray-600" />
 
           {/* 処刑結果 */}
           {voteResult.voted_out_player_id && (
@@ -151,26 +148,30 @@ export default function VotingPanel({
                     onClick={() => handleTargetSelect(player.player_id)}
                   >
                     <div className="flex items-center gap-3">
-                      <Avatar name={player.character_name} size="sm" />
+                      <div className="w-8 h-8 rounded-full bg-blue-500 text-white flex items-center justify-center text-xs font-bold">
+                        {player.character_name.charAt(0)}
+                      </div>
                       <div className="flex-1">
                         <span className="font-medium">{player.character_name}</span>
                         <div className="flex gap-1 mt-1">
-                          <Chip size="sm" variant="flat" color={player.is_human ? "primary" : "secondary"}>
+                          <span className={`px-2 py-1 text-xs rounded ${
+                            player.is_human ? 'bg-blue-500/20 text-blue-400' : 'bg-gray-500/20 text-gray-400'
+                          }`}>
                             {player.is_human ? "人間" : "AI"}
-                          </Chip>
+                          </span>
                         </div>
                       </div>
                       {selectedVoteTarget === player.player_id && (
-                        <Chip size="sm" color="danger" variant="flat">
+                        <span className="px-2 py-1 text-xs rounded bg-red-500/20 text-red-400">
                           選択中
-                        </Chip>
+                        </span>
                       )}
                     </div>
                   </div>
                 ))}
               </div>
 
-              <Divider />
+              <hr className="border-gray-600" />
 
               {/* 投票ボタン */}
               <div className="space-y-3">
@@ -186,27 +187,23 @@ export default function VotingPanel({
                 )}
 
                 <div className="flex gap-3">
-                  <Button
-                    color="danger"
+                  <button
                     onClick={handleVote}
-                    isLoading={isVoting}
-                    isDisabled={!selectedVoteTarget || isLoading}
-                    className="flex-1"
-                    startContent={<VoteIcon className="w-4 h-4" />}
+                    disabled={isVoting || !selectedVoteTarget || isLoading}
+                    className="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded transition-colors flex items-center justify-center gap-2"
                   >
+                    <VoteIcon className="w-4 h-4" />
                     {isVoting ? '投票中...' : '投票する'}
-                  </Button>
+                  </button>
 
                   {selectedVoteTarget && (
-                    <Button
-                      variant="bordered"
-                      color="warning"
+                    <button
                       onClick={() => setSelectedVoteTarget('')}
-                      isDisabled={isVoting || isLoading}
-                      className="border-orange-500/50 text-orange-300 hover:bg-orange-500/20"
+                      disabled={isVoting || isLoading}
+                      className="px-4 py-2 border border-orange-500/50 text-orange-300 hover:bg-orange-500/20 disabled:opacity-50 disabled:cursor-not-allowed rounded transition-colors"
                     >
                       選択解除
-                    </Button>
+                    </button>
                   )}
                 </div>
               </div>

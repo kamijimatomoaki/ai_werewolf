@@ -1,7 +1,4 @@
 import React from 'react';
-import { Chip } from '@heroui/chip';
-import { Button } from '@heroui/button';
-import { Card } from '@heroui/card';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { useOfflineDetection } from '@/hooks/useOfflineDetection';
 import OfflineIndicator from '@/components/ui/OfflineIndicator';
@@ -72,13 +69,14 @@ export function ConnectionStatus({ showReconnectButton = true, compact = false }
         {!isOffline && (
           <>
             <span className="text-sm">{getStatusIcon(connectionStatus)}</span>
-            <Chip 
-              size="sm" 
-              color={getStatusColor(connectionStatus)} 
-              variant="flat"
-            >
+            <span className={`px-2 py-1 text-xs rounded ${
+              getStatusColor(connectionStatus) === 'success' ? 'bg-green-500/20 text-green-400' :
+              getStatusColor(connectionStatus) === 'warning' ? 'bg-yellow-500/20 text-yellow-400' :
+              getStatusColor(connectionStatus) === 'danger' ? 'bg-red-500/20 text-red-400' :
+              'bg-gray-500/20 text-gray-400'
+            }`}>
               {getStatusLabel(connectionStatus)}
-            </Chip>
+            </span>
             {connectionStatus === 'reconnecting' && (
               <span className="text-xs text-gray-500">
                 ({reconnectAttempts}/{maxReconnectAttempts})
@@ -110,13 +108,14 @@ export function ConnectionStatus({ showReconnectButton = true, compact = false }
           <div>
             <div className="flex items-center gap-2">
               <span className="font-medium">リアルタイム通信</span>
-              <Chip 
-                size="sm" 
-                color={getStatusColor(connectionStatus)} 
-                variant="flat"
-              >
+              <span className={`px-2 py-1 text-xs rounded ${
+                getStatusColor(connectionStatus) === 'success' ? 'bg-green-500/20 text-green-400' :
+                getStatusColor(connectionStatus) === 'warning' ? 'bg-yellow-500/20 text-yellow-400' :
+                getStatusColor(connectionStatus) === 'danger' ? 'bg-red-500/20 text-red-400' :
+                'bg-gray-500/20 text-gray-400'
+              }`}>
                 {getStatusLabel(connectionStatus)}
-              </Chip>
+              </span>
             </div>
             
             {connectionStatus === 'reconnecting' && (
