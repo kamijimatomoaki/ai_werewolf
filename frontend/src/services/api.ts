@@ -210,6 +210,13 @@ class ApiService {
     if (!response.ok) throw new Error('Failed to auto progress');
     return response.json();
   }
+
+  // ゲームサマリー取得
+  async getGameSummary(roomId: string): Promise<any> {
+    const response = await fetch(`${API_BASE_URL}/rooms/${roomId}/summary`);
+    if (!response.ok) throw new Error('Failed to get game summary');
+    return response.json();
+  }
 }
 
 export const apiService = new ApiService();

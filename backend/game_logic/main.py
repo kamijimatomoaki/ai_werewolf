@@ -27,7 +27,7 @@ from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field, ConfigDict
 from sqlalchemy import (Boolean, Column, DateTime, create_engine,
-                        ForeignKey, Integer, String, Text, text, JSON)
+                        ForeignKey, Integer, String, Text, text, JSON, func)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import Session, relationship, sessionmaker, joinedload
@@ -786,7 +786,7 @@ def get_spectator_room_view(db: Session, room_id: uuid.UUID) -> Optional[Spectat
     # 公開されているログのみ（役職に関する情報を除外）
     public_logs = db.query(GameLog).filter(
         GameLog.room_id == room_id,
-        GameLog.event_type.in_(['speak', 'vote', 'game_start', 'game_end', 'phase_change'])
+        GameLog.event_type.in_(['speech', 'vote', 'game_start', 'game_end', 'phase_change'])
     ).options(joinedload(GameLog.actor)).order_by(GameLog.created_at.asc()).all()
     
     # プレイヤー情報（役職を隠す）
@@ -2274,13 +2274,32 @@ async def handle_auto_progress(room_id: uuid.UUID, db: Session = Depends(get_db)
                 ).first()
                 
                 if already_spoken:
+                    logger.info(f"{current_player.character_name} already spoke in round {current_round}")
                     return {
                         "auto_progressed": False,
                         "message": f"{current_player.character_name} has already spoken in round {current_round}"
                     }
                 
+                # 他のAIプレイヤーが発言中でないかチェック（同時実行防止）
+                active_ai_speech = db.query(GameLog).filter(
+                    GameLog.room_id == room_id,
+                    GameLog.phase == "day_discussion",
+                    GameLog.event_type == "speech",
+                    GameLog.created_at >= func.datetime('now', '-30 seconds')
+                ).order_by(GameLog.created_at.desc()).first()
+                
+                if active_ai_speech and active_ai_speech.actor_player_id != current_player.player_id:
+                    logger.info(f"Another AI player just spoke recently, waiting before {current_player.character_name} speaks")
+                    return {
+                        "auto_progressed": False,
+                        "message": "Another AI player just spoke, waiting for turn order"
+                    }
+                
                 speech = generate_ai_speech(db, room_id, current_player.player_id)
                 updated_room = speak_logic(db, room_id, current_player.player_id, speech)
+                
+                # 最新のルーム情報を再取得して確実な情報を取得
+                latest_room = get_room(db, room_id)
                 
                 # WebSocketで発言を通知
                 await sio.emit("new_speech", {
@@ -2294,8 +2313,9 @@ async def handle_auto_progress(room_id: uuid.UUID, db: Session = Depends(get_db)
                     "auto_progressed": True,
                     "speaker": current_player.character_name,
                     "speech": speech,
-                    "room_status": updated_room.status,
-                    "current_turn_index": updated_room.current_turn_index
+                    "room_status": latest_room.status if latest_room else updated_room.status,
+                    "current_turn_index": latest_room.current_turn_index if latest_room else updated_room.current_turn_index,
+                    "next_player": latest_room.turn_order[latest_room.current_turn_index] if latest_room and latest_room.turn_order else None
                 }
             else:
                 return {

@@ -15,6 +15,7 @@ import GameControls from '@/components/game/GameControls';
 import VotingPanel from '@/components/game/VotingPanel';
 import GameLog from '@/components/game/GameLog';
 import PhaseTransition from '@/components/game/PhaseTransition';
+import GameSummary from '@/components/game/GameSummary';
 import { usePhaseTransition } from '@/hooks/useAnimations';
 import { RoomInfo, PlayerInfo, GameLogInfo } from '@/types/api';
 
@@ -33,6 +34,8 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
   // 削除: statement, personaKeywords, selectedVoteTarget は各コンポーネントで管理
   const [voteResult, setVoteResult] = useState<VoteResult | null>(null);
   const [connectionWarningShown, setConnectionWarningShown] = useState(false);
+  const [autoProgressInProgress, setAutoProgressInProgress] = useState(false);
+  const [showSummary, setShowSummary] = useState(false);
   
   // フェーズ遷移アニメーション
   const { isTransitioning, handlePhaseChange, animationSettings } = usePhaseTransition();
@@ -67,7 +70,13 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
 
   // AI自動進行のチェック
   const checkForAIAutoProgress = useCallback(async (roomData: any) => {
-    // 昼の議論フェーズかつ、現在のプレイヤーがAIの場合、自動進行を呼び出す
+    // 既に自動進行中の場合はスキップ
+    if (autoProgressInProgress) {
+      console.log('Auto progress already in progress, skipping');
+      return;
+    }
+    
+    // 発言フェーズでのAI自動進行
     if (roomData.status === 'day_discussion' && 
         roomData.turn_order && 
         roomData.current_turn_index !== undefined) {
@@ -76,18 +85,40 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
       const currentPlayer = roomData.players.find((p: any) => p.player_id === currentPlayerId);
       
       if (currentPlayer && !currentPlayer.is_human) {
-        // AIプレイヤーの番の場合、3秒待ってから自動進行を呼び出す
         console.log(`AI player turn detected: ${currentPlayer.character_name}`);
+        setAutoProgressInProgress(true);
         setTimeout(async () => {
           try {
-            await apiService.autoProgress(roomId);
+            const result = await apiService.autoProgress(roomId);
+            console.log('Auto progress result:', result);
           } catch (error) {
             console.error('AI auto progress failed:', error);
+          } finally {
+            setAutoProgressInProgress(false);
           }
-        }, 3000); // 3秒の遅延を追加してUI更新を待つ
+        }, 3000);
       }
     }
-  }, [roomId]);
+    
+    // 投票フェーズでのAI自動投票
+    if (roomData.status === 'day_vote') {
+      const aiPlayers = roomData.players.filter((p: any) => p.is_alive && !p.is_human);
+      if (aiPlayers.length > 0) {
+        console.log(`AI auto vote check for ${aiPlayers.length} AI players`);
+        setAutoProgressInProgress(true);
+        setTimeout(async () => {
+          try {
+            const result = await apiService.autoProgress(roomId);
+            console.log('Auto vote result:', result);
+          } catch (error) {
+            console.error('AI auto vote failed:', error);
+          } finally {
+            setAutoProgressInProgress(false);
+          }
+        }, 2000);
+      }
+    }
+  }, [roomId, autoProgressInProgress]);
 
   // ゲーム開始
   const handleStartGame = async () => {
@@ -364,6 +395,14 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
         </div>
         <div className="flex items-center gap-2">
           <ConnectionStatus compact={true} showReconnectButton={false} />
+          <Button
+            color="primary"
+            variant="bordered"
+            onClick={() => setShowSummary(true)}
+            size="sm"
+          >
+            📊 サマリー
+          </Button>
           <Button color="secondary" onClick={fetchRoomData} isLoading={loading}>
             更新
           </Button>
@@ -477,6 +516,13 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
           />
         </div>
       </div>
+      
+      {/* ゲームサマリーモーダル */}
+      <GameSummary
+        roomId={roomId}
+        isOpen={showSummary}
+        onClose={() => setShowSummary(false)}
+      />
     </div>
   );
 }
