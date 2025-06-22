@@ -1,8 +1,4 @@
 import { useState, useEffect } from 'react';
-import { Button } from "@heroui/button";
-import { Card } from "@heroui/card";
-import { Avatar } from "@heroui/avatar";
-import { Chip } from "@heroui/chip";
 
 import { PlayerInfo } from '@/types/api';
 import AnimatedCard, { AnimatedPlayerCard } from '@/components/ui/AnimatedCard';
@@ -109,36 +105,35 @@ export default function PlayerList({
             onReveal={() => console.log(`${player.character_name}の役職が公開されました`)}
           >
             <div className="flex items-center gap-3 p-3">
-              <Avatar 
-                name={player.character_name}
-                size="sm"
-                color={player.is_human ? "primary" : "secondary"}
-                className={!player.is_alive ? 'opacity-60 grayscale' : ''}
-              />
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${
+                player.is_human ? 'bg-blue-500 text-white' : 'bg-gray-500 text-white'
+              } ${!player.is_alive ? 'opacity-60 grayscale' : ''}`}>
+                {player.character_name.charAt(0)}
+              </div>
               <div className="flex-1 min-w-0">
                 <p className={`font-medium truncate ${!player.is_alive ? 'opacity-60' : ''}`}>
                   {player.character_name}
                   {player.player_id === currentPlayerId && " (あなた)"}
                 </p>
                 <div className="flex gap-1 flex-wrap">
-                  <Chip size="sm" variant="flat" color={player.is_human ? "primary" : "secondary"}>
+                  <span className={`px-2 py-1 text-xs rounded ${
+                    player.is_human ? 'bg-blue-500/20 text-blue-400' : 'bg-gray-500/20 text-gray-400'
+                  }`}>
                     {player.is_human ? "人間" : "AI"}
-                  </Chip>
-                  <Chip 
-                    size="sm" 
-                    variant="flat" 
-                    color={player.is_alive ? "success" : "danger"}
-                  >
+                  </span>
+                  <span className={`px-2 py-1 text-xs rounded ${
+                    player.is_alive ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
+                  }`}>
                     {player.is_alive ? "生存" : "脱落"}
-                  </Chip>
+                  </span>
                   {player.role && (gameStatus === 'finished' || player.player_id === currentPlayerId) && (
-                    <Chip size="sm" variant="flat" color="warning">
+                    <span className="px-2 py-1 text-xs rounded bg-yellow-500/20 text-yellow-400">
                       {player.role}
-                    </Chip>
+                    </span>
                   )}
                   {player.character_persona && (
                     <div className="w-full mt-2">
-                      <Card className="p-3 bg-gradient-to-r from-purple-600/20 to-pink-600/20 border border-purple-400/30 backdrop-blur-sm">
+                      <div className="p-3 bg-gradient-to-r from-purple-600/20 to-pink-600/20 border border-purple-400/30 rounded-lg backdrop-blur-sm">
                         <p className="text-xs font-medium text-purple-200">ペルソナ:</p>
                         <p className="text-sm text-gray-200 mt-1">
                           {player.character_persona.age}歳の{player.character_persona.gender}。
@@ -150,7 +145,7 @@ export default function PlayerList({
                             </span>
                           )}
                         </p>
-                      </Card>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -180,12 +175,14 @@ export default function PlayerList({
                 {players.filter(p => !p.is_human && !p.character_persona).map((player) => (
                   <div key={player.player_id} className="space-y-2 p-4 bg-gradient-to-r from-gray-700/60 to-gray-600/60 rounded-lg border border-gray-500/40 backdrop-blur-sm">
                     <div className="flex items-center gap-2 mb-2">
-                      <Avatar name={player.character_name} size="sm" color="secondary" />
+                      <div className="w-8 h-8 rounded-full bg-gray-500 text-white flex items-center justify-center text-xs font-bold">
+                        {player.character_name.charAt(0)}
+                      </div>
                       <span className="font-medium text-white">{player.character_name}</span>
                       {generatingPersona === player.player_id && (
-                        <Chip size="sm" color="warning" variant="flat">
+                        <span className="px-2 py-1 text-xs rounded bg-yellow-500/20 text-yellow-400">
                           生成中...
-                        </Chip>
+                        </span>
                       )}
                     </div>
                     
@@ -205,20 +202,17 @@ export default function PlayerList({
                 
                 {/* 一括生成ボタン */}
                 <div className="pt-2">
-                  <Button
-                    size="lg"
-                    color="primary"
+                  <button
                     onClick={handleBulkGeneratePersona}
-                    isDisabled={
+                    disabled={
                       generatingPersona !== null ||
                       !players.filter(p => !p.is_human && !p.character_persona).some(p => personaKeywords[p.player_id]?.trim())
                     }
-                    isLoading={generatingPersona !== null}
-                    className="w-full"
-                    startContent={generatingPersona ? null : <span>🎭</span>}
+                    className="w-full px-6 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-lg transition-colors flex items-center justify-center gap-2"
                   >
+                    {generatingPersona ? null : <span>🎭</span>}
                     {generatingPersona ? 'ペルソナ生成中...' : 'すべてのペルソナを一括生成'}
-                  </Button>
+                  </button>
                   
                   {players.filter(p => !p.is_human && !p.character_persona).some(p => personaKeywords[p.player_id]?.trim()) && (
                     <p className="text-xs text-gray-600 mt-2 text-center">
@@ -248,16 +242,13 @@ export default function PlayerList({
             </div>
           )}
           
-          <Button
-            color="primary"
-            className="w-full"
+          <button
             onClick={onStartGame}
-            isLoading={isLoading}
-            isDisabled={!canStartGame || hasUnsetPersonas}
-            size="lg"
+            disabled={isLoading || !canStartGame || hasUnsetPersonas}
+            className="w-full px-6 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
           >
             {isLoading ? 'ゲーム開始中...' : 'ゲーム開始'}
-          </Button>
+          </button>
         </div>
       )}
 

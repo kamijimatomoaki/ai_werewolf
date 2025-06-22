@@ -1,8 +1,4 @@
 import { useState } from 'react';
-import { Button } from "@heroui/button";
-import { Card } from "@heroui/card";
-import { Textarea } from "@heroui/input";
-import { Avatar } from "@heroui/avatar";
 
 import { PlayerInfo } from '@/types/api';
 
@@ -57,9 +53,11 @@ export default function GameControls({
     return (
       <div className="space-y-4">
         {/* 現在の発言者表示 */}
-        <Card className="p-4 bg-gradient-to-r from-yellow-600/20 to-orange-600/20 border border-yellow-500/30 backdrop-blur-sm">
+        <div className="p-4 bg-gradient-to-r from-yellow-600/20 to-orange-600/20 border border-yellow-500/30 rounded-lg backdrop-blur-sm">
           <div className="flex items-center gap-3">
-            <Avatar name={currentPlayer.character_name} size="sm" color="warning" />
+            <div className="w-8 h-8 rounded-full bg-yellow-500 text-white flex items-center justify-center text-xs font-bold">
+              {currentPlayer.character_name.charAt(0)}
+            </div>
             <div>
               <p className="font-semibold text-yellow-200">現在の発言者</p>
               <p className="text-lg text-white">{currentPlayer.character_name}</p>
@@ -70,20 +68,20 @@ export default function GameControls({
               )}
             </div>
           </div>
-        </Card>
+        </div>
 
         {/* 発言入力（自分のターンの時） */}
         {isMyTurn && (
-          <Card className="p-4 bg-gray-800/70 border-gray-600/50 backdrop-blur-sm">
+          <div className="p-4 bg-gray-800/70 border border-gray-600/50 rounded-lg backdrop-blur-sm">
             <h3 className="font-semibold mb-3 text-white">あなたの発言</h3>
-            <Textarea
+            <textarea
               placeholder="議論に参加しましょう..."
               value={statement}
               onChange={(e) => setStatement(e.target.value)}
-              className="mb-3"
+              className="w-full mb-3 p-3 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-blue-500 resize-none"
               rows={3}
               maxLength={500}
-              isDisabled={isSpeaking || isLoading}
+              disabled={isSpeaking || isLoading}
             />
             
             <div className="flex justify-between items-center mb-3">
@@ -98,26 +96,22 @@ export default function GameControls({
             </div>
 
             <div className="flex gap-3">
-              <Button
-                color="primary"
+              <button
                 onClick={handleSpeak}
-                isLoading={isSpeaking}
-                isDisabled={!statement.trim() || isLoading}
-                className="flex-1"
+                disabled={isSpeaking || !statement.trim() || isLoading}
+                className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded transition-colors"
               >
                 {isSpeaking ? '発言中...' : '発言する'}
-              </Button>
+              </button>
               
               {onTransitionToVote && (
-                <Button
-                  color="warning"
-                  variant="bordered"
+                <button
                   onClick={handleTransitionToVote}
-                  isLoading={isLoading}
-                  isDisabled={isSpeaking}
+                  disabled={isLoading || isSpeaking}
+                  className="px-4 py-2 border border-yellow-500 text-yellow-400 hover:bg-yellow-500 hover:text-white disabled:border-gray-600 disabled:text-gray-500 disabled:cursor-not-allowed rounded transition-colors"
                 >
                   投票フェーズへ
-                </Button>
+                </button>
               )}
             </div>
 
@@ -128,12 +122,12 @@ export default function GameControls({
                 相手の反応から何かが見えてくるかもしれません。
               </p>
             </div>
-          </Card>
+          </div>
         )}
 
         {/* 待機中のメッセージ */}
         {!isMyTurn && (
-          <Card className="p-4 bg-gray-50">
+          <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg">
             <div className="text-center">
               <p className="text-gray-600 mb-2">
                 {currentPlayer.character_name} の発言を待っています
@@ -146,7 +140,7 @@ export default function GameControls({
                 </div>
               </div>
             </div>
-          </Card>
+          </div>
         )}
       </div>
     );
