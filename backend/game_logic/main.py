@@ -1166,13 +1166,19 @@ def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid.UUID)
         
         # デバッグ: ペルソナ情報をログ出力
         logger.info(f"Generating speech for {ai_player.character_name}")
-        logger.info(f"Player persona: {ai_player.character_persona}")
+        logger.info(f"Player persona type: {type(ai_player.character_persona)}")
+        logger.info(f"Player persona content: {ai_player.character_persona}")
         logger.info(f"Using root_agent: {root_agent is not None}")
-        logger.info(f"GOOGLE_PROJECT_ID: {GOOGLE_PROJECT_ID is not None}")
-        logger.info(f"GOOGLE_LOCATION: {GOOGLE_LOCATION is not None}")
+        logger.info(f"GOOGLE_PROJECT_ID: {GOOGLE_PROJECT_ID} (actual value)")
+        logger.info(f"GOOGLE_LOCATION: {GOOGLE_LOCATION} (actual value)")
+        logger.info(f"Room status: {room.status}, Day: {room.day_number}")
         
         # AIエージェントが利用可能な場合
-        if root_agent and GOOGLE_PROJECT_ID and GOOGLE_LOCATION:
+        logger.info(f"Checking AI agent availability: root_agent={root_agent is not None}, GOOGLE_PROJECT_ID='{GOOGLE_PROJECT_ID}', GOOGLE_LOCATION='{GOOGLE_LOCATION}'")
+        
+        # Google Project IDのチェックを緩和（仮の値でもフォールバックを使用）
+        if root_agent and GOOGLE_PROJECT_ID and GOOGLE_LOCATION and GOOGLE_PROJECT_ID != "your-google-project-id":
+            logger.info("Using root_agent with valid Google credentials")
             # プレイヤー情報を準備
             player_info = {
                 'name': ai_player.character_name,
@@ -1219,7 +1225,7 @@ def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid.UUID)
             
         else:
             # フォールバック: シンプルなVertex AI生成
-            logger.info("Using fallback AI speech generation")
+            logger.info(f"Using fallback AI speech generation. Root agent available: {root_agent is not None}, Valid project ID: {GOOGLE_PROJECT_ID != 'your-google-project-id'}")
             return generate_fallback_ai_speech(ai_player, room, db)
             
     except Exception as e:
@@ -1419,7 +1425,10 @@ def generate_ai_protect_decision(db: Session, room_id: uuid.UUID, bodyguard, ali
 def generate_fallback_ai_speech(ai_player, room, db) -> str:
     """フォールバック用のAI発言生成"""
     try:
+        # Google認証情報があれば使用する（仮の値でも処理を試行）
         if GOOGLE_PROJECT_ID and GOOGLE_LOCATION:
+            logger.info(f"Attempting fallback AI speech generation for {ai_player.character_name}")
+            logger.info(f"Project ID: {GOOGLE_PROJECT_ID}, Location: {GOOGLE_LOCATION}")
             # 最近のゲームログを取得
             recent_logs = db.query(GameLog).filter(
                 GameLog.room_id == room.room_id,
@@ -1468,7 +1477,42 @@ def generate_fallback_ai_speech(ai_player, room, db) -> str:
             
             return speech
         else:
-            # 完全なフォールバック
+            # 完全なフォールバック（ペルソナ情報を使用）
+            logger.info(f"Using complete fallback for {ai_player.character_name}")
+            
+            # ペルソナ情報があればそれを反映したフォールバック発言を生成
+            if ai_player.character_persona:
+                persona = ai_player.character_persona
+                if isinstance(persona, dict):
+                    # 辞書形式の場合
+                    age = persona.get('age', '不明')
+                    speech_style = persona.get('speech_style', '普通の話し方')
+                    
+                    # 語尾の特徴を検出して反映
+                    if 'なのだ' in speech_style:
+                        return "今の状況を見守っているのだ。みんなで協力するのだ。"
+                    elif 'ンゴ' in speech_style:
+                        return "この状況は難しいンゴ…みんなの意見を聞かせてほしいンゴ！"
+                    elif 'ハム' in speech_style:
+                        return "今日も元気にがんばるハム！みんなで真実を見つけるハム！"
+                    elif 'だ' in speech_style or 'である' in speech_style:
+                        return "慎重に状況を判断していこうではないか。"
+                    else:
+                        return "状況をよく観察して、適切に行動しましょう。"
+                elif isinstance(persona, str):
+                    # 文字列形式の場合、語尾を推測
+                    if 'なのだ' in persona:
+                        return "この状況を注意深く見ているのだ。"
+                    elif 'ンゴ' in persona:
+                        return "どうしたらいいかわからないンゴ…"
+                    elif 'ハム' in persona:
+                        return "みんなで頑張るハム！"
+                    elif 'である' in persona or '古風' in persona:
+                        return "状況を冷静に判断していこうではないか。"
+                    else:
+                        return "今の状況をよく考えてみましょう。"
+            
+            # デフォルトのフォールバック
             fallback_speeches = [
                 "今日も一日頑張りましょう！",
                 "皆さんの意見を聞かせてください。",
@@ -1544,9 +1588,15 @@ def build_ai_speech_prompt(ai_player: Player, room: Room, recent_logs: List[Game
     # ペルソナ情報を詳細に展開
     persona_info = ""
     speech_style_instruction = ""
+    
+    # デバッグ: ペルソナ情報の型と内容を確認
+    logger.info(f"Processing persona for {ai_player.character_name}: type={type(ai_player.character_persona)}, content={ai_player.character_persona}")
+    
     if ai_player.character_persona:
+        # character_personaの型を確認して適切に処理
         persona = ai_player.character_persona
-        persona_info = f"""
+        if isinstance(persona, dict):
+            persona_info = f"""
 # あなたのキャラクター設定
 - 名前: {ai_player.character_name}
 - 年齢: {persona.get('age', '不明')}歳
@@ -1554,12 +1604,30 @@ def build_ai_speech_prompt(ai_player: Player, room: Room, recent_logs: List[Game
 - 性格: {persona.get('personality', '普通')}
 - 話し方: {persona.get('speech_style', '普通')}
 - 背景: {persona.get('background', '特になし')}"""
-        
-        # 話し方の柔軟な指示（パターンマッチングではなく、直接的な指示）
-        speech_style = persona.get('speech_style', '')
-        if speech_style:
-            speech_style_instruction = f"必ず「{speech_style}」という話し方で一貫して発言してください。この口調を絶対に変えないでください。"
+            
+            # 話し方の柔軟な指示（パターンマッチングではなく、直接的な指示）
+            speech_style = persona.get('speech_style', '')
+            if speech_style:
+                speech_style_instruction = f"""
+【最重要】話し方の指示:
+あなたは{speech_style}で話します。
+この話し方の特徴を100%維持して発言してください。
+語尾や口調、方言などの特徴を必ず含めて発言してください。
+例: 「なのだ」「ンゴ」「ハム」「だ」「である」などの語尾が設定されている場合、必ずその通りに話してください。"""
+            else:
+                speech_style_instruction = "自然で一貫した話し方を心がけてください。"
+        elif isinstance(persona, str):
+            # 文字列形式の場合はそのまま使用
+            persona_info = f"""
+# あなたのキャラクター設定
+{persona}"""
+            speech_style_instruction = """
+【最重要】話し方の指示:
+上記のキャラクター設定に記載された話し方で一貫して発言してください。
+語尾や口調の特徴を必ず維持してください。"""
         else:
+            logger.warning(f"Unexpected persona type: {type(persona)}")
+            persona_info = f"# あなたの名前: {ai_player.character_name}"
             speech_style_instruction = "自然で一貫した話し方を心がけてください。"
     
     # そのキャラクターの過去の発言履歴を全て取得
@@ -1607,11 +1675,12 @@ def build_ai_speech_prompt(ai_player: Player, room: Room, recent_logs: List[Game
 キャラクターの一貫性を絶対に保ち、話し方や性格を変えないでください。
 
 # その他の指示
-- 50文字以内で簡潔に
+- 200文字以内で適度に詳しく（短すぎず、長すぎず）
 - 自然で人間らしい発言
 - 役職の目標に沿った内容
 - 必要に応じて他のプレイヤーに質問や提案
 - 戦略的なカミングアウトや偽装を検討してください
+- キャラクターの個性と話し方を最優先に維持してください
 
 発言:
 """
@@ -2595,7 +2664,8 @@ def generate_game_summary(db: Session, room_id: uuid.UUID) -> dict:
             GameLog.room_id == room_id
         ).order_by(GameLog.created_at.asc()).all()
         
-        if GOOGLE_PROJECT_ID and GOOGLE_LOCATION:
+        # Google Project IDが有効かチェック（仮の値でないことを確認）
+        if GOOGLE_PROJECT_ID and GOOGLE_LOCATION and GOOGLE_PROJECT_ID != "your-google-project-id":
             try:
                 # LLMでサマリーを生成
                 prompt = build_game_summary_prompt(room, all_logs)
@@ -2613,7 +2683,23 @@ def generate_game_summary(db: Session, room_id: uuid.UUID) -> dict:
                 logger.error(f"Error in LLM summary generation: {e}")
                 llm_summary = "LLMサマリー生成に失敗しました"
         else:
-            llm_summary = "サマリー機能は現在利用できません（Google AI未設定）"
+            # Google AIが設定されていない場合の基本的なサマリー
+            logger.info("Generating basic summary without LLM (Google AI not configured)")
+            
+            # 基本的なサマリーを手動で生成
+            speech_count = len([log for log in all_logs if log.event_type == "speech"])
+            vote_count = len([log for log in all_logs if log.event_type == "vote"])
+            alive_count = len([p for p in room.players if p.is_alive])
+            
+            llm_summary = f"""
+ゲーム状況サマリー:
+- 現在{room.day_number}日目の{room.status}フェーズです
+- 生存プレイヤー: {alive_count}人
+- 総発言数: {speech_count}回
+- 総投票数: {vote_count}回
+
+※ 詳細な分析にはGoogle AI設定が必要です。
+"""
         
         # 基本統計を生成
         alive_players = [p for p in room.players if p.is_alive]

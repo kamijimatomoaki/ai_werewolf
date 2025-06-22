@@ -107,6 +107,12 @@ class RootAgent:
     def generate_speech(self, player_info: Dict, game_context: Dict, recent_messages: List[Dict]) -> str:
         """統合された発言を生成"""
         try:
+            # デバッグログ追加
+            print(f"[DEBUG] RootAgent.generate_speech called for {player_info.get('name', 'unknown')}")
+            print(f"[DEBUG] Player info keys: {list(player_info.keys())}")
+            print(f"[DEBUG] Persona data: {player_info.get('persona', 'No persona')}")
+            print(f"[DEBUG] Game context: {game_context}")
+            print(f"[DEBUG] Recent messages count: {len(recent_messages)}")
             # 各エージェントから提案を取得
             context = self._build_context(player_info, game_context, recent_messages)
             
