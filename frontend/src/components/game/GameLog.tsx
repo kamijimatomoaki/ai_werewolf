@@ -267,9 +267,9 @@ export default function GameLog({
               {/* ログ内容 */}
               {log.content && (
                 <div className="prose prose-sm max-w-none prose-invert">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  <div className="whitespace-pre-wrap break-words text-gray-200">
                     {log.content}
-                  </ReactMarkdown>
+                  </div>
                 </div>
               )}
             </div>

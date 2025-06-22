@@ -113,11 +113,16 @@ debug_info = GameDebugInfo()
 
 # AI NPC エージェント有効化
 try:
+    import sys
+    import os
+    # 親ディレクトリをパスに追加
+    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from npc_agent.agent import root_agent
     logger.info("AI NPC agent enabled successfully")
 except ImportError as e:
     root_agent = None
     logger.warning(f"AI NPC agent could not be imported: {e}")
+    logger.warning(f"Current sys.path: {sys.path}")
 
 # --- Configuration ---
 load_dotenv()
@@ -623,21 +628,9 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
                 current_player_name = current_player.character_name
         raise HTTPException(status_code=403, detail=f"It's not your turn. Current turn: {current_player_name}")
 
-    # 現在のラウンドでのプレイヤーの発言回数をチェック (ラウンドあたり1回)
-    current_round_speeches = db.query(GameLog).filter(
-        GameLog.room_id == room_id,
-        GameLog.phase == "day_discussion",
-        GameLog.event_type == "speech",
-        GameLog.actor_player_id == player_id,
-        GameLog.content.like(f"%Round {current_round}:%")
-    ).count()
-    
-    if current_round_speeches >= 1:
-        raise HTTPException(status_code=403, detail=f"You have already spoken in round {current_round}.")
-
-    # ラウンド情報を含む発言を記録
-    round_statement = f"Round {current_round}: {statement}"
-    create_game_log(db, room_id, "day_discussion", "speech", actor_player_id=player_id, content=round_statement)
+    # シンプルなターン制に変更 - ラウンドチェックを無効化
+    # 発言を記録（ラウンド情報なし）
+    create_game_log(db, room_id, "day_discussion", "speech", actor_player_id=player_id, content=statement)
     
     # ターンを進める前に生存プレイヤーのみを考慮
     alive_players = [pid for pid in turn_order if get_player(db, uuid.UUID(pid)) and get_player(db, uuid.UUID(pid)).is_alive]
@@ -664,58 +657,35 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
     
     next_index = find_next_alive_player(current_index)
     
-    # ラウンド完了チェック - 生存プレイヤー全員が発言したかチェック
-    def check_round_complete() -> bool:
-        for player_uuid_str in alive_players:
-            player_round_speeches = db.query(GameLog).filter(
-                GameLog.room_id == room_id,
-                GameLog.phase == "day_discussion",
-                GameLog.event_type == "speech",
-                GameLog.actor_player_id == uuid.UUID(player_uuid_str),
-                GameLog.content.like(f"%Round {current_round}:%")
-            ).count()
-            if player_round_speeches == 0:
-                return False
-        return True
+    # シンプルなターン進行 - 常に次のプレイヤーに進む
+    db.execute(
+        text("UPDATE rooms SET current_turn_index = :index WHERE room_id = :room_id"),
+        {"index": next_index, "room_id": str(room_id)}
+    )
     
-    # ラウンド完了判定
-    if check_round_complete():
-        if current_round >= 3:
-            # 3ラウンド完了、投票フェーズへ
-            db.execute(
-                text("UPDATE rooms SET status = :status, current_turn_index = 0 WHERE room_id = :room_id"),
-                {"status": "day_vote", "room_id": str(room_id)}
-            )
-            create_game_log(db, room_id, "day_discussion", "phase_transition", content="議論終了。投票フェーズに移行します。")
-            logger.info(f"All 3 speech rounds completed in room {room_id}. Moving to vote phase.")
-        else:
-            # 次のラウンドへ - 最初の生存プレイヤーから開始
-            first_alive_index = 0
-            for i, pid in enumerate(turn_order):
-                player = get_player(db, uuid.UUID(pid))
-                if player and player.is_alive:
-                    first_alive_index = i
-                    break
-            
-            db.execute(
-                text("UPDATE rooms SET current_round = :round, current_turn_index = :index WHERE room_id = :room_id"),
-                {"round": current_round + 1, "index": first_alive_index, "room_id": str(room_id)}
-            )
-            create_game_log(db, room_id, "day_discussion", "phase_transition", content=f"ラウンド{current_round}終了。ラウンド{current_round + 1}を開始します。")
-            logger.info(f"Round {current_round} completed in room {room_id}. Starting round {current_round + 1} with player index {first_alive_index}.")
-    else:
-        # まだ今ラウンドで発言していないプレイヤーがいる
+    # 発言回数をカウントして投票フェーズに移行するかチェック
+    total_speeches = db.query(GameLog).filter(
+        GameLog.room_id == room_id,
+        GameLog.phase == "day_discussion",
+        GameLog.event_type == "speech",
+        GameLog.day_number == db_room.day_number
+    ).count()
+    
+    # 生存プレイヤー数の3倍の発言があったら投票フェーズへ
+    if total_speeches >= len(alive_players) * 3:
         db.execute(
-            text("UPDATE rooms SET current_turn_index = :index WHERE room_id = :room_id"),
-            {"index": next_index, "room_id": str(room_id)}
+            text("UPDATE rooms SET status = :status, current_turn_index = 0 WHERE room_id = :room_id"),
+            {"status": "day_vote", "room_id": str(room_id)}
         )
+        create_game_log(db, room_id, "day_discussion", "phase_transition", content="議論終了。投票フェーズに移行します。")
+        logger.info(f"Discussion phase completed in room {room_id}. Moving to vote phase.")
     
     db.commit()
     
     # 更新されたデータを取得
     db.refresh(db_room)
     current_player_id = db_room.turn_order[db_room.current_turn_index]
-    logger.info(f"Turn advanced in room {room_id} to player {current_player_id} (Round {db_room.current_round}).")
+    logger.info(f"Turn advanced in room {room_id} to player {current_player_id}.")
     
     return db_room
 
@@ -2424,79 +2394,7 @@ async def handle_auto_progress(room_id: uuid.UUID, db: Session = Depends(get_db)
             
             # AIプレイヤーの場合、自動発言
             if not current_player.is_human:
-                # 現在のラウンドで既に発言済みかチェック - より正確な方法を使用
-                current_round = room.current_round or 1
-                already_spoken = db.query(GameLog).filter(
-                    GameLog.room_id == room_id,
-                    GameLog.phase == "day_discussion",
-                    GameLog.event_type == "speech",
-                    GameLog.actor_player_id == current_player.player_id,
-                    GameLog.day_number == room.day_number,
-                    GameLog.content.like(f"%Round {current_round}:%")
-                ).first()
-                
-                if already_spoken:
-                    logger.info(f"{current_player.character_name} already spoke in round {current_round}, advancing turn")
-                    
-                    # 既に発言済みの場合は次のプレイヤーに進める
-                    next_index = find_next_alive_player_global(db, room, current_index)
-                    if next_index is None:
-                        logger.error("No next alive player found")
-                        return {"message": "No next alive player found"}
-                    
-                    # ターンを進める前にラウンド完了をチェック
-                    round_complete = check_round_complete_global(db, room_id, current_round)
-                    
-                    if round_complete and current_round >= 3:
-                        # 3ラウンド完了、投票フェーズへ
-                        db.execute(
-                            text("UPDATE rooms SET status = :status, current_turn_index = 0 WHERE room_id = :room_id"),
-                            {"status": "day_vote", "room_id": str(room_id)}
-                        )
-                        db.commit()
-                        create_game_log(db, room_id, "day_discussion", "phase_transition", content="議論終了。投票フェーズに移行します。")
-                        return {
-                            "auto_progressed": True,
-                            "message": "All rounds completed, moving to vote phase",
-                            "phase_change": "day_vote"
-                        }
-                    elif round_complete:
-                        # 次のラウンドへ
-                        first_alive_index = find_next_alive_player_global(db, room, -1)
-                        if first_alive_index is None:
-                            return {"message": "No alive players for next round"}
-                        
-                        db.execute(
-                            text("UPDATE rooms SET current_round = :round, current_turn_index = :index WHERE room_id = :room_id"),
-                            {"round": current_round + 1, "index": first_alive_index, "room_id": str(room_id)}
-                        )
-                        db.commit()
-                        create_game_log(db, room_id, "day_discussion", "phase_transition", content=f"ラウンド{current_round}終了。ラウンド{current_round + 1}を開始します。")
-                        
-                        next_player_id = turn_order[first_alive_index]
-                        next_player = get_player(db, uuid.UUID(next_player_id))
-                        return {
-                            "auto_progressed": True,
-                            "message": f"Round {current_round} completed, starting round {current_round + 1} with {next_player.character_name if next_player else 'unknown'}",
-                            "round_change": current_round + 1
-                        }
-                    else:
-                        # 通常のターン進行
-                        db.execute(
-                            text("UPDATE rooms SET current_turn_index = :index WHERE room_id = :room_id"),
-                            {"index": next_index, "room_id": str(room_id)}
-                        )
-                        db.commit()
-                        
-                        next_player_id = turn_order[next_index]
-                        next_player = get_player(db, uuid.UUID(next_player_id))
-                        
-                        return {
-                            "auto_progressed": True,
-                            "message": f"{current_player.character_name} already spoke, turn advanced to {next_player.character_name if next_player else 'unknown'}",
-                            "next_player": next_player_id,
-                            "next_player_name": next_player.character_name if next_player else "unknown"
-                        }
+                # シンプル化：ラウンドチェックを無効化し、常にAI発言を実行
                 
                 # より厳密な同時実行防止 - 現在のターンプレイヤーの再確認
                 # DB から最新の room 情報を再取得

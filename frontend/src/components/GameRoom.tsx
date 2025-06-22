@@ -38,7 +38,7 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
   const { isTransitioning, handlePhaseChange, animationSettings } = usePhaseTransition();
 
   // 部屋情報とログを取得
-  const fetchRoomData = async () => {
+  const fetchRoomData = async (skipAutoProgress = false) => {
     try {
       setLoading(true);
       setError(null);
@@ -56,8 +56,10 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
       setRoom(roomData);
       setLogs(logsData);
       
-      // AI自動進行のチェック
-      checkForAIAutoProgress(roomData);
+      // AI自動進行のチェック（無限ループ防止）
+      if (!skipAutoProgress) {
+        checkForAIAutoProgress(roomData);
+      }
     } catch (err: any) {
       setError(err.message || 'データの取得に失敗しました');
     } finally {
@@ -93,7 +95,7 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
           try {
             const result = await apiService.autoProgress(roomId);
             console.log('Auto progress index fix result:', result);
-            await fetchRoomData();
+            await fetchRoomData(true); // 無限ループ防止
           } catch (error) {
             console.error('Auto progress index fix failed:', error);
           } finally {
@@ -118,7 +120,7 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
           try {
             const result = await apiService.autoProgress(roomId);
             console.log('Dead player auto progress result:', result);
-            await fetchRoomData();
+            await fetchRoomData(true); // 無限ループ防止
           } catch (error) {
             console.error('Dead player auto progress failed:', error);
           } finally {
@@ -136,14 +138,15 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
             const result = await apiService.autoProgress(roomId);
             console.log('Auto progress result:', result);
             
-            // より積極的にデータを再取得
-            await fetchRoomData();
+            // 無限ループを防ぐため、autoProgressをスキップして取得
+            await fetchRoomData(true);
             
-            // 連続してAIプレイヤーがいる場合の対応
-            if (result.auto_progressed && result.next_player) {
+            // 結果に応じて次のアクションを判断
+            if (result.auto_progressed) {
+              // 少し待ってから再度チェック（ただし頻度を抑制）
               setTimeout(() => {
                 fetchRoomData();
-              }, 500);
+              }, 3000); // 3秒に延長
             }
           } catch (error) {
             console.error('AI auto progress failed:', error);
@@ -164,7 +167,7 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
           try {
             const result = await apiService.autoProgress(roomId);
             console.log('Auto vote result:', result);
-            await fetchRoomData();
+            await fetchRoomData(true); // 無限ループ防止
           } catch (error) {
             console.error('AI auto vote failed:', error);
           } finally {
