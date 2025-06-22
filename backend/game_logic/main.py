@@ -2507,7 +2507,7 @@ async def handle_auto_progress(room_id: uuid.UUID, db: Session = Depends(get_db)
                     GameLog.room_id == room_id,
                     GameLog.phase == "day_discussion", 
                     GameLog.event_type == "speech",
-                    GameLog.created_at >= func.datetime('now', '-10 seconds')
+                    GameLog.created_at >= func.now() - text("INTERVAL '10 seconds'")
                 ).order_by(GameLog.created_at.desc()).first()
                 
                 if active_ai_speech and active_ai_speech.actor_player_id != current_player.player_id:
