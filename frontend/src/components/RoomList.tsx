@@ -1,10 +1,4 @@
 import { useState, useEffect } from 'react';
-import { Button } from "@heroui/button";
-import { Card } from "@heroui/card";
-import { Input } from "@heroui/input";
-import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, useDisclosure } from "@heroui/modal";
-import { Chip } from "@heroui/chip";
-import { Switch } from "@heroui/switch";
 import keyVisual from '@/assets/key_visual.png';
 
 import { apiService } from '@/services/api';
@@ -24,7 +18,7 @@ export default function RoomList({ onRoomJoin, onSpectatorJoin }: RoomListProps)
   const [error, setError] = useState<string | null>(null);
   
   // 部屋作成モーダル
-  const { isOpen, onOpen, onOpenChange } = useDisclosure();
+  const [isOpen, setIsOpen] = useState(false);
   const [newRoom, setNewRoom] = useState<RoomCreate>({
     room_name: '',
     total_players: 5,
@@ -35,20 +29,12 @@ export default function RoomList({ onRoomJoin, onSpectatorJoin }: RoomListProps)
   const [hostName, setHostName] = useState('');
   
   // 参加モーダル
-  const { 
-    isOpen: isJoinOpen, 
-    onOpen: onJoinOpen, 
-    onOpenChange: onJoinOpenChange 
-  } = useDisclosure();
+  const [isJoinOpen, setIsJoinOpen] = useState(false);
   const [selectedRoomId, setSelectedRoomId] = useState<string>('');
   const [joinPlayerName, setJoinPlayerName] = useState('');
 
   // 観戦モーダル
-  const { 
-    isOpen: isSpectatorOpen, 
-    onOpen: onSpectatorOpen, 
-    onOpenChange: onSpectatorOpenChange 
-  } = useDisclosure();
+  const [isSpectatorOpen, setIsSpectatorOpen] = useState(false);
   const [spectatorRoomId, setSpectatorRoomId] = useState<string>('');
   const [spectatorRoomName, setSpectatorRoomName] = useState('');
 
@@ -97,7 +83,7 @@ export default function RoomList({ onRoomJoin, onSpectatorJoin }: RoomListProps)
   const handleStartJoinRoom = (roomId: string) => {
     setSelectedRoomId(roomId);
     setJoinPlayerName('');
-    onJoinOpen();
+    setIsJoinOpen(true);
   };
 
   // 部屋参加の実行
@@ -112,7 +98,7 @@ export default function RoomList({ onRoomJoin, onSpectatorJoin }: RoomListProps)
       
       await joinRoomAuth(selectedRoomId, joinPlayerName);
       onRoomJoin(selectedRoomId);
-      onJoinOpenChange();
+      setIsJoinOpen(false);
       
     } catch (err: any) {
       setError(err.message || '部屋への参加に失敗しました');
@@ -125,7 +111,7 @@ export default function RoomList({ onRoomJoin, onSpectatorJoin }: RoomListProps)
   const handleStartSpectatorJoin = (room: RoomSummary) => {
     setSpectatorRoomId(room.room_id);
     setSpectatorRoomName(room.room_name);
-    onSpectatorOpen();
+    setIsSpectatorOpen(true);
   };
 
   // 観戦者として参加
@@ -204,28 +190,25 @@ export default function RoomList({ onRoomJoin, onSpectatorJoin }: RoomListProps)
       <div className="flex justify-between items-center mb-6">
         <h2 className="text-2xl font-bold text-white">部屋一覧</h2>
         <div className="flex gap-3">
-          <Button 
-            color="secondary" 
-            variant="bordered" 
+          <button 
             onClick={fetchRooms}
-            className="border-gray-600 text-gray-300 hover:bg-gray-700"
+            className="px-4 py-2 border border-gray-600 text-gray-300 hover:bg-gray-700 rounded transition-colors"
           >
             更新
-          </Button>
-          <Button 
-            color="primary" 
-            onPress={onOpen}
-            className="bg-red-700 hover:bg-red-600 text-white shadow-lg"
+          </button>
+          <button 
+            onClick={() => setIsOpen(true)}
+            className="px-4 py-2 bg-red-700 hover:bg-red-600 text-white shadow-lg rounded transition-colors"
           >
             部屋を作成
-          </Button>
+          </button>
         </div>
       </div>
 
       {error && (
-        <Card className="mb-4 p-4 bg-red-900/40 border-red-500/60 text-red-200 backdrop-blur-sm">
+        <div className="mb-4 p-4 bg-red-900/40 border border-red-500/60 rounded-lg text-red-200 backdrop-blur-sm">
           <p className="font-semibold">エラー: {error}</p>
-        </Card>
+        </div>
       )}
 
       {loading ? (
@@ -242,26 +225,29 @@ export default function RoomList({ onRoomJoin, onSpectatorJoin }: RoomListProps)
                 <p className="text-xl text-gray-300 mb-2">静寂の夜が続いています...</p>
                 <p className="text-gray-400">現在利用可能な部屋がありません</p>
               </div>
-              <Button 
-                color="primary" 
-                size="lg"
-                className="bg-red-700 hover:bg-red-600 text-white shadow-lg px-8" 
-                onPress={onOpen}
+              <button 
+                onClick={() => setIsOpen(true)}
+                className="px-8 py-3 bg-red-700 hover:bg-red-600 text-white shadow-lg rounded-lg text-lg transition-colors"
               >
                 最初の部屋を作成
-              </Button>
+              </button>
             </div>
           ) : (
             rooms.map((room) => (
-              <Card key={room.room_id} className="p-4 bg-gray-800/70 border-gray-600/50 hover:bg-gray-700/80 hover:shadow-2xl hover:border-red-500/30 transition-all duration-300 backdrop-blur-sm">
+              <div key={room.room_id} className="p-4 bg-gray-800/70 border border-gray-600/50 rounded-lg hover:bg-gray-700/80 hover:shadow-2xl hover:border-red-500/30 transition-all duration-300 backdrop-blur-sm">
                 <div className="space-y-3">
                   <div className="flex justify-between items-start">
                     <h3 className="text-xl font-semibold text-white">
                       {room.room_name || `部屋 ${room.room_id.slice(0, 8)}`}
                     </h3>
-                    <Chip color={getStatusColor(room.status)} variant="flat" size="sm">
+                    <span className={`px-2 py-1 text-xs rounded ${
+                      getStatusColor(room.status) === 'success' ? 'bg-green-500/20 text-green-400' :
+                      getStatusColor(room.status) === 'warning' ? 'bg-yellow-500/20 text-yellow-400' :
+                      getStatusColor(room.status) === 'danger' ? 'bg-red-500/20 text-red-400' :
+                      'bg-gray-500/20 text-gray-400'
+                    }`}>
                       {getStatusLabel(room.status)}
-                    </Chip>
+                    </span>
                   </div>
                   
                   <div className="space-y-1 text-sm text-gray-400">
@@ -271,87 +257,112 @@ export default function RoomList({ onRoomJoin, onSpectatorJoin }: RoomListProps)
                   </div>
 
                   <div className="flex gap-2">
-                    <Button 
-                      color="primary" 
-                      className="flex-1 bg-red-700 hover:bg-red-600"
+                    <button 
+                      className={`flex-1 px-4 py-2 rounded transition-colors ${
+                        room.status !== 'waiting' 
+                          ? 'bg-gray-600 text-gray-400 cursor-not-allowed' 
+                          : 'bg-red-700 hover:bg-red-600 text-white'
+                      }`}
                       onClick={() => handleStartJoinRoom(room.room_id)}
-                      isDisabled={room.status !== 'waiting'}
+                      disabled={room.status !== 'waiting'}
                     >
                       参加
-                    </Button>
-                    <Button 
-                      color="secondary" 
-                      variant="bordered"
-                      className="flex-1 border-gray-600 text-gray-300 hover:bg-gray-700"
+                    </button>
+                    <button 
+                      className={`flex-1 px-4 py-2 border rounded transition-colors ${
+                        room.status === 'waiting' || room.status === 'finished'
+                          ? 'border-gray-600 text-gray-500 cursor-not-allowed'
+                          : 'border-gray-600 text-gray-300 hover:bg-gray-700'
+                      }`}
                       onClick={() => handleStartSpectatorJoin(room)}
-                      isDisabled={room.status === 'waiting' || room.status === 'finished'}
+                      disabled={room.status === 'waiting' || room.status === 'finished'}
                     >
                       観戦
-                    </Button>
+                    </button>
                   </div>
                 </div>
-              </Card>
+              </div>
             ))
           )}
         </div>
       )}
 
       {/* 部屋作成モーダル */}
-      <Modal isOpen={isOpen} onOpenChange={onOpenChange} size="2xl" className="dark">
-        <ModalContent>
-          {(onClose) => (
-            <>
-              <ModalHeader className="flex flex-col gap-1">
-                新しい部屋を作成
-              </ModalHeader>
-              <ModalBody>
+      {isOpen && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="w-full max-w-2xl bg-gray-900 border border-gray-700 rounded-lg">
+            <div className="p-6">
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-xl font-bold text-white">新しい部屋を作成</h2>
+                <button
+                  onClick={() => setIsOpen(false)}
+                  className="text-gray-400 hover:text-white"
+                >
+                  ×
+                </button>
+              </div>
+              <div className="space-y-4 mb-6">
                 <div className="space-y-4">
-                  <Input
-                    label="ホスト名"
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">ホスト名</label>
+                  <input
+                    type="text"
                     placeholder="あなたの名前"
                     value={hostName}
                     onChange={(e) => setHostName(e.target.value)}
+                    className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-blue-500"
                   />
+                </div>
                   
-                  <Input
-                    label="部屋名"
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">部屋名</label>
+                  <input
+                    type="text"
                     placeholder="部屋名（オプション）"
                     value={newRoom.room_name}
                     onChange={(e) => setNewRoom(prev => ({ ...prev, room_name: e.target.value }))}
+                    className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-blue-500"
                   />
+                </div>
                   
                   <div className="grid grid-cols-2 gap-4">
-                    <Input
-                      label="人間プレイヤー"
-                      type="number"
-                      min={1}
-                      max={8}
-                      value={String(newRoom.human_players)}
-                      onChange={(e) => {
-                        const humanPlayers = Number(e.target.value);
-                        setNewRoom(prev => ({ 
-                          ...prev, 
-                          human_players: humanPlayers,
-                          total_players: humanPlayers + prev.ai_players
-                        }));
-                      }}
-                    />
+                    <div>
+                      <label className="block text-sm font-medium text-gray-300 mb-2">人間プレイヤー</label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={8}
+                        value={String(newRoom.human_players)}
+                        onChange={(e) => {
+                          const humanPlayers = Number(e.target.value);
+                          setNewRoom(prev => ({ 
+                            ...prev, 
+                            human_players: humanPlayers,
+                            total_players: humanPlayers + prev.ai_players
+                          }));
+                        }}
+                        className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
+                      />
+                    </div>
                     
-                    <Input
-                      label="AIプレイヤー"
-                      type="number"
-                      min={0}
-                      max={8}
-                      value={String(newRoom.ai_players)}
-                      onChange={(e) => {
-                        const aiPlayers = Number(e.target.value);
-                        setNewRoom(prev => ({ 
-                          ...prev, 
-                          ai_players: aiPlayers,
-                          total_players: prev.human_players + aiPlayers
-                        }));
-                      }}
-                    />
+                    <div>
+                      <label className="block text-sm font-medium text-gray-300 mb-2">AIプレイヤー</label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={8}
+                        value={String(newRoom.ai_players)}
+                        onChange={(e) => {
+                          const aiPlayers = Number(e.target.value);
+                          setNewRoom(prev => ({ 
+                            ...prev, 
+                            ai_players: aiPlayers,
+                            total_players: prev.human_players + aiPlayers
+                          }));
+                        }}
+                        className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
+                      />
+                    </div>
                   </div>
                   
                   {/* 総プレイヤー数の表示 */}
@@ -377,71 +388,88 @@ export default function RoomList({ onRoomJoin, onSpectatorJoin }: RoomListProps)
                     )}
                   </div>
                   
-                  <Switch
-                    isSelected={newRoom.is_private}
-                    onValueChange={(value) => setNewRoom(prev => ({ ...prev, is_private: value }))}
-                  >
+                <div className="flex items-center gap-3">
+                  <input
+                    type="checkbox"
+                    checked={newRoom.is_private}
+                    onChange={(e) => setNewRoom(prev => ({ ...prev, is_private: e.target.checked }))}
+                    className="w-4 h-4 text-blue-600 bg-gray-800 border-gray-600 rounded focus:ring-blue-500 focus:ring-2"
+                  />
+                  <label className="text-sm text-gray-300">
                     プライベート部屋（部屋一覧に表示されません）
-                  </Switch>
+                  </label>
                 </div>
-              </ModalBody>
-              <ModalFooter>
-                <Button color="danger" variant="light" onPress={onClose}>
-                  キャンセル
-                </Button>
-                <Button 
-                  color="primary" 
-                  onPress={handleCreateRoom}
-                  isLoading={loading}
+              </div>
+              <div className="flex justify-end gap-3">
+                <button
+                  onClick={() => setIsOpen(false)}
+                  className="px-4 py-2 text-gray-400 hover:text-white transition-colors"
                 >
-                  部屋を作成
-                </Button>
-              </ModalFooter>
-            </>
-          )}
-        </ModalContent>
-      </Modal>
+                  キャンセル
+                </button>
+                <button
+                  onClick={handleCreateRoom}
+                  disabled={loading}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors disabled:opacity-50"
+                >
+                  {loading ? '作成中...' : '部屋を作成'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 部屋参加モーダル */}
-      <Modal isOpen={isJoinOpen} onOpenChange={onJoinOpenChange} className="dark">
-        <ModalContent>
-          {(onClose) => (
-            <>
-              <ModalHeader className="flex flex-col gap-1">
-                部屋に参加
-              </ModalHeader>
-              <ModalBody>
-                <Input
-                  label="プレイヤー名"
+      {isJoinOpen && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-gray-900 border border-gray-700 rounded-lg">
+            <div className="p-6">
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-xl font-bold text-white">部屋に参加</h2>
+                <button
+                  onClick={() => setIsJoinOpen(false)}
+                  className="text-gray-400 hover:text-white"
+                >
+                  ×
+                </button>
+              </div>
+              <div className="mb-6">
+                <label className="block text-sm font-medium text-gray-300 mb-2">プレイヤー名</label>
+                <input
+                  type="text"
                   placeholder="あなたの名前を入力"
                   value={joinPlayerName}
                   onChange={(e) => setJoinPlayerName(e.target.value)}
                   autoFocus
+                  className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-blue-500"
                 />
-              </ModalBody>
-              <ModalFooter>
-                <Button color="danger" variant="light" onPress={onClose}>
-                  キャンセル
-                </Button>
-                <Button 
-                  color="primary" 
-                  onPress={handleJoinRoom}
-                  isLoading={loading}
-                  isDisabled={!joinPlayerName.trim()}
+              </div>
+              <div className="flex justify-end gap-3">
+                <button
+                  onClick={() => setIsJoinOpen(false)}
+                  className="px-4 py-2 text-gray-400 hover:text-white transition-colors"
                 >
-                  参加
-                </Button>
-              </ModalFooter>
-            </>
-          )}
-        </ModalContent>
-      </Modal>
+                  キャンセル
+                </button>
+                <button
+                  onClick={handleJoinRoom}
+                  disabled={loading || !joinPlayerName.trim()}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors disabled:opacity-50"
+                >
+                  {loading ? '参加中...' : '参加'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 観戦参加モーダル */}
       <SpectatorJoinDialog
         isOpen={isSpectatorOpen}
         roomName={spectatorRoomName}
-        onClose={onSpectatorOpenChange}
+        onClose={() => setIsSpectatorOpen(false)}
         onJoin={handleSpectatorJoin}
       />
     </div>
