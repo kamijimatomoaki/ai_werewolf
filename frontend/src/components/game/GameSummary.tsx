@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { apiService } from '@/services/api';
 
 interface GameSummaryProps {
   roomId: string;
@@ -54,15 +55,20 @@ export default function GameSummary({ roomId, isOpen, onClose }: GameSummaryProp
       setLoading(true);
       setError(null);
       
-      const response = await fetch(`/api/rooms/${roomId}/summary`);
-      if (!response.ok) {
-        throw new Error('サマリーの取得に失敗しました');
-      }
-      
-      const data = await response.json();
+      const data = await apiService.getGameSummary(roomId);
       setSummaryData(data);
     } catch (err: any) {
-      setError(err.message || 'エラーが発生しました');
+      console.error('Summary fetch error:', err);
+      let errorMessage = 'サマリーの取得に失敗しました';
+      
+      // より詳細なエラーメッセージを提供
+      if (err.message) {
+        errorMessage = err.message;
+      } else if (typeof err === 'string') {
+        errorMessage = err;
+      }
+      
+      setError(errorMessage);
     } finally {
       setLoading(false);
     }
@@ -132,7 +138,7 @@ export default function GameSummary({ roomId, isOpen, onClose }: GameSummaryProp
             </div>
           )}
 
-          {summaryData && (
+          {summaryData && summaryData.summary && (
             <div className="max-h-[70vh] overflow-y-auto scrollbar-thin">
               {/* Tab Navigation */}
               <div className="border-b border-gray-700 mb-4">

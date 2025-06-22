@@ -2642,7 +2642,9 @@ async def get_game_summary(room_id: uuid.UUID, db: Session = Depends(get_db)):
         
     except Exception as e:
         logger.error(f"Error generating game summary: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to generate game summary")
+        # 開発環境では詳細なエラー情報を返す
+        detail = f"Failed to generate game summary: {str(e)}"
+        raise HTTPException(status_code=500, detail=detail)
 
 def generate_game_summary(db: Session, room_id: uuid.UUID) -> dict:
     """
@@ -2651,7 +2653,18 @@ def generate_game_summary(db: Session, room_id: uuid.UUID) -> dict:
     try:
         room = get_room(db, room_id)
         if not room:
-            return {}
+            return {
+                "llm_summary": "指定されたルームが見つかりません。",
+                "player_status": {
+                    "生存者": [],
+                    "死亡者": []
+                },
+                "daily_activities": {},
+                "current_phase": {
+                    "day": 0,
+                    "phase": "unknown"
+                }
+            }
         
         # 全ゲームログを取得
         all_logs = db.query(GameLog).filter(

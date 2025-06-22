@@ -213,9 +213,28 @@ class ApiService {
 
   // ゲームサマリー取得
   async getGameSummary(roomId: string): Promise<any> {
-    const response = await fetch(`${API_BASE_URL}/rooms/${roomId}/summary`);
-    if (!response.ok) throw new Error('Failed to get game summary');
-    return response.json();
+    try {
+      const response = await fetch(`${API_BASE_URL}/rooms/${roomId}/summary`);
+      
+      if (!response.ok) {
+        let errorMessage = 'Failed to get game summary';
+        try {
+          const errorData = await response.json();
+          if (errorData.detail) {
+            errorMessage = errorData.detail;
+          }
+        } catch {
+          // JSON パースに失敗した場合はデフォルトメッセージを使用
+          errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+        }
+        throw new Error(errorMessage);
+      }
+      
+      return response.json();
+    } catch (error) {
+      console.error('API getGameSummary error:', error);
+      throw error;
+    }
   }
 }
 
