@@ -299,8 +299,14 @@ class RootAgent:
         # ペルソナ情報の詳細な抽出
         persona = player_info.get('persona', {})
         persona_info = ""
+        
+        # デバッグログを追加
+        print(f"[DEBUG] _build_final_prompt: persona type={type(persona)}, content={persona}")
+        
         if persona:
-            persona_info = f"""
+            if isinstance(persona, dict):
+                # 辞書形式の場合
+                persona_info = f"""
 # あなたの詳細なペルソナ設定
 - 年齢: {persona.get('age', '不明')}歳
 - 性別: {persona.get('gender', '不明')}
@@ -311,6 +317,18 @@ class RootAgent:
 【最重要】話し方の指示:
 {persona.get('speech_style', '普通の話し方')}で一貫して発言してください。
 語尾や口調、方言などの特徴を必ず維持してください。"""
+            elif isinstance(persona, str):
+                # 文字列形式の場合（実際のケース）
+                persona_info = f"""
+# あなたの詳細なペルソナ設定
+{persona}
+
+【最重要】話し方の指示:
+上記のペルソナ設定に記載された話し方、語尾、口調、方言などの全ての特徴を100%維持して発言してください。
+設定されたキャラクターの個性を完全に反映してください。"""
+            else:
+                print(f"[WARNING] Unexpected persona type: {type(persona)}")
+                persona_info = f"# あなたの名前: {player_info.get('name', '不明')}"
         
         return f"""
 {prompt.ROOT_AGENT_INSTR}

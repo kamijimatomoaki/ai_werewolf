@@ -1229,9 +1229,16 @@ def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid.UUID)
             return generate_fallback_ai_speech(ai_player, room, db)
             
     except Exception as e:
-        logger.error(f"Error generating AI speech: {e}", exc_info=True)
-        # エラー時のフォールバック
-        return "..."
+        logger.error(f"Error generating AI speech for {ai_player.character_name}: {e}", exc_info=True)
+        # エラー時のフォールバック - より有用な発言を生成
+        fallback_speeches = [
+            "少し考えさせてください。",
+            "今の状況をよく観察してみましょう。",
+            "皆さんの意見を聞かせてください。",
+            "慎重に判断したいと思います。",
+            "情報を整理してから発言します。"
+        ]
+        return random.choice(fallback_speeches)
 
 def generate_ai_vote_decision(db: Session, room_id: uuid.UUID, ai_player, possible_targets) -> Player:
     """
@@ -1487,7 +1494,8 @@ def generate_fallback_ai_speech(ai_player, room, db) -> str:
                 "みんなで協力して真実を見つけましょう！"
             ]
             return random.choice(fallback_speeches)
-    except Exception:
+    except Exception as e:
+        logger.error(f"Error in generate_fallback_ai_speech for {ai_player.character_name}: {e}", exc_info=True)
         return "今の状況をよく考えてみましょう。"
 
 def get_strategic_coming_out_decision(ai_player: Player, room: Room, recent_logs: List[GameLog]) -> str:
@@ -2510,13 +2518,25 @@ async def handle_auto_progress(room_id: uuid.UUID, db: Session = Depends(get_db)
                     }
                 
                 try:
+                    logger.info(f"Generating AI speech for {current_player.character_name}")
                     speech = generate_ai_speech(db, room_id, current_player.player_id)
+                    logger.info(f"Generated speech: '{speech}' for {current_player.character_name}")
+                    
+                    logger.info(f"Executing speak_logic for {current_player.character_name}")
                     updated_room = speak_logic(db, room_id, current_player.player_id, speech)
+                    logger.info(f"speak_logic completed for {current_player.character_name}")
+                    
                 except HTTPException as e:
-                    logger.warning(f"AI speech failed for {current_player.character_name}: {e.detail}")
+                    logger.error(f"HTTPException in AI speech for {current_player.character_name}: {e.detail}", exc_info=True)
                     return {
                         "auto_progressed": False,
-                        "message": f"AI speech failed: {e.detail}"
+                        "message": f"AI speech failed (HTTP): {e.detail}"
+                    }
+                except Exception as e:
+                    logger.error(f"General exception in AI speech for {current_player.character_name}: {str(e)}", exc_info=True)
+                    return {
+                        "auto_progressed": False,
+                        "message": f"AI speech failed (General): {str(e)}"
                     }
                 
                 # 最新のルーム情報を再取得して確実な情報を取得
