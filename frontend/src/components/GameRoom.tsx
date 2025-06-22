@@ -65,11 +65,17 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
     }
   };
 
-  // AI自動進行のチェック
+  // AI自動進行のチェック（改良版）
   const checkForAIAutoProgress = useCallback(async (roomData: any) => {
     // 既に自動進行中の場合はスキップ
     if (autoProgressInProgress) {
       console.log('Auto progress already in progress, skipping');
+      return;
+    }
+    
+    // 基本的な検証
+    if (!roomData || !roomData.players) {
+      console.log('Invalid room data for auto progress');
       return;
     }
     
@@ -78,22 +84,73 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
         roomData.turn_order && 
         roomData.current_turn_index !== undefined) {
       
+      // インデックス範囲チェック
+      if (roomData.current_turn_index >= roomData.turn_order.length) {
+        console.error(`Invalid turn index: ${roomData.current_turn_index} >= ${roomData.turn_order.length}`);
+        // 自動修復を試行
+        setAutoProgressInProgress(true);
+        setTimeout(async () => {
+          try {
+            const result = await apiService.autoProgress(roomId);
+            console.log('Auto progress index fix result:', result);
+            await fetchRoomData();
+          } catch (error) {
+            console.error('Auto progress index fix failed:', error);
+          } finally {
+            setAutoProgressInProgress(false);
+          }
+        }, 1000);
+        return;
+      }
+      
       const currentPlayerId = roomData.turn_order[roomData.current_turn_index];
       const currentPlayer = roomData.players.find((p: any) => p.player_id === currentPlayerId);
       
+      if (!currentPlayer) {
+        console.error(`Current player not found: ${currentPlayerId}`);
+        return;
+      }
+      
+      if (!currentPlayer.is_alive) {
+        console.log(`Current player ${currentPlayer.character_name} is dead, auto-advancing`);
+        setAutoProgressInProgress(true);
+        setTimeout(async () => {
+          try {
+            const result = await apiService.autoProgress(roomId);
+            console.log('Dead player auto progress result:', result);
+            await fetchRoomData();
+          } catch (error) {
+            console.error('Dead player auto progress failed:', error);
+          } finally {
+            setAutoProgressInProgress(false);
+          }
+        }, 1000);
+        return;
+      }
+      
       if (currentPlayer && !currentPlayer.is_human) {
-        console.log(`AI player turn detected: ${currentPlayer.character_name}`);
+        console.log(`AI player turn detected: ${currentPlayer.character_name} (Round: ${roomData.current_round || 1})`);
         setAutoProgressInProgress(true);
         setTimeout(async () => {
           try {
             const result = await apiService.autoProgress(roomId);
             console.log('Auto progress result:', result);
+            
+            // より積極的にデータを再取得
+            await fetchRoomData();
+            
+            // 連続してAIプレイヤーがいる場合の対応
+            if (result.auto_progressed && result.next_player) {
+              setTimeout(() => {
+                fetchRoomData();
+              }, 500);
+            }
           } catch (error) {
             console.error('AI auto progress failed:', error);
           } finally {
             setAutoProgressInProgress(false);
           }
-        }, 3000);
+        }, 1500); // 待機時間を短縮
       }
     }
     
@@ -107,12 +164,13 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
           try {
             const result = await apiService.autoProgress(roomId);
             console.log('Auto vote result:', result);
+            await fetchRoomData();
           } catch (error) {
             console.error('AI auto vote failed:', error);
           } finally {
             setAutoProgressInProgress(false);
           }
-        }, 2000);
+        }, 1500);
       }
     }
   }, [roomId, autoProgressInProgress]);

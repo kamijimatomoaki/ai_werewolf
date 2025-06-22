@@ -145,13 +145,13 @@ export default function GameLog({
   };
 
   return (
-    <div className="p-4 bg-white border border-gray-200 rounded-lg">
+    <div className="p-4 bg-gray-800/70 border border-gray-600/50 rounded-lg backdrop-blur-sm">
       {/* ヘッダー */}
       <div className="flex justify-between items-center mb-4">
         <div className="flex items-center gap-2">
-          <ChatIcon className="w-5 h-5" />
-          <h2 className="text-xl font-semibold">ゲームログ</h2>
-          <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800 border border-gray-200">
+          <ChatIcon className="w-5 h-5 text-white" />
+          <h2 className="text-xl font-semibold text-white">ゲームログ</h2>
+          <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-700/80 text-gray-200 border border-gray-500/50">
             {filteredLogs.length}件
           </span>
         </div>
@@ -159,7 +159,7 @@ export default function GameLog({
         <div className="flex items-center gap-2">
           <button
             onClick={() => setShowFilter(!showFilter)}
-            className="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-800 bg-transparent hover:bg-gray-100 rounded transition-colors flex items-center gap-2"
+            className="px-3 py-1.5 text-sm text-gray-300 hover:text-white bg-transparent hover:bg-gray-700/50 rounded transition-colors flex items-center gap-2"
           >
             <FilterIcon className="w-4 h-4" />
             フィルタ
@@ -169,7 +169,7 @@ export default function GameLog({
             <button
               onClick={handleRefresh}
               disabled={isLoading}
-              className="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-800 bg-transparent hover:bg-gray-100 rounded transition-colors flex items-center gap-2 disabled:opacity-50"
+              className="px-3 py-1.5 text-sm text-gray-300 hover:text-white bg-transparent hover:bg-gray-700/50 rounded transition-colors flex items-center gap-2 disabled:opacity-50"
             >
               <RefreshIcon className="w-4 h-4" />
               更新
@@ -180,46 +180,46 @@ export default function GameLog({
 
       {/* フィルタ設定 */}
       {showFilter && (
-        <div className="p-3 mb-4 bg-gray-50 border border-gray-200 rounded-lg">
+        <div className="p-3 mb-4 bg-gray-700/50 border border-gray-600/50 rounded-lg">
           <div className="space-y-2">
-            <h4 className="text-sm font-medium">表示するログの種類:</h4>
+            <h4 className="text-sm font-medium text-white">表示するログの種類:</h4>
             <div className="grid grid-cols-2 gap-2">
               <Switch
                 size="sm"
                 isSelected={filter.speech}
                 onValueChange={(checked) => setFilter(prev => ({ ...prev, speech: checked }))}
               >
-                <span className="text-sm">発言</span>
+                <span className="text-sm text-gray-200">発言</span>
               </Switch>
               <Switch
                 size="sm"
                 isSelected={filter.vote}
                 onValueChange={(checked) => setFilter(prev => ({ ...prev, vote: checked }))}
               >
-                <span className="text-sm">投票</span>
+                <span className="text-sm text-gray-200">投票</span>
               </Switch>
               <Switch
                 size="sm"
                 isSelected={filter.gameEvents}
                 onValueChange={(checked) => setFilter(prev => ({ ...prev, gameEvents: checked }))}
               >
-                <span className="text-sm">ゲームイベント</span>
+                <span className="text-sm text-gray-200">ゲームイベント</span>
               </Switch>
               <Switch
                 size="sm"
                 isSelected={filter.nightActions}
                 onValueChange={(checked) => setFilter(prev => ({ ...prev, nightActions: checked }))}
               >
-                <span className="text-sm">夜のアクション</span>
+                <span className="text-sm text-gray-200">夜のアクション</span>
               </Switch>
             </div>
-            <div className="pt-2 border-t">
+            <div className="pt-2 border-t border-gray-600">
               <Switch
                 size="sm"
                 isSelected={isAutoScrollEnabled}
                 onValueChange={setIsAutoScrollEnabled}
               >
-                <span className="text-sm">自動スクロール</span>
+                <span className="text-sm text-gray-200">自動スクロール</span>
               </Switch>
             </div>
           </div>
@@ -233,40 +233,40 @@ export default function GameLog({
       >
         {filteredLogs.length === 0 ? (
           <div className="text-center py-8">
-            <p className="text-gray-500">
+            <p className="text-gray-300">
               {logs.length === 0 ? 'まだログがありません' : 'フィルタ条件に一致するログがありません'}
             </p>
           </div>
         ) : (
           filteredLogs.map((log) => (
-            <div key={log.log_id} className="border-l-4 border-blue-200 pl-4 py-2 bg-white rounded-r-lg">
+            <div key={log.log_id} className="border-l-4 border-blue-400/50 pl-4 py-2 bg-gray-700/50 rounded-r-lg backdrop-blur-sm">
               {/* ログヘッダー */}
-              <div className="flex items-center gap-2 text-sm text-gray-600 mb-1">
+              <div className="flex items-center gap-2 text-sm text-gray-300 mb-1">
                 <span 
                   className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                    getEventTypeColor(log.event_type) === 'primary' ? 'bg-blue-100 text-blue-800 border border-blue-200' :
-                    getEventTypeColor(log.event_type) === 'secondary' ? 'bg-gray-100 text-gray-800 border border-gray-200' :
-                    getEventTypeColor(log.event_type) === 'success' ? 'bg-green-100 text-green-800 border border-green-200' :
-                    getEventTypeColor(log.event_type) === 'warning' ? 'bg-yellow-100 text-yellow-800 border border-yellow-200' :
-                    getEventTypeColor(log.event_type) === 'danger' ? 'bg-red-100 text-red-800 border border-red-200' :
-                    'bg-gray-100 text-gray-800 border border-gray-200'
+                    getEventTypeColor(log.event_type) === 'primary' ? 'bg-blue-600/20 text-blue-300 border border-blue-400/50' :
+                    getEventTypeColor(log.event_type) === 'secondary' ? 'bg-gray-600/20 text-gray-300 border border-gray-400/50' :
+                    getEventTypeColor(log.event_type) === 'success' ? 'bg-green-600/20 text-green-300 border border-green-400/50' :
+                    getEventTypeColor(log.event_type) === 'warning' ? 'bg-yellow-600/20 text-yellow-300 border border-yellow-400/50' :
+                    getEventTypeColor(log.event_type) === 'danger' ? 'bg-red-600/20 text-red-300 border border-red-400/50' :
+                    'bg-gray-600/20 text-gray-300 border border-gray-400/50'
                   }`}
                 >
                   {getEventTypeLabel(log.event_type)}
                 </span>
                 
                 {log.actor && (
-                  <span className="font-medium">{log.actor.character_name}</span>
+                  <span className="font-medium text-white">{log.actor.character_name}</span>
                 )}
                 
-                <span className="text-xs">
+                <span className="text-xs text-gray-400">
                   {formatTime(log.created_at)}
                 </span>
               </div>
 
               {/* ログ内容 */}
               {log.content && (
-                <div className="prose prose-sm max-w-none">
+                <div className="prose prose-sm max-w-none prose-invert">
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>
                     {log.content}
                   </ReactMarkdown>
@@ -279,7 +279,7 @@ export default function GameLog({
 
       {/* ログ統計 */}
       {logs.length > 0 && (
-        <div className="mt-4 pt-3 border-t text-xs text-gray-500">
+        <div className="mt-4 pt-3 border-t border-gray-600/50 text-xs text-gray-400">
           <div className="flex justify-between">
             <span>総ログ数: {logs.length}件</span>
             <span>表示中: {filteredLogs.length}件</span>

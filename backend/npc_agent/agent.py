@@ -22,12 +22,22 @@ class WerewolfAgent:
 {context}
 
 上記の情報を元に、あなたの役割({self.name})に従って適切な発言を生成してください。
-発言は50文字以内で、自然で人間らしい内容にしてください。
+発言は500文字以内で、自然で人間らしい内容にしてください。
 
 発言:
 """
             response = self.model.generate_content(prompt_text)
-            return response.text.strip()[:100]  # 100文字制限
+            speech = response.text.strip()
+            
+            # 自然な切断処理
+            if len(speech) > 500:
+                cutoff_point = speech.rfind('。', 0, 497)
+                if cutoff_point > 100:
+                    speech = speech[:cutoff_point + 1]
+                else:
+                    speech = speech[:497] + "..."
+            
+            return speech
         except Exception as e:
             # フォールバック
             fallback_responses = {
@@ -150,9 +160,14 @@ class RootAgent:
             response = self.model.generate_content(final_prompt)
             speech = response.text.strip()
             
-            # 発言の長さを制限
-            if len(speech) > 80:
-                speech = speech[:77] + "..."
+            # 発言の長さを制限（500文字に設定）
+            if len(speech) > 500:
+                # 自然な区切り位置で切断
+                cutoff_point = speech.rfind('。', 0, 497)
+                if cutoff_point > 100:  # 適度な長さがある場合
+                    speech = speech[:cutoff_point + 1]
+                else:
+                    speech = speech[:497] + "..."
                 
             return speech
             
@@ -271,20 +286,26 @@ class RootAgent:
     
     def _build_final_prompt(self, player_info: Dict, game_context: Dict, context: str, agent_outputs: List[str]) -> str:
         """最終判断用プロンプトを構築"""
-        # ペルソナ情報の抽出
+        # ペルソナ情報の詳細な抽出
         persona = player_info.get('persona', {})
         persona_info = ""
         if persona:
             persona_info = f"""
-# あなたのペルソナ
+# あなたの詳細なペルソナ設定
+- 年齢: {persona.get('age', '不明')}歳
+- 性別: {persona.get('gender', '不明')}
 - 性格: {persona.get('personality', '不明')}
 - 話し方: {persona.get('speech_style', '不明')}
-- 背景: {persona.get('background', '不明')}"""
+- 背景: {persona.get('background', '不明')}
+
+【最重要】話し方の指示:
+{persona.get('speech_style', '普通の話し方')}で一貫して発言してください。
+語尾や口調、方言などの特徴を必ず維持してください。"""
         
         return f"""
 {prompt.ROOT_AGENT_INSTR}
 
-# あなたの情報
+# あなたの基本情報
 - 名前: {player_info.get('name', '不明')}
 - 役職: {player_info.get('role', '不明')}
 - 陣営: {'人狼' if player_info.get('role') == 'werewolf' else '村人'}
@@ -297,7 +318,12 @@ class RootAgent:
 {chr(10).join(agent_outputs)}
 
 上記の提案を参考に、現在の状況に最も適した発言を1つ選んで生成してください。
-【重要】ペルソナの話し方と性格を絶対に守ってください。
+
+【絶対遵守事項】
+1. ペルソナの話し方を100%維持すること
+2. 語尾や口調の特徴を必ず含めること
+3. キャラクターの年齢と性格に合った発言をすること
+4. 500文字以内で自然な発言をすること
 
 最終発言:
 """

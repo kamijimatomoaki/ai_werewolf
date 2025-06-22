@@ -2377,22 +2377,61 @@ async def handle_auto_progress(room_id: uuid.UUID, db: Session = Depends(get_db)
             # 現在のターンプレイヤーを確認
             if not room.turn_order or room.current_turn_index is None:
                 return {"message": "Turn order not initialized"}
+                
+            # インデックス範囲チェック
+            current_index = room.current_turn_index
+            turn_order = room.turn_order
+            if current_index >= len(turn_order):
+                logger.error(f"Invalid current_turn_index {current_index} for turn_order length {len(turn_order)}")
+                # 最初の生存プレイヤーにリセット
+                first_alive_index = find_next_alive_player_global(db, room, -1)  # -1から開始して最初の生存者を見つける
+                if first_alive_index is None:
+                    return {"message": "No alive players found"}
+                
+                db.execute(
+                    text("UPDATE rooms SET current_turn_index = :index WHERE room_id = :room_id"),
+                    {"index": first_alive_index, "room_id": str(room_id)}
+                )
+                db.commit()
+                current_index = first_alive_index
             
-            current_player_id = room.turn_order[room.current_turn_index]
+            current_player_id = turn_order[current_index]
             current_player = get_player(db, uuid.UUID(current_player_id))
             
             if not current_player:
+                logger.error(f"Current player {current_player_id} not found")
                 return {"message": "Current player not found"}
+                
+            if not current_player.is_alive:
+                logger.info(f"Current player {current_player.character_name} is dead, advancing turn")
+                # 死んだプレイヤーの場合は次の生存プレイヤーに進める
+                next_index = find_next_alive_player_global(db, room, current_index)
+                if next_index is None:
+                    return {"message": "No alive players to advance to"}
+                    
+                db.execute(
+                    text("UPDATE rooms SET current_turn_index = :index WHERE room_id = :room_id"),
+                    {"index": next_index, "room_id": str(room_id)}
+                )
+                db.commit()
+                
+                next_player_id = turn_order[next_index]
+                next_player = get_player(db, uuid.UUID(next_player_id))
+                return {
+                    "auto_progressed": True,
+                    "message": f"Player {current_player.character_name} is dead, advanced to {next_player.character_name if next_player else 'unknown'}"
+                }
             
             # AIプレイヤーの場合、自動発言
             if not current_player.is_human:
-                # 現在のラウンドで既に発言済みかチェック
+                # 現在のラウンドで既に発言済みかチェック - より正確な方法を使用
                 current_round = room.current_round or 1
                 already_spoken = db.query(GameLog).filter(
                     GameLog.room_id == room_id,
                     GameLog.phase == "day_discussion",
                     GameLog.event_type == "speech",
                     GameLog.actor_player_id == current_player.player_id,
+                    GameLog.day_number == room.day_number,
                     GameLog.content.like(f"%Round {current_round}:%")
                 ).first()
                 
@@ -2400,47 +2439,64 @@ async def handle_auto_progress(room_id: uuid.UUID, db: Session = Depends(get_db)
                     logger.info(f"{current_player.character_name} already spoke in round {current_round}, advancing turn")
                     
                     # 既に発言済みの場合は次のプレイヤーに進める
-                    alive_players = [pid for pid in room.turn_order if get_player(db, uuid.UUID(pid)) and get_player(db, uuid.UUID(pid)).is_alive]
+                    next_index = find_next_alive_player_global(db, room, current_index)
+                    if next_index is None:
+                        logger.error("No next alive player found")
+                        return {"message": "No next alive player found"}
                     
-                    def find_next_alive_player(start_index: int) -> int:
-                        attempts = 0
-                        max_attempts = len(room.turn_order) * 2
+                    # ターンを進める前にラウンド完了をチェック
+                    round_complete = check_round_complete_global(db, room_id, current_round)
+                    
+                    if round_complete and current_round >= 3:
+                        # 3ラウンド完了、投票フェーズへ
+                        db.execute(
+                            text("UPDATE rooms SET status = :status, current_turn_index = 0 WHERE room_id = :room_id"),
+                            {"status": "day_vote", "room_id": str(room_id)}
+                        )
+                        db.commit()
+                        create_game_log(db, room_id, "day_discussion", "phase_transition", content="議論終了。投票フェーズに移行します。")
+                        return {
+                            "auto_progressed": True,
+                            "message": "All rounds completed, moving to vote phase",
+                            "phase_change": "day_vote"
+                        }
+                    elif round_complete:
+                        # 次のラウンドへ
+                        first_alive_index = find_next_alive_player_global(db, room, -1)
+                        if first_alive_index is None:
+                            return {"message": "No alive players for next round"}
                         
-                        while attempts < max_attempts:
-                            next_idx = (start_index + attempts + 1) % len(room.turn_order)
-                            next_player_id = room.turn_order[next_idx]
-                            next_player = get_player(db, uuid.UUID(next_player_id))
-                            if next_player and next_player.is_alive:
-                                return next_idx
-                            attempts += 1
+                        db.execute(
+                            text("UPDATE rooms SET current_round = :round, current_turn_index = :index WHERE room_id = :room_id"),
+                            {"round": current_round + 1, "index": first_alive_index, "room_id": str(room_id)}
+                        )
+                        db.commit()
+                        create_game_log(db, room_id, "day_discussion", "phase_transition", content=f"ラウンド{current_round}終了。ラウンド{current_round + 1}を開始します。")
                         
-                        # フォールバック: 最初の生存プレイヤーを返す
-                        for i, pid in enumerate(room.turn_order):
-                            player = get_player(db, uuid.UUID(pid))
-                            if player and player.is_alive:
-                                return i
-                        return 0
-                    
-                    next_index = find_next_alive_player(room.current_turn_index)
-                    
-                    # SQLAlchemyクエリでターンインデックスを更新
-                    from sqlalchemy import text
-                    db.execute(
-                        text("UPDATE rooms SET current_turn_index = :index WHERE room_id = :room_id"),
-                        {"index": next_index, "room_id": str(room_id)}
-                    )
-                    db.commit()
-                    
-                    # 次のプレイヤー情報を取得
-                    next_player_id = room.turn_order[next_index]
-                    next_player = get_player(db, uuid.UUID(next_player_id))
-                    
-                    return {
-                        "auto_progressed": True,
-                        "message": f"{current_player.character_name} already spoke, turn advanced to {next_player.character_name if next_player else 'unknown'}",
-                        "next_player": next_player_id,
-                        "next_player_name": next_player.character_name if next_player else "unknown"
-                    }
+                        next_player_id = turn_order[first_alive_index]
+                        next_player = get_player(db, uuid.UUID(next_player_id))
+                        return {
+                            "auto_progressed": True,
+                            "message": f"Round {current_round} completed, starting round {current_round + 1} with {next_player.character_name if next_player else 'unknown'}",
+                            "round_change": current_round + 1
+                        }
+                    else:
+                        # 通常のターン進行
+                        db.execute(
+                            text("UPDATE rooms SET current_turn_index = :index WHERE room_id = :room_id"),
+                            {"index": next_index, "room_id": str(room_id)}
+                        )
+                        db.commit()
+                        
+                        next_player_id = turn_order[next_index]
+                        next_player = get_player(db, uuid.UUID(next_player_id))
+                        
+                        return {
+                            "auto_progressed": True,
+                            "message": f"{current_player.character_name} already spoke, turn advanced to {next_player.character_name if next_player else 'unknown'}",
+                            "next_player": next_player_id,
+                            "next_player_name": next_player.character_name if next_player else "unknown"
+                        }
                 
                 # より厳密な同時実行防止 - 現在のターンプレイヤーの再確認
                 # DB から最新の room 情報を再取得
@@ -2936,6 +2992,84 @@ async def leave_spectator_mode(
     except Exception as e:
         logger.error(f"Error leaving spectator mode: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to leave spectator mode")
+
+# === ターン進行のヘルパー関数 ===
+
+def find_next_alive_player_global(db: Session, room: Room, start_index: int) -> Optional[int]:
+    """次の生存プレイヤーのインデックスを取得（改良版）"""
+    if not room.turn_order:
+        return None
+        
+    attempts = 0
+    max_attempts = len(room.turn_order) * 2
+    
+    while attempts < max_attempts:
+        next_idx = (start_index + attempts + 1) % len(room.turn_order)
+        next_player_id = room.turn_order[next_idx]
+        try:
+            next_player = get_player(db, uuid.UUID(next_player_id))
+            if next_player and next_player.is_alive:
+                return next_idx
+        except Exception as e:
+            logger.warning(f"Error checking player {next_player_id}: {e}")
+        attempts += 1
+    
+    # フォールバック: 最初の生存プレイヤーを返す
+    for i, pid in enumerate(room.turn_order):
+        try:
+            player = get_player(db, uuid.UUID(pid))
+            if player and player.is_alive:
+                return i
+        except Exception as e:
+            logger.warning(f"Error checking fallback player {pid}: {e}")
+            continue
+    
+    return None
+
+def check_round_complete_global(db: Session, room_id: uuid.UUID, current_round: int) -> bool:
+    """ラウンド完了チェック（改良版）"""
+    try:
+        room = get_room(db, room_id)
+        if not room or not room.turn_order:
+            return False
+            
+        # 生存プレイヤーを取得
+        alive_players = []
+        for pid in room.turn_order:
+            try:
+                player = get_player(db, uuid.UUID(pid))
+                if player and player.is_alive:
+                    alive_players.append(str(player.player_id))
+            except Exception as e:
+                logger.warning(f"Error checking player {pid} for round completion: {e}")
+                continue
+        
+        if not alive_players:
+            return True  # 生存プレイヤーがいない場合はラウンド完了とみなす
+        
+        # 各生存プレイヤーが現在のラウンドで発言したかチェック
+        for player_id_str in alive_players:
+            try:
+                player_speeches = db.query(GameLog).filter(
+                    GameLog.room_id == room_id,
+                    GameLog.phase == "day_discussion",
+                    GameLog.event_type == "speech",
+                    GameLog.actor_player_id == uuid.UUID(player_id_str),
+                    GameLog.day_number == room.day_number,
+                    GameLog.content.like(f"%Round {current_round}:%")
+                ).count()
+                
+                if player_speeches == 0:
+                    return False
+            except Exception as e:
+                logger.warning(f"Error checking speeches for player {player_id_str}: {e}")
+                return False
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error in check_round_complete_global: {e}")
+        return False
 
 @app.get("/api/ai_agent/status")
 def get_ai_agent_status():
