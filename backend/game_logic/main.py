@@ -652,10 +652,15 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
             next_player = get_player(db, uuid.UUID(next_player_id))
             if next_player and next_player.is_alive:
                 logger.info(f"Found next alive player at index {next_idx}: {next_player.character_name}")
-                return next_idx
+                # 同じプレイヤーに戻らないことを確認
+                if next_idx != start_index:
+                    return next_idx
+                else:
+                    logger.warning(f"Next player would be same as current ({next_idx}), continuing search...")
+                    continue
         
-        # フォールバック: 現在のプレイヤーを返す（エラー状態）
-        logger.error("Could not find next alive player, returning current index")
+        # すべて試しても同じプレイヤーしかいない場合（ゲーム終了状態）
+        logger.error("All players are dead or only one player alive - game should end")
         return start_index
     
     next_index = find_next_alive_player(current_index)
@@ -663,11 +668,28 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
     # デバッグログ追加
     logger.info(f"Turn progression: current_index={current_index}, next_index={next_index}, turn_order={turn_order}")
     
-    # シンプルなターン進行 - 常に次のプレイヤーに進む
-    db.execute(
-        text("UPDATE rooms SET current_turn_index = :index WHERE room_id = :room_id"),
-        {"index": next_index, "room_id": str(room_id)}
-    )
+    # 詳細なデバッグログを追加
+    logger.info(f"Before turn update: current_index={current_index}, next_index={next_index}")
+    
+    # 同じインデックスの場合はエラー（無限ループ防止）
+    if next_index == current_index and len(alive_players) > 1:
+        logger.error(f"Turn would not progress (same index {current_index}), this should not happen with {len(alive_players)} alive players")
+        # 強制的に次のインデックスに進める
+        next_index = (current_index + 1) % len(turn_order)
+        # 生存者でない場合は再度探す
+        next_player = get_player(db, uuid.UUID(turn_order[next_index]))
+        if not next_player or not next_player.is_alive:
+            # 最初の生存者を探す
+            for i in range(len(turn_order)):
+                idx = (current_index + 1 + i) % len(turn_order)
+                player = get_player(db, uuid.UUID(turn_order[idx]))
+                if player and player.is_alive and idx != current_index:
+                    next_index = idx
+                    break
+        logger.info(f"Forced turn progression to index {next_index}")
+    
+    # ターン進行の改善 - ORMを使用してより確実に更新
+    db_room.current_turn_index = next_index
     
     # 発言回数をカウントして投票フェーズに移行するかチェック
     total_speeches = db.query(GameLog).filter(
@@ -677,21 +699,28 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
         GameLog.day_number == db_room.day_number
     ).count()
     
+    logger.info(f"Total speeches: {total_speeches}, alive players: {len(alive_players)}")
+    
     # 生存プレイヤー数の3倍の発言があったら投票フェーズへ
     if total_speeches >= len(alive_players) * 3:
-        db.execute(
-            text("UPDATE rooms SET status = :status, current_turn_index = 0 WHERE room_id = :room_id"),
-            {"status": "day_vote", "room_id": str(room_id)}
-        )
+        db_room.status = "day_vote"
+        db_room.current_turn_index = 0
         create_game_log(db, room_id, "day_discussion", "phase_transition", content="議論終了。投票フェーズに移行します。")
         logger.info(f"Discussion phase completed in room {room_id}. Moving to vote phase.")
     
+    # データベースの変更をコミット
     db.commit()
     
-    # 更新されたデータを取得
+    # 更新されたデータを強制的に再読み込み
     db.refresh(db_room)
-    current_player_id = db_room.turn_order[db_room.current_turn_index]
-    logger.info(f"Turn advanced in room {room_id} to player {current_player_id}.")
+    
+    # 最終状態の確認ログ
+    logger.info(f"After turn update: room_status={db_room.status}, current_turn_index={db_room.current_turn_index}")
+    if db_room.current_turn_index < len(db_room.turn_order):
+        current_player_id = db_room.turn_order[db_room.current_turn_index]
+        logger.info(f"Turn advanced in room {room_id} to player {current_player_id}")
+    else:
+        logger.error(f"Invalid turn index {db_room.current_turn_index} for turn_order length {len(db_room.turn_order)}")
     
     return db_room
 
