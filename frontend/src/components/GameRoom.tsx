@@ -377,9 +377,16 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
               {getStatusLabel(room.status)}
             </span>
             {room.status !== 'waiting' && (
-              <span className="px-2 py-1 text-xs rounded font-medium border border-gray-300 text-gray-200">
-                {room.day_number}日目
-              </span>
+              <div className="flex gap-2">
+                <span className="px-2 py-1 text-xs rounded font-medium border border-gray-300 text-gray-200">
+                  {room.day_number}日目
+                </span>
+                {room.status === 'day_discussion' && room.current_round && (
+                  <span className="px-2 py-1 text-xs rounded font-medium bg-blue-600/20 border border-blue-400/50 text-blue-200">
+                    ラウンド {room.current_round}/3
+                  </span>
+                )}
+              </div>
             )}
           </div>
         </div>
@@ -435,6 +442,7 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
             gameStatus={room.status}
             isMyTurn={isMyTurn}
             currentPlayer={currentSpeaker}
+            currentRound={room.current_round}
             onSpeak={handleSpeak}
             isLoading={loading}
           />

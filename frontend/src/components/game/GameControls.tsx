@@ -6,6 +6,7 @@ interface GameControlsProps {
   gameStatus: string;
   isMyTurn: boolean;
   currentPlayer?: PlayerInfo;
+  currentRound?: number;
   onSpeak: (statement: string) => Promise<void>;
   onStartGame?: () => Promise<void>;
   isLoading?: boolean;
@@ -15,6 +16,7 @@ export default function GameControls({
   gameStatus,
   isMyTurn,
   currentPlayer,
+  currentRound,
   onSpeak,
   onStartGame,
   isLoading = false
@@ -95,8 +97,18 @@ export default function GameControls({
               
             </div>
 
-            {/* 発言のヒント */}
+            {/* 発言のヒントとラウンド情報 */}
             <div className="mt-3 p-3 bg-gray-700/80 rounded-lg border border-gray-600/50">
+              {currentRound && (
+                <div className="mb-2 p-2 bg-blue-600/20 border border-blue-400/30 rounded text-center">
+                  <span className="text-sm font-medium text-blue-200">
+                    ラウンド {currentRound} / 3
+                  </span>
+                  <p className="text-xs text-blue-300 mt-1">
+                    各プレイヤーは1ラウンドにつき1回発言できます
+                  </p>
+                </div>
+              )}
               <p className="text-xs text-gray-300">
                 💡 他のプレイヤーの発言をよく聞いて、疑問点があれば質問してみましょう。
                 相手の反応から何かが見えてくるかもしれません。

@@ -133,14 +133,14 @@ export default function PlayerList({
                   )}
                   {player.character_persona && (
                     <div className="w-full mt-2">
-                      <div className="p-3 bg-gradient-to-r from-purple-600/20 to-pink-600/20 border border-purple-400/30 rounded-lg backdrop-blur-sm">
-                        <p className="text-xs font-medium text-purple-200">ペルソナ:</p>
-                        <p className="text-sm text-gray-200 mt-1">
-                          {player.character_persona.age}歳の{player.character_persona.gender}。
-                          {player.character_persona.personality}。
-                          {player.character_persona.speech_style}で話す。
+                      <div className="p-3 bg-gradient-to-r from-slate-800/90 to-slate-700/90 border border-slate-400/50 rounded-lg backdrop-blur-sm shadow-lg">
+                        <p className="text-xs font-semibold text-slate-200 mb-1">ペルソナ:</p>
+                        <p className="text-sm text-white leading-relaxed">
+                          <span className="font-medium">{player.character_persona.age}歳の{player.character_persona.gender}</span>。
+                          <span className="text-slate-100">{player.character_persona.personality}</span>。
+                          <span className="text-slate-100">{player.character_persona.speech_style}で話す</span>。
                           {player.character_persona.background && (
-                            <span className="block mt-1 text-xs text-gray-300">
+                            <span className="block mt-2 text-xs text-slate-200 bg-slate-700/50 px-2 py-1 rounded">
                               背景: {player.character_persona.background}
                             </span>
                           )}

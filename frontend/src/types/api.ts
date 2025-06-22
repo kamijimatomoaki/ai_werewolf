@@ -35,6 +35,7 @@ export interface RoomInfo {
   human_players: number;
   ai_players: number;
   day_number: number;
+  current_round?: number;
   turn_order?: string[];
   current_turn_index?: number;
   players: PlayerInfo[];
