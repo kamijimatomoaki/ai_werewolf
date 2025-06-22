@@ -1159,6 +1159,13 @@ def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid.UUID)
         if not room:
             raise HTTPException(status_code=404, detail="Room not found")
         
+        # デバッグ: ペルソナ情報をログ出力
+        logger.info(f"Generating speech for {ai_player.character_name}")
+        logger.info(f"Player persona: {ai_player.character_persona}")
+        logger.info(f"Using root_agent: {root_agent is not None}")
+        logger.info(f"GOOGLE_PROJECT_ID: {GOOGLE_PROJECT_ID is not None}")
+        logger.info(f"GOOGLE_LOCATION: {GOOGLE_LOCATION is not None}")
+        
         # AIエージェントが利用可能な場合
         if root_agent and GOOGLE_PROJECT_ID and GOOGLE_LOCATION:
             # プレイヤー情報を準備
@@ -1417,6 +1424,9 @@ def generate_fallback_ai_speech(ai_player, room, db) -> str:
             # プロンプトを構築
             prompt = build_ai_speech_prompt(ai_player, room, recent_logs, db)
             
+            # デバッグ: 生成されたプロンプトをログ出力（最初の1000文字のみ）
+            logger.info(f"Generated prompt for {ai_player.character_name}: {prompt[:1000]}...")
+            
             model = GenerativeModel("gemini-1.5-flash")
             
             # タイムアウト付きでVertex AI APIを呼び出し
@@ -1442,6 +1452,9 @@ def generate_fallback_ai_speech(ai_player, room, db) -> str:
             speech = response.text.strip()
             if len(speech) > 200:
                 speech = speech[:197] + "..."
+            
+            # デバッグ: 生成された発言をログ出力
+            logger.info(f"Generated speech for {ai_player.character_name}: '{speech}'")
             
             return speech
         else:
@@ -2384,10 +2397,49 @@ async def handle_auto_progress(room_id: uuid.UUID, db: Session = Depends(get_db)
                 ).first()
                 
                 if already_spoken:
-                    logger.info(f"{current_player.character_name} already spoke in round {current_round}")
+                    logger.info(f"{current_player.character_name} already spoke in round {current_round}, advancing turn")
+                    
+                    # 既に発言済みの場合は次のプレイヤーに進める
+                    alive_players = [pid for pid in room.turn_order if get_player(db, uuid.UUID(pid)) and get_player(db, uuid.UUID(pid)).is_alive]
+                    
+                    def find_next_alive_player(start_index: int) -> int:
+                        attempts = 0
+                        max_attempts = len(room.turn_order) * 2
+                        
+                        while attempts < max_attempts:
+                            next_idx = (start_index + attempts + 1) % len(room.turn_order)
+                            next_player_id = room.turn_order[next_idx]
+                            next_player = get_player(db, uuid.UUID(next_player_id))
+                            if next_player and next_player.is_alive:
+                                return next_idx
+                            attempts += 1
+                        
+                        # フォールバック: 最初の生存プレイヤーを返す
+                        for i, pid in enumerate(room.turn_order):
+                            player = get_player(db, uuid.UUID(pid))
+                            if player and player.is_alive:
+                                return i
+                        return 0
+                    
+                    next_index = find_next_alive_player(room.current_turn_index)
+                    
+                    # SQLAlchemyクエリでターンインデックスを更新
+                    from sqlalchemy import text
+                    db.execute(
+                        text("UPDATE rooms SET current_turn_index = :index WHERE room_id = :room_id"),
+                        {"index": next_index, "room_id": str(room_id)}
+                    )
+                    db.commit()
+                    
+                    # 次のプレイヤー情報を取得
+                    next_player_id = room.turn_order[next_index]
+                    next_player = get_player(db, uuid.UUID(next_player_id))
+                    
                     return {
-                        "auto_progressed": False,
-                        "message": f"{current_player.character_name} has already spoken in round {current_round}"
+                        "auto_progressed": True,
+                        "message": f"{current_player.character_name} already spoke, turn advanced to {next_player.character_name if next_player else 'unknown'}",
+                        "next_player": next_player_id,
+                        "next_player_name": next_player.character_name if next_player else "unknown"
                     }
                 
                 # より厳密な同時実行防止 - 現在のターンプレイヤーの再確認
@@ -2550,15 +2602,24 @@ def generate_game_summary(db: Session, room_id: uuid.UUID) -> dict:
         ).order_by(GameLog.created_at.asc()).all()
         
         if GOOGLE_PROJECT_ID and GOOGLE_LOCATION:
-            # LLMでサマリーを生成
-            prompt = build_game_summary_prompt(room, all_logs)
-            
-            model = GenerativeModel("gemini-1.5-flash")
-            response = model.generate_content(prompt)
-            
-            llm_summary = response.text.strip()
+            try:
+                # LLMでサマリーを生成
+                prompt = build_game_summary_prompt(room, all_logs)
+                
+                model = GenerativeModel("gemini-1.5-flash")
+                response = model.generate_content(prompt)
+                
+                llm_summary = response.text.strip() if response.text else "LLMから応答が得られませんでした"
+                
+                # HTMLタグを除去してプレーンテキストにする
+                import re
+                llm_summary = re.sub(r'<[^>]+>', '', llm_summary)
+                
+            except Exception as e:
+                logger.error(f"Error in LLM summary generation: {e}")
+                llm_summary = "LLMサマリー生成に失敗しました"
         else:
-            llm_summary = "サマリー機能は現在利用できません。"
+            llm_summary = "サマリー機能は現在利用できません（Google AI未設定）"
         
         # 基本統計を生成
         alive_players = [p for p in room.players if p.is_alive]
