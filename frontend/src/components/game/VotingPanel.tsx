@@ -57,7 +57,7 @@ export default function VotingPanel({
   const votableTargets = players.filter(p => p.is_alive && p.player_id !== currentPlayerId);
 
   return (
-    <Card className="p-4 bg-red-50 border-red-200">
+    <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
       <div className="flex items-center gap-3 mb-4">
         <VoteIcon className="w-6 h-6 text-red-600" />
         <div>
@@ -212,6 +212,6 @@ export default function VotingPanel({
           )}
         </div>
       )}
-    </Card>
+    </div>
   );
 }

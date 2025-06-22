@@ -149,22 +149,21 @@ export default function GameControls({
   // 待機中の場合
   if (gameStatus === 'waiting' && onStartGame) {
     return (
-      <Card className="p-4 bg-green-50 border-green-200">
+      <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
         <div className="text-center">
           <h3 className="font-semibold text-green-800 mb-2">ゲーム開始準備</h3>
           <p className="text-sm text-green-700 mb-4">
             プレイヤーが揃い次第ゲームを開始できます
           </p>
-          <Button
-            color="success"
+          <button
             onClick={onStartGame}
-            isLoading={isLoading}
-            size="lg"
+            disabled={isLoading}
+            className="px-6 py-3 bg-green-600 hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
           >
             {isLoading ? 'ゲーム開始中...' : 'ゲーム開始'}
-          </Button>
+          </button>
         </div>
-      </Card>
+      </div>
     );
   }
 

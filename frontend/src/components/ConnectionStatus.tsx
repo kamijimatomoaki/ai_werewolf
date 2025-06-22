@@ -101,7 +101,7 @@ export function ConnectionStatus({ showReconnectButton = true, compact = false }
   }
 
   return (
-    <Card className="p-3">
+    <div className="p-3 bg-white border border-gray-200 rounded-lg">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <span className="text-lg">{getStatusIcon(connectionStatus)}</span>
@@ -139,18 +139,16 @@ export function ConnectionStatus({ showReconnectButton = true, compact = false }
         </div>
         
         {showReconnectButton && !isConnected && (
-          <Button 
-            size="sm" 
-            color="primary" 
-            variant="bordered"
+          <button 
             onClick={handleReconnect}
-            isDisabled={connectionStatus === 'connecting' || connectionStatus === 'reconnecting'}
+            disabled={connectionStatus === 'connecting' || connectionStatus === 'reconnecting'}
+            className="px-3 py-1.5 text-sm border border-blue-300 hover:bg-blue-50 disabled:opacity-50 disabled:cursor-not-allowed text-blue-700 rounded transition-colors"
           >
             再接続
-          </Button>
+          </button>
         )}
       </div>
-    </Card>
+    </div>
   );
 }
 

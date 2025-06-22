@@ -86,7 +86,7 @@ export default function PlayerList({
   const hasUnsetPersonas = players.some(p => !p.is_human && !p.character_persona);
 
   return (
-    <Card className="p-4 bg-gray-800/70 border-gray-600/50 backdrop-blur-sm">
+    <div className="p-4 bg-gray-800/70 border border-gray-600/50 rounded-lg backdrop-blur-sm">
       <h2 className="text-xl font-semibold mb-4 text-white">
         プレイヤー ({players.length}/{totalPlayers})
       </h2>
@@ -260,6 +260,6 @@ export default function PlayerList({
           </p>
         </div>
       )}
-    </Card>
+    </div>
   );
 }
