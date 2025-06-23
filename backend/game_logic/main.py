@@ -560,44 +560,43 @@ def get_role_config(player_count: int) -> List[str]:
     return configs.get(player_count, ['villager'] * player_count)
 
 def create_room(db: Session, room: RoomCreate, host_name: str) -> Room:
-    if room.total_players != room.human_players + room.ai_players:
-        raise HTTPException(status_code=400, detail="Total players must equal human + AI players.")
+    try:
+        if room.total_players != room.human_players + room.ai_players:
+            raise HTTPException(status_code=400, detail="Total players must equal human + AI players.")
 
-    db_room = Room(
-        room_name=room.room_name,
-        total_players=room.total_players,
-        human_players=room.human_players,
-        ai_players=room.ai_players,
-        is_private=room.is_private
-    )
-    db.add(db_room)
-    db.flush()
-
-    # ホストプレイヤーのみを作成（他の人間プレイヤーは後から参加）
-    host_player = Player(room_id=db_room.room_id, character_name=host_name, is_human=True)
-    db.add(host_player)
-    
-    # AIプレイヤーを作成（ペルソナ付き）
-    for i in range(room.ai_players):
-        ai_player = Player(
-            room_id=db_room.room_id, character_name=f"AIプレイヤー{i+1}", is_human=False
+        db_room = Room(
+            room_name=room.room_name,
+            total_players=room.total_players,
+            human_players=room.human_players,
+            ai_players=room.ai_players,
+            is_private=room.is_private
         )
-        db.add(ai_player)
-        db.flush()  # プレイヤーIDを取得するため
+        db.add(db_room)
+        db.flush()
+
+        # ホストプレイヤーのみを作成（他の人間プレイヤーは後から参加）
+        host_player = Player(room_id=db_room.room_id, character_name=host_name, is_human=True)
+        db.add(host_player)
         
-        # AIプレイヤーにペルソナを自動生成
-        try:
-            persona = generate_ai_persona(ai_player.character_name)
-            ai_player.character_persona = persona
-            logger.info(f"Generated persona for {ai_player.character_name}: {persona[:100]}...")
-        except Exception as e:
-            logger.warning(f"Failed to generate persona for {ai_player.character_name}: {e}")
-            # デフォルトペルソナを設定
-            ai_player.character_persona = f"私は{ai_player.character_name}です。冷静に分析して判断します。"
+        # AIプレイヤーを作成（ペルソナなし、高速作成）
+        for i in range(room.ai_players):
+            ai_player = Player(
+                room_id=db_room.room_id, 
+                character_name=f"AIプレイヤー{i+1}", 
+                is_human=False,
+                character_persona=None  # ペルソナは手動設定を前提
+            )
+            db.add(ai_player)
+            
+        db.commit()
+        db.refresh(db_room)
+        logger.info(f"Room created successfully: {db_room.room_id} with {room.ai_players} AI players")
+        return db_room
         
-    db.commit()
-    db.refresh(db_room)
-    return db_room
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error creating room: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to create room: {str(e)}")
 
 def start_game_logic(db: Session, room_id: uuid.UUID) -> Room:
     db_room: Optional[Room] = get_room(db, room_id)
@@ -1176,12 +1175,16 @@ def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid.UUID)
         # Google AI設定の確認
         if root_agent and GOOGLE_PROJECT_ID and GOOGLE_LOCATION:
             logger.info("Using root_agent with Google AI credentials")
-            # プレイヤー情報を準備
+            # プレイヤー情報を準備（ペルソナ未設定の場合はデフォルト）
+            persona = ai_player.character_persona
+            if not persona:
+                persona = f"私は{ai_player.character_name}です。冷静に分析して判断します。"
+                
             player_info = {
                 'name': ai_player.character_name,
                 'role': ai_player.role,
                 'is_alive': ai_player.is_alive,
-                'persona': ai_player.character_persona
+                'persona': persona
             }
             
             # ゲーム情報を準備
@@ -1237,6 +1240,9 @@ def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid.UUID)
             
     except Exception as e:
         logger.error(f"Error generating AI speech for {ai_player.character_name}: {e}", exc_info=True)
+        logger.error(f"Error type: {type(e).__name__}")
+        logger.error(f"Error details: {str(e)}")
+        
         # エラー時のフォールバック - より有用な発言を生成
         fallback_speeches = [
             "少し考えさせてください。",
@@ -2120,55 +2126,6 @@ def handle_generate_persona(player_id: uuid.UUID, persona_input: PersonaInput, d
     except Exception as e:
         logger.error(f"Error in persona generation: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="AI service error.")
-
-def generate_ai_persona(character_name: str) -> str:
-    """AIプレイヤー用のペルソナを自動生成"""
-    if not GOOGLE_PROJECT_ID or not GOOGLE_LOCATION:
-        return f"私は{character_name}です。冷静に分析して判断します。"
-    
-    # ランダムなキーワードを生成
-    personality_traits = ["冷静沈着", "感情豊か", "疑い深い", "楽観的", "慎重", "積極的", "論理的", "直感的"]
-    speech_styles = ["丁寧語", "タメ口", "関西弁", "のだ口調", "である調", "方言", "古風な話し方"]
-    backgrounds = ["村の医者", "旅の商人", "元教師", "若い学生", "経験豊富な農夫", "街の職人", "元兵士"]
-    
-    random_keywords = f"{random.choice(personality_traits)}, {random.choice(speech_styles)}, {random.choice(backgrounds)}"
-    
-    prompt = f"""
-    あなたは、人狼ゲームの熟練ゲームマスターです。
-    以下のキーワードを基に、人狼ゲームに登場するキャラクター「{character_name}」の設定を考えてください。
-    生成するデータは、必ず下記のJSON形式に従ってください。
-    
-    # キーワード
-    {random_keywords}
-    
-    # JSON形式の定義
-    {{
-      "gender": "性別 (例: 男性, 女性, 不明)",
-      "age": "年齢 (整数)",
-      "personality": "性格や特徴 (例: 冷静沈着で論理的、疑い深い、感情的な発言が多い)",
-      "speech_style": "口調 (例: 丁寧語、タメ口、古風な話し方、無口、関西弁、のだ口調、である調、だっぺ口調、方言など自由に)",
-      "background": "キャラクターの背景設定 (例: 村の医者、旅の詩人、元騎士団長)"
-    }}
-    """
-    
-    try:
-        model = GenerativeModel("gemini-1.5-flash")
-        response = model.generate_content(prompt)
-        persona_data = json.loads(response.text.strip().replace("```json", "").replace("```", ""))
-        
-        # JSON形式からテキスト形式に変換
-        persona_text = f"""名前: {character_name}
-性別: {persona_data.get('gender', '不明')}
-年齢: {persona_data.get('age', '不明')}歳
-性格: {persona_data.get('personality', '冷静')}
-話し方: {persona_data.get('speech_style', '普通')}
-背景: {persona_data.get('background', '村人')}"""
-        
-        return persona_text
-        
-    except Exception as e:
-        logger.error(f"Error in auto persona generation for {character_name}: {e}")
-        return f"私は{character_name}です。冷静に分析して判断します。"
 
 @app.post("/api/game/discuss", response_model=DiscussionResponse)
 def handle_ai_discussion(request: DiscussionRequest):
