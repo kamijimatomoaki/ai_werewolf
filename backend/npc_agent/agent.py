@@ -1,7 +1,26 @@
+import os
 import random
 from typing import List, Dict, Optional
+import vertexai
 from vertexai.generative_models import GenerativeModel, FunctionDeclaration, Tool
+from dotenv import load_dotenv
 from . import prompt
+
+# 環境変数を読み込み
+load_dotenv()
+
+# Vertex AI初期化
+GOOGLE_PROJECT_ID = os.getenv("GOOGLE_PROJECT_ID") or os.getenv("GOOGLE_CLOUD_PROJECT", "").strip('"')
+GOOGLE_LOCATION = os.getenv("GOOGLE_LOCATION") or os.getenv("GOOGLE_CLOUD_LOCATION", "").strip('"')
+
+if GOOGLE_PROJECT_ID and GOOGLE_LOCATION:
+    try:
+        vertexai.init(project=GOOGLE_PROJECT_ID, location=GOOGLE_LOCATION)
+        print(f"[DEBUG] Vertex AI initialized in npc_agent: {GOOGLE_PROJECT_ID} @ {GOOGLE_LOCATION}")
+    except Exception as e:
+        print(f"[WARNING] Failed to initialize Vertex AI in npc_agent: {e}")
+else:
+    print(f"[WARNING] Missing Vertex AI credentials: PROJECT={GOOGLE_PROJECT_ID}, LOCATION={GOOGLE_LOCATION}")
 
 class WerewolfAgent:
     """Vertex AIベースの人狼ゲームエージェント"""
