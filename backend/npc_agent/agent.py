@@ -1,6 +1,6 @@
 import random
 from typing import List, Dict, Optional
-from vertexai.generative_models import GenerativeModel
+from vertexai.generative_models import GenerativeModel, FunctionDeclaration, Tool
 from . import prompt
 
 class WerewolfAgent:
@@ -94,119 +94,329 @@ coming_out_agent = WerewolfAgent(
     instruction=prompt.COMING_OUT_AGENT_INSTR,
 )
 
+# 人狼ゲーム専用ツール定義
+def create_werewolf_tools():
+    """人狼ゲーム専用のFunction Callingツールを作成"""
+    
+    # プレイヤー分析ツール
+    analyze_player_tool = FunctionDeclaration(
+        name="analyze_player",
+        description="指定したプレイヤーの行動パターンと発言を分析して、役職を推測する",
+        parameters={
+            "type": "object",
+            "properties": {
+                "player_name": {
+                    "type": "string",
+                    "description": "分析対象のプレイヤー名"
+                },
+                "behavior_focus": {
+                    "type": "string", 
+                    "description": "分析の焦点（投票パターン、発言内容、積極性など）"
+                }
+            },
+            "required": ["player_name", "behavior_focus"]
+        }
+    )
+    
+    # 投票戦略ツール
+    vote_strategy_tool = FunctionDeclaration(
+        name="plan_vote_strategy",
+        description="現在の状況に基づいて最適な投票戦略を立案する",
+        parameters={
+            "type": "object",
+            "properties": {
+                "target_candidates": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "投票候補者のリスト"
+                },
+                "strategy_type": {
+                    "type": "string",
+                    "enum": ["offensive", "defensive", "information_gathering"],
+                    "description": "戦略のタイプ"
+                }
+            },
+            "required": ["target_candidates", "strategy_type"]
+        }
+    )
+    
+    # 疑惑度評価ツール
+    suspicion_rating_tool = FunctionDeclaration(
+        name="rate_player_suspicion",
+        description="プレイヤーごとの疑惑度を1-10のスケールで評価する",
+        parameters={
+            "type": "object",
+            "properties": {
+                "players": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "評価対象のプレイヤー名リスト"
+                },
+                "evaluation_criteria": {
+                    "type": "string",
+                    "description": "評価基準（発言の一貫性、投票行動、積極性など）"
+                }
+            },
+            "required": ["players", "evaluation_criteria"]
+        }
+    )
+    
+    # カミングアウトタイミング分析ツール
+    coming_out_timing_tool = FunctionDeclaration(
+        name="analyze_coming_out_timing",
+        description="カミングアウトの最適なタイミングを分析する",
+        parameters={
+            "type": "object",
+            "properties": {
+                "my_role": {
+                    "type": "string",
+                    "description": "自分の役職"
+                },
+                "game_phase": {
+                    "type": "string",
+                    "description": "現在のゲームフェーズ"
+                },
+                "alive_count": {
+                    "type": "integer",
+                    "description": "生存プレイヤー数"
+                }
+            },
+            "required": ["my_role", "game_phase", "alive_count"]
+        }
+    )
+    
+    return Tool(function_declarations=[
+        analyze_player_tool,
+        vote_strategy_tool, 
+        suspicion_rating_tool,
+        coming_out_timing_tool
+    ])
+
 class RootAgent:
-    """複数のエージェントを統合するルートエージェント"""
+    """複数のエージェントを統合するルートエージェント（ツール使用対応）"""
     
     def __init__(self):
-        self.model = GenerativeModel("gemini-1.5-flash")
+        # ツール対応モデルを初期化
+        self.werewolf_tools = create_werewolf_tools()
+        self.model = GenerativeModel(
+            "gemini-1.5-flash",
+            tools=[self.werewolf_tools]
+        )
+        # 従来のエージェントツールも保持
         self.question_tool = AgentTool(question_agent)
         self.accuse_tool = AgentTool(accuse_agent)
         self.support_tool = AgentTool(support_agent)
         self.coming_out_tool = AgentTool(coming_out_agent)
     
+    def execute_tool_function(self, function_name: str, args: Dict) -> str:
+        """ツール関数を実際に実行する"""
+        try:
+            if function_name == "analyze_player":
+                return self._analyze_player(args["player_name"], args["behavior_focus"])
+            elif function_name == "plan_vote_strategy":
+                return self._plan_vote_strategy(args["target_candidates"], args["strategy_type"])
+            elif function_name == "rate_player_suspicion":
+                return self._rate_player_suspicion(args["players"], args["evaluation_criteria"])
+            elif function_name == "analyze_coming_out_timing":
+                return self._analyze_coming_out_timing(args["my_role"], args["game_phase"], args["alive_count"])
+            else:
+                return f"Unknown tool function: {function_name}"
+        except Exception as e:
+            return f"Tool execution error: {str(e)}"
+    
+    def _analyze_player(self, player_name: str, behavior_focus: str) -> str:
+        """プレイヤー分析ツールの実装"""
+        analysis_results = [
+            f"{player_name}の{behavior_focus}について分析しました。",
+            "発言パターンから推測される役職傾向を検討中...",
+            "投票行動との一貫性をチェック中..."
+        ]
+        return " ".join(analysis_results)
+    
+    def _plan_vote_strategy(self, target_candidates: List[str], strategy_type: str) -> str:
+        """投票戦略立案ツールの実装"""
+        strategy_map = {
+            "offensive": "積極的に疑わしいプレイヤーを排除する戦略",
+            "defensive": "確実な情報に基づいて慎重に判断する戦略", 
+            "information_gathering": "情報収集を優先する戦略"
+        }
+        strategy_desc = strategy_map.get(strategy_type, "バランス型戦略")
+        return f"候補者{target_candidates}に対して{strategy_desc}を採用することを推奨します。"
+    
+    def _rate_player_suspicion(self, players: List[str], evaluation_criteria: str) -> str:
+        """疑惑度評価ツールの実装"""
+        ratings = []
+        for player in players:
+            # ランダムに疑惑度を設定（実際の実装では詳細な分析を行う）
+            suspicion_level = random.randint(3, 8)
+            ratings.append(f"{player}: {suspicion_level}/10")
+        return f"{evaluation_criteria}基準での疑惑度評価: {', '.join(ratings)}"
+    
+    def _analyze_coming_out_timing(self, my_role: str, game_phase: str, alive_count: int) -> str:
+        """カミングアウトタイミング分析ツールの実装"""
+        if my_role in ['seer', 'bodyguard'] and alive_count <= 5:
+            return "現在の状況では積極的なカミングアウトを推奨します。情報共有が重要です。"
+        elif game_phase == "day_vote" and alive_count <= 4:
+            return "投票フェーズでの戦略的カミングアウトを検討してください。"
+        else:
+            return "現在はカミングアウトよりも情報収集を優先することを推奨します。"
+
     def generate_speech(self, player_info: Dict, game_context: Dict, recent_messages: List[Dict]) -> str:
-        """統合された発言を生成"""
+        """ツール使用対応の発言生成"""
         try:
             # デバッグログ追加
-            print(f"[DEBUG] RootAgent.generate_speech called for {player_info.get('name', 'unknown')}")
+            print(f"[DEBUG] RootAgent.generate_speech (with tools) called for {player_info.get('name', 'unknown')}")
             print(f"[DEBUG] Player info keys: {list(player_info.keys())}")
             print(f"[DEBUG] Persona data: {player_info.get('persona', 'No persona')}")
             print(f"[DEBUG] Game context: {game_context}")
             print(f"[DEBUG] Recent messages count: {len(recent_messages)}")
-            # 各エージェントから提案を取得
+            
+            # コンテキストを構築
             context = self._build_context(player_info, game_context, recent_messages)
             
-            # カミングアウト判定を最優先でチェック
-            co_context = self._build_coming_out_context(player_info, game_context, recent_messages)
-            coming_out_output = self.coming_out_tool.execute(co_context)
+            # ツール使用を促すプロンプトを構築
+            tool_prompt = self._build_tool_enhanced_prompt(player_info, game_context, context, recent_messages)
             
-            # カミングアウトが必要と判断された場合は即座に実行
-            if self._should_come_out(coming_out_output, player_info, game_context):
-                return self._format_coming_out_speech(coming_out_output, player_info)
+            # AIモデルにツール使用を含めて発言生成を依頼
+            response = self.model.generate_content(tool_prompt)
             
-            # 通常のエージェント選択ロジック
-            agent_outputs = []
-            day_number = game_context.get('day_number', 1)
+            # レスポンスを処理（ツール呼び出しを含む）
+            final_speech = self._process_response_with_tools(response, player_info, game_context)
             
-            # ゲーム序盤（1-2日目）: 情報収集重視
-            if day_number <= 2:
-                question_output = self.question_tool.execute(context)
-                agent_outputs.append(f"質問案: {question_output}")
-                
-                # 序盤でも適度なサポートを追加
-                support_output = self.support_tool.execute(context)
-                agent_outputs.append(f"支援案: {support_output}")
-            
-            # 中盤（3-4日目）: 積極的推理と立場明確化
-            elif day_number <= 4:
-                question_output = self.question_tool.execute(context)
-                accuse_output = self.accuse_tool.execute(context)
-                support_output = self.support_tool.execute(context)
-                agent_outputs.extend([
-                    f"質問案: {question_output}",
-                    f"告発案: {accuse_output}",
-                    f"支援案: {support_output}"
-                ])
-            
-            # 終盤（5日目以降）: 決定的行動重視
-            else:
-                accuse_output = self.accuse_tool.execute(context)
-                support_output = self.support_tool.execute(context)
-                agent_outputs.extend([
-                    f"告発案: {accuse_output}",
-                    f"支援案: {support_output}"
-                ])
-                
-                # 終盤でのカミングアウトも検討
-                agent_outputs.append(f"カミングアウト案: {coming_out_output}")
-            
-            # ルートエージェントが最終判断
-            final_prompt = self._build_final_prompt(player_info, game_context, context, agent_outputs)
-            
-            response = self.model.generate_content(final_prompt)
-            speech = response.text.strip()
-            
-            # 発言の長さを制限（500文字に設定）
-            if len(speech) > 500:
-                # 自然な区切り位置で切断
-                cutoff_point = speech.rfind('。', 0, 497)
-                if cutoff_point > 100:  # 適度な長さがある場合
-                    speech = speech[:cutoff_point + 1]
-                else:
-                    speech = speech[:497] + "..."
-                
-            return speech
+            return final_speech
             
         except Exception as e:
-            # エラー時のフォールバック（より戦略的なフォールバック）
-            role = player_info.get('role', 'villager')
-            day_number = game_context.get('day_number', 1)
+            # エラー時のフォールバック - 従来の方法を使用
+            print(f"[ERROR] Tool-enhanced speech generation failed: {e}")
+            return self._generate_fallback_speech(player_info, game_context, recent_messages)
+
+    def _build_tool_enhanced_prompt(self, player_info: Dict, game_context: Dict, context: str, recent_messages: List[Dict]) -> str:
+        """ツール使用を促すプロンプトを構築"""
+        # ペルソナ情報の抽出
+        persona = player_info.get('persona', {})
+        persona_info = ""
+        
+        if persona:
+            if isinstance(persona, str):
+                persona_info = f"# あなたのペルソナ設定\n{persona}\n"
+            else:
+                persona_info = f"# あなたの名前: {player_info.get('name', '不明')}\n"
+        
+        # 他のプレイヤー情報を抽出
+        other_players = [p['name'] for p in game_context.get('all_players', []) 
+                        if p['name'] != player_info.get('name') and p['is_alive']]
+        
+        return f"""
+あなたは人狼ゲームの熟練プレイヤーです。現在の状況を分析し、最適な発言を行ってください。
+
+{persona_info}
+
+# あなたの基本情報
+- 名前: {player_info.get('name', '不明')}
+- 役職: {player_info.get('role', '不明')}
+- 陣営: {'人狼' if player_info.get('role') == 'werewolf' else '村人'}
+
+# ゲーム状況
+{context}
+
+# 生存プレイヤー: {', '.join(other_players)}
+
+# 利用可能なツール
+以下のツールを使用して分析を行い、より戦略的な発言を生成できます：
+- analyze_player: プレイヤーの行動パターンを分析
+- plan_vote_strategy: 投票戦略を立案
+- rate_player_suspicion: プレイヤーの疑惑度を評価
+- analyze_coming_out_timing: カミングアウトのタイミングを分析
+
+必要に応じてツールを使用して状況を分析し、その結果を踏まえて自然で説得力のある発言を生成してください。
+ペルソナの特徴（話し方、性格など）を100%維持してください。
+
+発言は500文字以内で、ゲームの進行に貢献する内容にしてください。
+"""
+
+    def _process_response_with_tools(self, response, player_info: Dict, game_context: Dict) -> str:
+        """ツール呼び出しを含むレスポンスを処理"""
+        try:
+            # レスポンスにfunction_callsが含まれているかチェック
+            if hasattr(response, 'candidates') and response.candidates:
+                candidate = response.candidates[0]
+                
+                # ツール呼び出しがある場合
+                if hasattr(candidate.content, 'parts'):
+                    tool_results = []
+                    text_parts = []
+                    
+                    for part in candidate.content.parts:
+                        if hasattr(part, 'function_call') and part.function_call:
+                            # ツール呼び出しを実行
+                            function_name = part.function_call.name
+                            args = {key: value for key, value in part.function_call.args.items()}
+                            
+                            print(f"[DEBUG] Executing tool: {function_name} with args: {args}")
+                            tool_result = self.execute_tool_function(function_name, args)
+                            tool_results.append(f"[{function_name}結果]: {tool_result}")
+                            
+                        elif hasattr(part, 'text') and part.text:
+                            text_parts.append(part.text)
+                    
+                    # ツール結果がある場合は、それを踏まえて最終発言を生成
+                    if tool_results:
+                        final_prompt = self._build_final_speech_prompt(
+                            player_info, game_context, tool_results, text_parts
+                        )
+                        # ツールなしモデルで最終発言を生成
+                        simple_model = GenerativeModel("gemini-1.5-flash")
+                        final_response = simple_model.generate_content(final_prompt)
+                        return final_response.text.strip()
+                    
+                    # ツール呼び出しがない場合は通常のテキストを返す
+                    elif text_parts:
+                        return " ".join(text_parts).strip()
             
-            fallback_speeches = {
-                'villager': [
-                    "情報を整理して冷静に判断しましょう。",
-                    "疑わしい点があれば教えてください。",
-                    "みんなで協力して真実を見つけましょう。"
-                ],
-                'werewolf': [
-                    "慎重に考えたいと思います。",
-                    "皆さんの意見を聞かせてください。",
-                    "状況を整理してみましょう。"
-                ],
-                'seer': [
-                    "次の占い結果を見てから判断したいです。",
-                    "現在の情報ではまだ不十分です。",
-                    "結果を整理してから話します。"
-                ],
-                'bodyguard': [
-                    "守るべき人を慎重に選びたいです。",
-                    "みんなを守りたいと思います。",
-                    "信頼できる人を探しています。"
-                ]
-            }
+            # フォールバック: response.textを使用
+            if hasattr(response, 'text') and response.text:
+                return response.text.strip()
+                
+            return "少し考えさせてください。"
             
-            speeches = fallback_speeches.get(role, fallback_speeches['villager'])
-            return random.choice(speeches)
+        except Exception as e:
+            print(f"[ERROR] Error processing response with tools: {e}")
+            return "状況を整理して考えてみます。"
+
+    def _build_final_speech_prompt(self, player_info: Dict, game_context: Dict, tool_results: List[str], text_parts: List[str]) -> str:
+        """ツール結果を踏まえた最終発言生成プロンプト"""
+        persona = player_info.get('persona', '')
+        persona_info = f"# ペルソナ設定\n{persona}\n" if persona else ""
+        
+        return f"""
+{persona_info}
+
+# ツール分析結果
+{chr(10).join(tool_results)}
+
+# 初期発言案
+{' '.join(text_parts) if text_parts else ''}
+
+上記のツール分析結果を踏まえて、あなたのペルソナに完全に合致した自然な発言を1つ生成してください。
+- ペルソナの話し方、口調、性格を100%維持
+- ツール分析結果を自然に反映
+- 500文字以内
+- 人狼ゲームの進行に貢献する内容
+
+最終発言:
+"""
+
+    def _generate_fallback_speech(self, player_info: Dict, game_context: Dict, recent_messages: List[Dict]) -> str:
+        """ツール使用失敗時のフォールバック発言生成"""
+        # 従来のエージェントシステムを使用
+        context = self._build_context(player_info, game_context, recent_messages)
+        
+        # 簡単なエージェント選択
+        day_number = game_context.get('day_number', 1)
+        if day_number <= 2:
+            return self.question_tool.execute(context)
+        else:
+            return self.accuse_tool.execute(context)
     
     def _build_context(self, player_info: Dict, game_context: Dict, recent_messages: List[Dict]) -> str:
         """エージェントに渡すコンテキストを構築"""

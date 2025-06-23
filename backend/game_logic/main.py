@@ -2121,6 +2121,55 @@ def handle_generate_persona(player_id: uuid.UUID, persona_input: PersonaInput, d
         logger.error(f"Error in persona generation: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="AI service error.")
 
+def generate_ai_persona(character_name: str) -> str:
+    """AIプレイヤー用のペルソナを自動生成"""
+    if not GOOGLE_PROJECT_ID or not GOOGLE_LOCATION:
+        return f"私は{character_name}です。冷静に分析して判断します。"
+    
+    # ランダムなキーワードを生成
+    personality_traits = ["冷静沈着", "感情豊か", "疑い深い", "楽観的", "慎重", "積極的", "論理的", "直感的"]
+    speech_styles = ["丁寧語", "タメ口", "関西弁", "のだ口調", "である調", "方言", "古風な話し方"]
+    backgrounds = ["村の医者", "旅の商人", "元教師", "若い学生", "経験豊富な農夫", "街の職人", "元兵士"]
+    
+    random_keywords = f"{random.choice(personality_traits)}, {random.choice(speech_styles)}, {random.choice(backgrounds)}"
+    
+    prompt = f"""
+    あなたは、人狼ゲームの熟練ゲームマスターです。
+    以下のキーワードを基に、人狼ゲームに登場するキャラクター「{character_name}」の設定を考えてください。
+    生成するデータは、必ず下記のJSON形式に従ってください。
+    
+    # キーワード
+    {random_keywords}
+    
+    # JSON形式の定義
+    {{
+      "gender": "性別 (例: 男性, 女性, 不明)",
+      "age": "年齢 (整数)",
+      "personality": "性格や特徴 (例: 冷静沈着で論理的、疑い深い、感情的な発言が多い)",
+      "speech_style": "口調 (例: 丁寧語、タメ口、古風な話し方、無口、関西弁、のだ口調、である調、だっぺ口調、方言など自由に)",
+      "background": "キャラクターの背景設定 (例: 村の医者、旅の詩人、元騎士団長)"
+    }}
+    """
+    
+    try:
+        model = GenerativeModel("gemini-1.5-flash")
+        response = model.generate_content(prompt)
+        persona_data = json.loads(response.text.strip().replace("```json", "").replace("```", ""))
+        
+        # JSON形式からテキスト形式に変換
+        persona_text = f"""名前: {character_name}
+性別: {persona_data.get('gender', '不明')}
+年齢: {persona_data.get('age', '不明')}歳
+性格: {persona_data.get('personality', '冷静')}
+話し方: {persona_data.get('speech_style', '普通')}
+背景: {persona_data.get('background', '村人')}"""
+        
+        return persona_text
+        
+    except Exception as e:
+        logger.error(f"Error in auto persona generation for {character_name}: {e}")
+        return f"私は{character_name}です。冷静に分析して判断します。"
+
 @app.post("/api/game/discuss", response_model=DiscussionResponse)
 def handle_ai_discussion(request: DiscussionRequest):
     """AI NPCが議論に参加するためのエンドポイント"""
