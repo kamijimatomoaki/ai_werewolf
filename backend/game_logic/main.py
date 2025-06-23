@@ -115,14 +115,26 @@ debug_info = GameDebugInfo()
 try:
     import sys
     import os
-    # 親ディレクトリをパスに追加
-    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    # 親ディレクトリをパスに追加（より確実なパス設定）
+    backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if backend_dir not in sys.path:
+        sys.path.insert(0, backend_dir)
+    
+    # 現在のディレクトリも追加
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    if current_dir not in sys.path:
+        sys.path.insert(0, current_dir)
+    
     from npc_agent.agent import root_agent
     logger.info("AI NPC agent enabled successfully")
+    logger.info(f"Agent import path: {backend_dir}")
 except ImportError as e:
     root_agent = None
-    logger.warning(f"AI NPC agent could not be imported: {e}")
-    logger.warning(f"Current sys.path: {sys.path}")
+    logger.error(f"AI NPC agent could not be imported: {e}")
+    logger.error(f"Current working directory: {os.getcwd()}")
+    logger.error(f"Script location: {os.path.abspath(__file__)}")
+    logger.error(f"Backend directory: {os.path.dirname(os.path.dirname(os.path.abspath(__file__)))}")
+    logger.error(f"Current sys.path: {sys.path}")
 
 # --- Configuration ---
 load_dotenv()
@@ -565,12 +577,23 @@ def create_room(db: Session, room: RoomCreate, host_name: str) -> Room:
     host_player = Player(room_id=db_room.room_id, character_name=host_name, is_human=True)
     db.add(host_player)
     
-    # AIプレイヤーを作成
+    # AIプレイヤーを作成（ペルソナ付き）
     for i in range(room.ai_players):
         ai_player = Player(
             room_id=db_room.room_id, character_name=f"AIプレイヤー{i+1}", is_human=False
         )
         db.add(ai_player)
+        db.flush()  # プレイヤーIDを取得するため
+        
+        # AIプレイヤーにペルソナを自動生成
+        try:
+            persona = generate_ai_persona(ai_player.character_name)
+            ai_player.character_persona = persona
+            logger.info(f"Generated persona for {ai_player.character_name}: {persona[:100]}...")
+        except Exception as e:
+            logger.warning(f"Failed to generate persona for {ai_player.character_name}: {e}")
+            # デフォルトペルソナを設定
+            ai_player.character_persona = f"私は{ai_player.character_name}です。冷静に分析して判断します。"
         
     db.commit()
     db.refresh(db_room)
@@ -1194,8 +1217,18 @@ def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid.UUID)
             # AIエージェントで発言を生成
             speech = root_agent.generate_speech(player_info, game_context, recent_messages)
             
-            logger.info(f"AI agent generated speech for {ai_player.character_name}: {speech}")
-            return speech
+            # レスポンスの検証と整形
+            if speech and isinstance(speech, str) and speech.strip():
+                speech = speech.strip()
+                # 極端に短い発言の場合はフォールバック
+                if len(speech) < 5:
+                    speech = "少し考えさせてください。"
+                logger.info(f"AI agent generated speech for {ai_player.character_name}: {speech}")
+                return speech
+            else:
+                logger.warning(f"AI agent returned invalid speech: {speech}")
+                # フォールバック発言
+                return generate_fallback_ai_speech(ai_player, room, db)
             
         else:
             # フォールバック: シンプルなVertex AI生成
