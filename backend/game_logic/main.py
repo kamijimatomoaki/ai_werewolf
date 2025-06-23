@@ -167,6 +167,8 @@ class Room(Base):
     is_private = Column(Boolean, default=False, nullable=False)
     # 【修正】created_at を再追加
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    # 【追加】最終活動時間（自動クローズ用）
+    last_activity = Column(DateTime(timezone=True), nullable=True, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     
     players = relationship("Player", back_populates="room", cascade="all, delete-orphan")
@@ -608,121 +610,93 @@ def start_game_logic(db: Session, room_id: uuid.UUID) -> Room:
     return db_room
 
 def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement: str) -> Room:
-    db_room = get_room(db, room_id)
-    if not db_room: raise HTTPException(status_code=404, detail="Room not found")
-    if db_room.status != 'day_discussion': raise HTTPException(status_code=400, detail="Not in discussion phase.")
+    """発言処理（排他制御付き）"""
+    try:
+        # DB-level 排他制御（FOR UPDATE）
+        db_room = db.query(Room).filter(Room.room_id == room_id).with_for_update().first()
+        if not db_room:
+            raise HTTPException(status_code=404, detail="Room not found")
+        if db_room.status != 'day_discussion':
+            raise HTTPException(status_code=400, detail="Not in discussion phase.")
 
-    if not db_room.turn_order or db_room.current_turn_index is None:
-        raise HTTPException(status_code=500, detail="Game turn order not initialized.")
+        if not db_room.turn_order or db_room.current_turn_index is None:
+            raise HTTPException(status_code=500, detail="Game turn order not initialized.")
 
-    turn_order = db_room.turn_order
-    current_index = db_room.current_turn_index
-    current_round = db_room.current_round or 1
-    
-    # ターン検証を改善 - インデックス範囲もチェック
-    if current_index >= len(turn_order) or turn_order[current_index] != str(player_id):
-        current_player_name = "不明"
-        if current_index < len(turn_order):
+        turn_order = db_room.turn_order
+        current_index = db_room.current_turn_index
+        
+        # ターン検証の簡素化
+        if current_index >= len(turn_order):
+            logger.error(f"Invalid turn index {current_index} >= {len(turn_order)}")
+            raise HTTPException(status_code=500, detail="Invalid turn state")
+            
+        if turn_order[current_index] != str(player_id):
             current_player = get_player(db, uuid.UUID(turn_order[current_index]))
-            if current_player:
-                current_player_name = current_player.character_name
-        raise HTTPException(status_code=403, detail=f"It's not your turn. Current turn: {current_player_name}")
+            current_name = current_player.character_name if current_player else "不明"
+            raise HTTPException(status_code=403, detail=f"It's not your turn. Current turn: {current_name}")
 
-    # シンプルなターン制に変更 - ラウンドチェックを無効化
-    # 発言を記録（ラウンド情報なし）
-    create_game_log(db, room_id, "day_discussion", "speech", actor_player_id=player_id, content=statement)
-    
-    # ターンを進める前に生存プレイヤーのみを考慮
-    alive_players = [pid for pid in turn_order if get_player(db, uuid.UUID(pid)) and get_player(db, uuid.UUID(pid)).is_alive]
-    
-    # デバッグログ追加
-    logger.info(f"Alive players count: {len(alive_players)}, alive_players: {alive_players}")
-    
-    # 次のプレイヤーを生存者の中から探す
-    def find_next_alive_player(start_index: int) -> int:
-        if len(alive_players) <= 1:
-            # 生存プレイヤーが1人以下の場合、ゲーム終了すべき
-            logger.warning(f"Only {len(alive_players)} alive players remaining")
-            return start_index
+        # 発言を記録
+        create_game_log(db, room_id, "day_discussion", "speech", actor_player_id=player_id, content=statement)
         
-        # 次の生存プレイヤーを探す（現在のプレイヤーをスキップ）
-        for attempt in range(1, len(turn_order)):
-            next_idx = (start_index + attempt) % len(turn_order)
-            next_player_id = turn_order[next_idx]
-            next_player = get_player(db, uuid.UUID(next_player_id))
-            if next_player and next_player.is_alive:
-                logger.info(f"Found next alive player at index {next_idx}: {next_player.character_name}")
-                # 同じプレイヤーに戻らないことを確認
-                if next_idx != start_index:
-                    return next_idx
-                else:
-                    logger.warning(f"Next player would be same as current ({next_idx}), continuing search...")
-                    continue
+        # 次のプレイヤーを探す（簡素化）
+        next_index = find_next_alive_player_safe(db, room_id, current_index)
         
-        # すべて試しても同じプレイヤーしかいない場合（ゲーム終了状態）
-        logger.error("All players are dead or only one player alive - game should end")
-        return start_index
+        # ターン進行
+        db_room.current_turn_index = next_index
+        
+        # 発言回数チェック
+        alive_count = sum(1 for pid in turn_order 
+                         if get_player(db, uuid.UUID(pid)) and get_player(db, uuid.UUID(pid)).is_alive)
+        
+        total_speeches = db.query(GameLog).filter(
+            GameLog.room_id == room_id,
+            GameLog.phase == "day_discussion",
+            GameLog.event_type == "speech",
+            GameLog.day_number == db_room.day_number
+        ).count()
+        
+        # 生存プレイヤー数の3倍の発言で投票フェーズへ
+        if total_speeches >= alive_count * 3:
+            db_room.status = "day_vote"
+            db_room.current_turn_index = 0
+            create_game_log(db, room_id, "day_discussion", "phase_transition", 
+                          content="議論終了。投票フェーズに移行します。")
+        
+        # 最終活動時間を更新（自動クローズ用）
+        db_room.last_activity = datetime.now(timezone.utc)
+        
+        db.commit()
+        db.refresh(db_room)
+        
+        logger.info(f"Turn advanced: {current_index} -> {next_index}, status: {db_room.status}")
+        return db_room
+        
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error in speak_logic: {e}")
+        raise
+
+
+def find_next_alive_player_safe(db: Session, room_id: uuid.UUID, current_index: int) -> int:
+    """安全な次のプレイヤー検索（無限ループ対策）"""
+    room = get_room(db, room_id)
+    if not room or not room.turn_order:
+        return current_index
+        
+    turn_order = room.turn_order
+    max_attempts = len(turn_order)
     
-    next_index = find_next_alive_player(current_index)
+    for attempt in range(1, max_attempts + 1):
+        next_index = (current_index + attempt) % len(turn_order)
+        player_id = turn_order[next_index]
+        player = get_player(db, uuid.UUID(player_id))
+        
+        if player and player.is_alive:
+            return next_index
     
-    # デバッグログ追加
-    logger.info(f"Turn progression: current_index={current_index}, next_index={next_index}, turn_order={turn_order}")
-    
-    # 詳細なデバッグログを追加
-    logger.info(f"Before turn update: current_index={current_index}, next_index={next_index}")
-    
-    # 同じインデックスの場合はエラー（無限ループ防止）
-    if next_index == current_index and len(alive_players) > 1:
-        logger.error(f"Turn would not progress (same index {current_index}), this should not happen with {len(alive_players)} alive players")
-        # 強制的に次のインデックスに進める
-        next_index = (current_index + 1) % len(turn_order)
-        # 生存者でない場合は再度探す
-        next_player = get_player(db, uuid.UUID(turn_order[next_index]))
-        if not next_player or not next_player.is_alive:
-            # 最初の生存者を探す
-            for i in range(len(turn_order)):
-                idx = (current_index + 1 + i) % len(turn_order)
-                player = get_player(db, uuid.UUID(turn_order[idx]))
-                if player and player.is_alive and idx != current_index:
-                    next_index = idx
-                    break
-        logger.info(f"Forced turn progression to index {next_index}")
-    
-    # ターン進行の改善 - ORMを使用してより確実に更新
-    db_room.current_turn_index = next_index
-    
-    # 発言回数をカウントして投票フェーズに移行するかチェック
-    total_speeches = db.query(GameLog).filter(
-        GameLog.room_id == room_id,
-        GameLog.phase == "day_discussion",
-        GameLog.event_type == "speech",
-        GameLog.day_number == db_room.day_number
-    ).count()
-    
-    logger.info(f"Total speeches: {total_speeches}, alive players: {len(alive_players)}")
-    
-    # 生存プレイヤー数の3倍の発言があったら投票フェーズへ
-    if total_speeches >= len(alive_players) * 3:
-        db_room.status = "day_vote"
-        db_room.current_turn_index = 0
-        create_game_log(db, room_id, "day_discussion", "phase_transition", content="議論終了。投票フェーズに移行します。")
-        logger.info(f"Discussion phase completed in room {room_id}. Moving to vote phase.")
-    
-    # データベースの変更をコミット
-    db.commit()
-    
-    # 更新されたデータを強制的に再読み込み
-    db.refresh(db_room)
-    
-    # 最終状態の確認ログ
-    logger.info(f"After turn update: room_status={db_room.status}, current_turn_index={db_room.current_turn_index}")
-    if db_room.current_turn_index < len(db_room.turn_order):
-        current_player_id = db_room.turn_order[db_room.current_turn_index]
-        logger.info(f"Turn advanced in room {room_id} to player {current_player_id}")
-    else:
-        logger.error(f"Invalid turn index {db_room.current_turn_index} for turn_order length {len(db_room.turn_order)}")
-    
-    return db_room
+    # 全員死亡の場合は現在のインデックスを返す
+    logger.warning(f"No alive players found in room {room_id}")
+    return current_index
 
 def create_game_log(db: Session, room_id: uuid.UUID, phase: str, event_type: str, actor_player_id: Optional[uuid.UUID] = None, content: Optional[str] = None):
     db_room = get_room(db, room_id)
@@ -2051,12 +2025,19 @@ def handle_get_room(room_id: uuid.UUID, db: Session = Depends(get_db)):
 @app.post("/api/rooms/{room_id}/start", response_model=RoomInfo)
 async def handle_start_game(room_id: uuid.UUID, db: Session = Depends(get_db)):
     updated_room = start_game_logic(db, room_id)
+    
+    # Update room activity after successful game start
+    update_room_activity(db, room_id)
+    
     await sio.emit("game_started", {"room_id": str(room_id), "message": "ゲームが開始されました！"}, room=str(room_id))
     return updated_room
     
 @app.post("/api/rooms/{room_id}/speak", response_model=RoomInfo, summary="プレイヤーが発言する")
 async def handle_speak(room_id: uuid.UUID, speak_input: SpeakInput, player_id: uuid.UUID, db: Session = Depends(get_db)):
     updated_room = speak_logic(db, room_id, player_id, speak_input.statement)
+    
+    # Update room activity after successful speech
+    update_room_activity(db, room_id)
     
     await sio.emit("new_speech", {
         "room_id": str(room_id),
@@ -2194,6 +2175,9 @@ async def handle_vote(room_id: uuid.UUID, vote_request: VoteRequest, db: Session
     try:
         result = process_vote(db, room_id, uuid.UUID(vote_request.voter_id), uuid.UUID(vote_request.target_id))
         
+        # Update room activity after successful vote
+        update_room_activity(db, room_id)
+        
         # WebSocketで投票結果を通知
         await sio.emit("vote_cast", {
             "room_id": str(room_id),
@@ -2214,6 +2198,9 @@ async def handle_night_action(room_id: uuid.UUID, db: Session = Depends(get_db))
     """夜のアクションを処理する"""
     try:
         results = process_night_actions(db, room_id)
+        
+        # Update room activity after successful night actions
+        update_room_activity(db, room_id)
         
         # WebSocketで夜のアクション結果を通知
         await sio.emit("night_action_complete", {
@@ -2240,6 +2227,9 @@ async def handle_transition_to_vote(room_id: uuid.UUID, db: Session = Depends(ge
     db_room.status = 'day_vote'
     db.commit()
     
+    # Update room activity after successful phase transition
+    update_room_activity(db, room_id)
+    
     # WebSocketで状態変更を通知
     await sio.emit("phase_transition", {
         "room_id": str(room_id),
@@ -2262,6 +2252,9 @@ async def handle_join_room(
         
         logger.info(f"Player join request: room_id={room_id}, player_name='{player_name}'")
         result = join_room_as_player(db, room_id, player_name)
+        
+        # Update room activity after successful join
+        update_room_activity(db, room_id)
         
         # WebSocketで新しいプレイヤーの参加を通知
         await sio.emit("player_joined_game", {
@@ -2303,6 +2296,9 @@ async def handle_seer_investigate(
     try:
         result = seer_investigate_player(db, room_id, investigator_id, investigate_data.target_player_id)
         
+        # Update room activity after successful investigation
+        update_room_activity(db, room_id)
+        
         # WebSocketで占い結果を通知（占い師のみに送信）
         await sio.emit("seer_investigation_result", {
             "room_id": str(room_id),
@@ -2326,6 +2322,9 @@ async def handle_bodyguard_protect(
     """ボディガードが指定したプレイヤーを守る"""
     try:
         result = bodyguard_protect_player(db, room_id, protector_id, protect_data.target_player_id)
+        
+        # Update room activity after successful protection
+        update_room_activity(db, room_id)
         
         # WebSocketで守り結果を通知（ボディガードのみに送信）
         await sio.emit("bodyguard_protection_result", {
@@ -2403,6 +2402,9 @@ async def handle_ai_speak(room_id: uuid.UUID, ai_player_id: uuid.UUID, db: Sessi
         
         # 発言を実行
         updated_room = speak_logic(db, room_id, ai_player_id, speech)
+        
+        # Update room activity after successful AI speech
+        update_room_activity(db, room_id)
         
         # WebSocketで発言を通知
         await sio.emit("new_speech", {
@@ -2526,6 +2528,9 @@ async def handle_auto_progress(room_id: uuid.UUID, db: Session = Depends(get_db)
                     updated_room = speak_logic(db, room_id, current_player.player_id, speech)
                     logger.info(f"speak_logic completed for {current_player.character_name}")
                     
+                    # Update room activity after successful AI speech in auto progress
+                    update_room_activity(db, room_id)
+                    
                 except HTTPException as e:
                     logger.error(f"HTTPException in AI speech for {current_player.character_name}: {e.detail}", exc_info=True)
                     return {
@@ -2590,6 +2595,9 @@ async def handle_auto_progress(room_id: uuid.UUID, db: Session = Depends(get_db)
                     # LLMベースの投票先決定
                     target = generate_ai_vote_decision(db, room_id, ai_player, possible_targets)
                     vote_result = process_vote(db, room_id, ai_player.player_id, target.player_id)
+                    
+                    # Update room activity after successful AI vote in auto progress
+                    update_room_activity(db, room_id)
                     
                     # WebSocketで投票を通知
                     await sio.emit("vote_cast", {
@@ -2829,6 +2837,10 @@ async def handle_auto_vote(room_id: uuid.UUID, db: Session = Depends(get_db)):
                 
                 # 投票実行
                 process_vote(db, room_id, ai_player.player_id, target.player_id)
+                
+                # Update room activity after successful auto vote
+                update_room_activity(db, room_id)
+                
                 auto_votes.append({
                     "voter": ai_player.character_name,
                     "target": target.character_name
@@ -2868,6 +2880,9 @@ async def join_as_spectator(
         
         # 観戦者作成
         spectator = create_spectator(db, room_id, spectator_data.spectator_name)
+        
+        # Update room activity after successful spectator join
+        update_room_activity(db, room_id)
         
         # 観戦者用のゲーム情報取得
         room_view = get_spectator_room_view(db, room_id)
@@ -2946,6 +2961,9 @@ async def send_spectator_chat(
         
         # メッセージ作成
         message = create_spectator_message(db, room_id, spectator_id, chat_data.message)
+        
+        # Update room activity after successful spectator chat
+        update_room_activity(db, room_id)
         
         # WebSocketで観戦者チャットを配信（観戦者のみに送信）
         spectators = get_spectators_by_room(db, room_id)
@@ -3460,3 +3478,59 @@ def init_db_legacy():
     """レガシーエンドポイント - /api/db/init を使用してください"""
     logger.warning("Legacy /initdb endpoint used. Please use /api/db/init instead.")
     return init_database()
+
+
+# --- 自動クローズ機能 ---
+@app.post("/api/rooms/cleanup", summary="非アクティブな部屋を自動クローズ")
+async def cleanup_inactive_rooms(db: Session = Depends(get_db)):
+    """一定時間非アクティブな部屋を自動クローズする"""
+    try:
+        # 1時間前の時刻を計算
+        timeout_threshold = datetime.now(timezone.utc) - timedelta(hours=1)
+        
+        # 非アクティブな部屋を検索
+        inactive_rooms = db.query(Room).filter(
+            Room.last_activity < timeout_threshold,
+            Room.status.in_(['waiting', 'day_discussion', 'day_vote', 'night'])
+        ).all()
+        
+        closed_count = 0
+        for room in inactive_rooms:
+            room.status = 'closed'
+            room.last_activity = datetime.now(timezone.utc)
+            create_game_log(db, room.room_id, room.status, "system", 
+                           content="部屋が非アクティブのため自動クローズされました")
+            closed_count += 1
+            
+            # WebSocket通知
+            await sio.emit("room_closed", {
+                "room_id": str(room.room_id),
+                "reason": "timeout",
+                "message": "部屋が非アクティブのため自動クローズされました"
+            }, room=str(room.room_id))
+        
+        db.commit()
+        
+        logger.info(f"Cleaned up {closed_count} inactive rooms")
+        return {
+            "cleaned_rooms": closed_count,
+            "threshold": timeout_threshold.isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+        
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Room cleanup failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Room cleanup failed: {e}")
+
+
+def update_room_activity(db: Session, room_id: uuid.UUID):
+    """部屋の最終活動時間を更新する"""
+    try:
+        room = get_room(db, room_id)
+        if room:
+            room.last_activity = datetime.now(timezone.utc)
+            db.commit()
+    except Exception as e:
+        logger.error(f"Failed to update room activity: {e}")
+        db.rollback()
