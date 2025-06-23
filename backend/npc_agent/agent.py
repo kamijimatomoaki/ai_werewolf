@@ -197,11 +197,19 @@ class RootAgent:
     
     def __init__(self):
         # ツール対応モデルを初期化
-        self.werewolf_tools = create_werewolf_tools()
-        self.model = GenerativeModel(
-            "gemini-1.5-flash",
-            tools=[self.werewolf_tools]
-        )
+        try:
+            self.werewolf_tools = create_werewolf_tools()
+            self.model = GenerativeModel(
+                "gemini-1.5-flash",
+                tools=[self.werewolf_tools]
+            )
+            self.tools_available = True
+            print("[DEBUG] Tool-enabled model initialized successfully")
+        except Exception as e:
+            print(f"[WARNING] Failed to initialize tool-enabled model: {e}")
+            self.model = GenerativeModel("gemini-1.5-flash")  # フォールバック
+            self.tools_available = False
+            
         # 従来のエージェントツールも保持
         self.question_tool = AgentTool(question_agent)
         self.accuse_tool = AgentTool(accuse_agent)
@@ -263,32 +271,41 @@ class RootAgent:
 
     def generate_speech(self, player_info: Dict, game_context: Dict, recent_messages: List[Dict]) -> str:
         """ツール使用対応の発言生成"""
+        # デバッグログ追加
+        print(f"[DEBUG] RootAgent.generate_speech called for {player_info.get('name', 'unknown')}")
+        print(f"[DEBUG] Tools available: {self.tools_available}")
+        print(f"[DEBUG] Player info keys: {list(player_info.keys())}")
+        print(f"[DEBUG] Persona data: {player_info.get('persona', 'No persona')}")
+        print(f"[DEBUG] Game context: {game_context}")
+        print(f"[DEBUG] Recent messages count: {len(recent_messages)}")
+        
+        # ツール使用が利用可能かチェック
+        if not self.tools_available:
+            print("[DEBUG] Tools not available, using traditional speech generation")
+            return self._generate_traditional_speech(player_info, game_context, recent_messages)
+        
         try:
-            # デバッグログ追加
-            print(f"[DEBUG] RootAgent.generate_speech (with tools) called for {player_info.get('name', 'unknown')}")
-            print(f"[DEBUG] Player info keys: {list(player_info.keys())}")
-            print(f"[DEBUG] Persona data: {player_info.get('persona', 'No persona')}")
-            print(f"[DEBUG] Game context: {game_context}")
-            print(f"[DEBUG] Recent messages count: {len(recent_messages)}")
-            
             # コンテキストを構築
             context = self._build_context(player_info, game_context, recent_messages)
             
             # ツール使用を促すプロンプトを構築
             tool_prompt = self._build_tool_enhanced_prompt(player_info, game_context, context, recent_messages)
             
+            print("[DEBUG] Attempting tool-enhanced speech generation")
             # AIモデルにツール使用を含めて発言生成を依頼
             response = self.model.generate_content(tool_prompt)
             
             # レスポンスを処理（ツール呼び出しを含む）
             final_speech = self._process_response_with_tools(response, player_info, game_context)
             
+            print(f"[DEBUG] Tool-enhanced speech generated: {final_speech[:100]}...")
             return final_speech
             
         except Exception as e:
             # エラー時のフォールバック - 従来の方法を使用
             print(f"[ERROR] Tool-enhanced speech generation failed: {e}")
-            return self._generate_fallback_speech(player_info, game_context, recent_messages)
+            print(f"[DEBUG] Falling back to traditional agent system")
+            return self._generate_traditional_speech(player_info, game_context, recent_messages)
 
     def _build_tool_enhanced_prompt(self, player_info: Dict, game_context: Dict, context: str, recent_messages: List[Dict]) -> str:
         """ツール使用を促すプロンプトを構築"""
@@ -406,17 +423,109 @@ class RootAgent:
 最終発言:
 """
 
-    def _generate_fallback_speech(self, player_info: Dict, game_context: Dict, recent_messages: List[Dict]) -> str:
-        """ツール使用失敗時のフォールバック発言生成"""
-        # 従来のエージェントシステムを使用
-        context = self._build_context(player_info, game_context, recent_messages)
-        
-        # 簡単なエージェント選択
+    def _generate_traditional_speech(self, player_info: Dict, game_context: Dict, recent_messages: List[Dict]) -> str:
+        """従来のエージェントシステムによる発言生成（改良版）"""
+        try:
+            # コンテキストを構築
+            context = self._build_context(player_info, game_context, recent_messages)
+            
+            # カミングアウト判定を最優先でチェック
+            co_context = self._build_coming_out_context(player_info, game_context, recent_messages)
+            coming_out_output = self.coming_out_tool.execute(co_context)
+            
+            # カミングアウトが必要と判断された場合は即座に実行
+            if self._should_come_out(coming_out_output, player_info, game_context):
+                return self._format_coming_out_speech(coming_out_output, player_info)
+            
+            # 通常のエージェント選択ロジック
+            agent_outputs = []
+            day_number = game_context.get('day_number', 1)
+            
+            # ゲーム序盤（1-2日目）: 情報収集重視
+            if day_number <= 2:
+                question_output = self.question_tool.execute(context)
+                agent_outputs.append(f"質問案: {question_output}")
+                
+                # 序盤でも適度なサポートを追加
+                support_output = self.support_tool.execute(context)
+                agent_outputs.append(f"支援案: {support_output}")
+            
+            # 中盤（3-4日目）: 積極的推理と立場明確化
+            elif day_number <= 4:
+                question_output = self.question_tool.execute(context)
+                accuse_output = self.accuse_tool.execute(context)
+                support_output = self.support_tool.execute(context)
+                agent_outputs.extend([
+                    f"質問案: {question_output}",
+                    f"告発案: {accuse_output}",
+                    f"支援案: {support_output}"
+                ])
+            
+            # 終盤（5日目以降）: 決定的行動重視
+            else:
+                accuse_output = self.accuse_tool.execute(context)
+                support_output = self.support_tool.execute(context)
+                agent_outputs.extend([
+                    f"告発案: {accuse_output}",
+                    f"支援案: {support_output}"
+                ])
+                
+                # 終盤でのカミングアウトも検討
+                agent_outputs.append(f"カミングアウト案: {coming_out_output}")
+            
+            # ルートエージェントが最終判断（ツールなしモデル使用）
+            final_prompt = self._build_final_prompt(player_info, game_context, context, agent_outputs)
+            
+            # ツールなしの従来モデルを使用
+            simple_model = GenerativeModel("gemini-1.5-flash")
+            response = simple_model.generate_content(final_prompt)
+            speech = response.text.strip()
+            
+            # 発言の長さを制限（500文字に設定）
+            if len(speech) > 500:
+                cutoff_point = speech.rfind('。', 0, 497)
+                if cutoff_point > 100:
+                    speech = speech[:cutoff_point + 1]
+                else:
+                    speech = speech[:497] + "..."
+                
+            return speech
+            
+        except Exception as e:
+            print(f"[ERROR] Traditional speech generation also failed: {e}")
+            # 最後のフォールバック
+            return self._generate_simple_fallback_speech(player_info, game_context)
+    
+    def _generate_simple_fallback_speech(self, player_info: Dict, game_context: Dict) -> str:
+        """最終フォールバック発言生成"""
+        role = player_info.get('role', 'villager')
         day_number = game_context.get('day_number', 1)
-        if day_number <= 2:
-            return self.question_tool.execute(context)
-        else:
-            return self.accuse_tool.execute(context)
+        
+        fallback_speeches = {
+            'villager': [
+                "情報を整理して冷静に判断しましょう。",
+                "疑わしい点があれば教えてください。",
+                "みんなで協力して真実を見つけましょう。"
+            ],
+            'werewolf': [
+                "慎重に考えたいと思います。",
+                "皆さんの意見を聞かせてください。",
+                "状況を整理してみましょう。"
+            ],
+            'seer': [
+                "次の占い結果を見てから判断したいです。",
+                "現在の情報ではまだ不十分です。",
+                "結果を整理してから話します。"
+            ],
+            'bodyguard': [
+                "守るべき人を慎重に選びたいです。",
+                "みんなを守りたいと思います。",
+                "信頼できる人を探しています。"
+            ]
+        }
+        
+        speeches = fallback_speeches.get(role, fallback_speeches['villager'])
+        return random.choice(speeches)
     
     def _build_context(self, player_info: Dict, game_context: Dict, recent_messages: List[Dict]) -> str:
         """エージェントに渡すコンテキストを構築"""
