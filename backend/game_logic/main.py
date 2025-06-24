@@ -1311,15 +1311,29 @@ def get_detailed_game_result(db: Session, room_id: uuid.UUID) -> GameResult:
 
 def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid.UUID) -> str:
     """AIプレイヤーの発言を生成（AIエージェント使用）"""
+    # 超堅牢なフォールバック用の発言リスト
+    ULTRA_SAFE_FALLBACK_SPEECHES = [
+        "状況を確認しています。",
+        "少し考えさせてください。",
+        "慎重に判断します。",
+        "様子を見てみましょう。",
+        "情報を整理中です。",
+        "よく考えてみます。"
+    ]
+    
     try:
         # 最初にフォールバック用の基本情報を取得
-        ai_player = get_player(db, ai_player_id)
-        room = get_room(db, room_id)
+        try:
+            ai_player = get_player(db, ai_player_id)
+            room = get_room(db, room_id)
+        except Exception as db_error:
+            logger.error(f"Database access error in generate_ai_speech: {db_error}", exc_info=True)
+            return random.choice(ULTRA_SAFE_FALLBACK_SPEECHES)
         
         # 基本的な検証
         if not ai_player or not room:
             logger.error(f"Player or room not found: player={ai_player}, room={room}")
-            return "状況を確認しています。"
+            return random.choice(ULTRA_SAFE_FALLBACK_SPEECHES)
         
         if ai_player.is_human:
             logger.error(f"Player {ai_player.character_name} is not an AI player")
@@ -1340,7 +1354,8 @@ def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid.UUID)
         # Debug: root_agent の詳細をログ出力
         if root_agent is None:
             logger.error("root_agent is None - AI agent not properly initialized")
-            return generate_fallback_ai_speech(ai_player, room, db)
+            logger.info("Using ultra-safe fallback due to missing root_agent")
+            return random.choice(ULTRA_SAFE_FALLBACK_SPEECHES)
         
         # Google AI設定の確認
         if root_agent and GOOGLE_PROJECT_ID and GOOGLE_LOCATION:
@@ -1398,8 +1413,8 @@ def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid.UUID)
                 logger.info(f"Successfully called root_agent.generate_speech(), result: {speech}")
             except Exception as agent_error:
                 logger.error(f"Error in root_agent.generate_speech(): {agent_error}", exc_info=True)
-                logger.error(f"Falling back to fallback speech generation")
-                return generate_fallback_ai_speech(ai_player, room, db)
+                logger.info("Using ultra-safe fallback due to root_agent error")
+                return random.choice(ULTRA_SAFE_FALLBACK_SPEECHES)
             
             # レスポンスの検証と整形
             if speech and isinstance(speech, str) and speech.strip():
@@ -1411,13 +1426,13 @@ def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid.UUID)
                 return speech
             else:
                 logger.warning(f"AI agent returned invalid speech: {speech}")
-                # フォールバック発言
-                return generate_fallback_ai_speech(ai_player, room, db)
+                logger.info("Using ultra-safe fallback due to invalid AI response")
+                return random.choice(ULTRA_SAFE_FALLBACK_SPEECHES)
             
         else:
-            # フォールバック: シンプルなVertex AI生成
-            logger.info(f"Using fallback AI speech generation. Root agent available: {root_agent is not None}")
-            return generate_fallback_ai_speech(ai_player, room, db)
+            # フォールバック: 環境変数が不足している場合
+            logger.info(f"Missing AI credentials - using ultra-safe fallback. Root agent: {root_agent is not None}, PROJECT_ID: {bool(GOOGLE_PROJECT_ID)}, LOCATION: {bool(GOOGLE_LOCATION)}")
+            return random.choice(ULTRA_SAFE_FALLBACK_SPEECHES)
             
     except Exception as e:
         # ai_playerがNoneの場合の安全な処理
@@ -1437,17 +1452,9 @@ def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid.UUID)
         logger.error(f"Error details: {str(e)}")
         logger.error(f"Player ID: {player_id_str}, Character: {player_name}")
         
-        # 緊急フォールバック - 簡単な発言を必ず返す
-        simple_fallback_speeches = [
-            "少し考えさせてください。",
-            "状況を確認しています。",
-            "慎重に判断します。",
-            "様子を見てみましょう。",
-            "情報を整理中です。"
-        ]
-        
-        fallback_speech = random.choice(simple_fallback_speeches)
-        logger.info(f"Using emergency fallback speech for {player_name}: '{fallback_speech}'")
+        # 緊急フォールバック - どんな状況でも確実に発言を返す
+        fallback_speech = random.choice(ULTRA_SAFE_FALLBACK_SPEECHES)
+        logger.info(f"Using emergency ultra-safe fallback speech for {player_name}: '{fallback_speech}'")
         return fallback_speech
 
 def generate_ai_vote_decision(db: Session, room_id: uuid.UUID, ai_player, possible_targets) -> Player:
@@ -2697,7 +2704,16 @@ async def auto_progress_logic(room_id: uuid.UUID, db: Session):
         
         # 現在のプレイヤーを取得
         current_player_id = turn_order[current_index]
-        current_player = get_player(db, uuid.UUID(current_player_id))
+        # UUIDの変換を安全に行う
+        try:
+            if isinstance(current_player_id, str):
+                player_uuid = uuid.UUID(current_player_id)
+            else:
+                player_uuid = current_player_id  # 既にUUIDオブジェクトの場合
+            current_player = get_player(db, player_uuid)
+        except (ValueError, TypeError) as uuid_error:
+            logger.error(f"Invalid UUID format for current_player_id: {current_player_id}, error: {uuid_error}")
+            return {"auto_progressed": False, "message": f"Invalid player ID format: {current_player_id}"}
         
         if not current_player or not current_player.is_alive:
             # 死亡プレイヤーの場合、次の生存プレイヤーに進む
