@@ -2726,9 +2726,9 @@ async def auto_progress_logic(room_id: uuid.UUID, db: Session):
         recent_cutoff = datetime.now(timezone.utc) - timedelta(seconds=3)
         recent_ai_speeches = db.query(GameLog).filter(
             GameLog.room_id == room_id,
-            GameLog.action == "speak", 
-            GameLog.timestamp >= recent_cutoff,
-            GameLog.player_id != current_player.player_id
+            GameLog.event_type == "speech", 
+            GameLog.created_at >= recent_cutoff,
+            GameLog.actor_player_id != current_player.player_id
         ).count()
         
         if recent_ai_speeches > 0:
@@ -2781,11 +2781,16 @@ async def auto_progress_logic(room_id: uuid.UUID, db: Session):
         players = get_players_in_room(db, room_id)
         alive_players = [p for p in players if p.is_alive]
         
-        # 投票済みプレイヤーを取得
+        # 投票済みプレイヤーを取得 (GameLogから投票記録を取得)
         voted_player_ids = set()
-        votes = db.query(Vote).filter(Vote.room_id == room_id, Vote.day == room.day).all()
-        for vote in votes:
-            voted_player_ids.add(vote.voter_id)
+        vote_logs = db.query(GameLog).filter(
+            GameLog.room_id == room_id,
+            GameLog.day_number == room.day_number,
+            GameLog.event_type == "vote"
+        ).all()
+        for vote_log in vote_logs:
+            if vote_log.actor_player_id:
+                voted_player_ids.add(vote_log.actor_player_id)
         
         # 未投票のAIプレイヤーを探す
         unvoted_ai_players = [
