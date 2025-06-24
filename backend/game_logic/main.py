@@ -1312,18 +1312,18 @@ def get_detailed_game_result(db: Session, room_id: uuid.UUID) -> GameResult:
 def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid.UUID) -> str:
     """AIプレイヤーの発言を生成（AIエージェント使用）"""
     try:
-        # プレイヤーとルーム情報を取得
+        # 最初にフォールバック用の基本情報を取得
         ai_player = get_player(db, ai_player_id)
-        if not ai_player:
-            logger.error(f"AI player not found: {ai_player_id}")
-            raise HTTPException(status_code=404, detail="AI player not found")
+        room = get_room(db, room_id)
+        
+        # 基本的な検証
+        if not ai_player or not room:
+            logger.error(f"Player or room not found: player={ai_player}, room={room}")
+            return "状況を確認しています。"
+        
         if ai_player.is_human:
             logger.error(f"Player {ai_player.character_name} is not an AI player")
-            raise HTTPException(status_code=400, detail="Not an AI player")
-        
-        room = get_room(db, room_id)
-        if not room:
-            raise HTTPException(status_code=404, detail="Room not found")
+            return "少し考えさせてください。"
         
         # デバッグ: ペルソナ情報をログ出力
         logger.info(f"Generating speech for {ai_player.character_name}")
@@ -1421,40 +1421,33 @@ def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid.UUID)
             
     except Exception as e:
         # ai_playerがNoneの場合の安全な処理
-        player_name = getattr(ai_player, 'character_name', 'Unknown Player') if ai_player else 'Unknown Player'
-        player_id_str = str(ai_player.player_id) if ai_player else str(ai_player_id)
+        player_name = "Unknown Player"
+        player_id_str = str(ai_player_id)
+        
+        try:
+            ai_player = get_player(db, ai_player_id) if 'ai_player' not in locals() or ai_player is None else ai_player
+            if ai_player:
+                player_name = getattr(ai_player, 'character_name', 'Unknown Player')
+                player_id_str = str(ai_player.player_id)
+        except:
+            pass  # フォールバック情報取得でエラーが出ても無視
         
         logger.error(f"Error generating AI speech for {player_name}: {e}", exc_info=True)
         logger.error(f"Error type: {type(e).__name__}")
         logger.error(f"Error details: {str(e)}")
-        logger.error(f"Player ID: {player_id_str}, Character: {player_name}, Role: {getattr(ai_player, 'role', 'unknown') if ai_player else 'unknown'}")
+        logger.error(f"Player ID: {player_id_str}, Character: {player_name}")
         
-        # エラー時のフォールバック - より詳細な発言を生成（ペルソナも考慮）
-        persona_hint = getattr(ai_player, 'character_persona', None) if ai_player else None
-        persona_hint = persona_hint or ""
-        if "丁寧" in persona_hint or "敬語" in persona_hint:
-            fallback_speeches = [
-                "申し訳ございません、少しお時間をいただけますでしょうか。",
-                "現在の状況を慎重に分析させていただいております。",
-                "皆様のご意見を拝聴させていただきたく存じます。"
-            ]
-        elif "明るい" in persona_hint or "元気" in persona_hint:
-            fallback_speeches = [
-                "ちょっと考えさせて！みんなはどう思う？",
-                "うーん、難しいね！でも頑張って考えてみる！",
-                "今の状況、どうなってるんだろう？"
-            ]
-        else:
-            fallback_speeches = [
-                "少し考えさせてください。",
-                "今の状況をよく観察してみましょう。",
-                "皆さんの意見を聞かせてください。",
-                "慎重に判断したいと思います。",
-                "情報を整理してから発言します。"
-            ]
+        # 緊急フォールバック - 簡単な発言を必ず返す
+        simple_fallback_speeches = [
+            "少し考えさせてください。",
+            "状況を確認しています。",
+            "慎重に判断します。",
+            "様子を見てみましょう。",
+            "情報を整理中です。"
+        ]
         
-        fallback_speech = random.choice(fallback_speeches)
-        logger.info(f"Using fallback speech for {player_name}: '{fallback_speech}'")
+        fallback_speech = random.choice(simple_fallback_speeches)
+        logger.info(f"Using emergency fallback speech for {player_name}: '{fallback_speech}'")
         return fallback_speech
 
 def generate_ai_vote_decision(db: Session, room_id: uuid.UUID, ai_player, possible_targets) -> Player:
