@@ -35,6 +35,10 @@ spec:
           value: "PROJECT_ID"
         - name: GOOGLE_CLOUD_REGION
           value: "asia-northeast1"
+        - name: GOOGLE_PROJECT_ID
+          value: "fourth-dynamo-423103-q2"
+        - name: GOOGLE_LOCATION
+          value: "asia-northeast1"
         - name: ENVIRONMENT
           value: "production"
         - name: LOG_LEVEL
