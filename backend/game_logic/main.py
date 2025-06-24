@@ -1242,16 +1242,34 @@ def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid.UUID)
         logger.error(f"Error generating AI speech for {ai_player.character_name}: {e}", exc_info=True)
         logger.error(f"Error type: {type(e).__name__}")
         logger.error(f"Error details: {str(e)}")
+        logger.error(f"Player ID: {ai_player.player_id}, Character: {ai_player.character_name}, Role: {ai_player.role}")
         
-        # エラー時のフォールバック - より有用な発言を生成
-        fallback_speeches = [
-            "少し考えさせてください。",
-            "今の状況をよく観察してみましょう。",
-            "皆さんの意見を聞かせてください。",
-            "慎重に判断したいと思います。",
-            "情報を整理してから発言します。"
-        ]
-        return random.choice(fallback_speeches)
+        # エラー時のフォールバック - より詳細な発言を生成（ペルソナも考慮）
+        persona_hint = getattr(ai_player, 'character_persona', None) or ""
+        if "丁寧" in persona_hint or "敬語" in persona_hint:
+            fallback_speeches = [
+                "申し訳ございません、少しお時間をいただけますでしょうか。",
+                "現在の状況を慎重に分析させていただいております。",
+                "皆様のご意見を拝聴させていただきたく存じます。"
+            ]
+        elif "明るい" in persona_hint or "元気" in persona_hint:
+            fallback_speeches = [
+                "ちょっと考えさせて！みんなはどう思う？",
+                "うーん、難しいね！でも頑張って考えてみる！",
+                "今の状況、どうなってるんだろう？"
+            ]
+        else:
+            fallback_speeches = [
+                "少し考えさせてください。",
+                "今の状況をよく観察してみましょう。",
+                "皆さんの意見を聞かせてください。",
+                "慎重に判断したいと思います。",
+                "情報を整理してから発言します。"
+            ]
+        
+        fallback_speech = random.choice(fallback_speeches)
+        logger.info(f"Using fallback speech for {ai_player.character_name}: '{fallback_speech}'")
+        return fallback_speech
 
 def generate_ai_vote_decision(db: Session, room_id: uuid.UUID, ai_player, possible_targets) -> Player:
     """
@@ -2543,19 +2561,21 @@ async def handle_auto_progress(room_id: uuid.UUID, db: Session = Depends(get_db)
                         "message": f"Turn changed during processing. Current player: {latest_current_player_id}"
                     }
                 
-                # 他のAIプレイヤーが発言中でないかチェック（同時実行防止）
+                # 他のAIプレイヤーが発言中でないかチェック（同時実行防止）- 10秒から3秒に短縮
                 active_ai_speech = db.query(GameLog).filter(
                     GameLog.room_id == room_id,
                     GameLog.phase == "day_discussion", 
                     GameLog.event_type == "speech",
-                    GameLog.created_at >= func.now() - text("INTERVAL '10 seconds'")
+                    GameLog.created_at >= func.now() - text("INTERVAL '3 seconds'")
                 ).order_by(GameLog.created_at.desc()).first()
                 
                 if active_ai_speech and active_ai_speech.actor_player_id != current_player.player_id:
-                    logger.info(f"Another AI player just spoke recently, waiting before {current_player.character_name} speaks")
+                    logger.warning(f"Another AI player (ID: {active_ai_speech.actor_player_id}) just spoke recently, waiting before {current_player.character_name} (ID: {current_player.player_id}) speaks")
                     return {
                         "auto_progressed": False,
-                        "message": "Another AI player just spoke, waiting for turn order"
+                        "message": "Another AI player just spoke, waiting for turn order",
+                        "recent_speaker_id": str(active_ai_speech.actor_player_id) if active_ai_speech else None,
+                        "current_player_id": str(current_player.player_id)
                     }
                 
                 try:
@@ -2586,13 +2606,21 @@ async def handle_auto_progress(room_id: uuid.UUID, db: Session = Depends(get_db)
                 # 最新のルーム情報を再取得して確実な情報を取得
                 latest_room = get_room(db, room_id)
                 
-                # WebSocketで発言を通知
-                await sio.emit("new_speech", {
-                    "room_id": str(room_id),
-                    "speaker_id": str(current_player.player_id),
-                    "statement": speech,
-                    "is_ai": True
-                }, room=str(room_id))
+                # WebSocketで発言を通知（エラーハンドリング追加）
+                try:
+                    logger.info(f"Emitting WebSocket event for AI speech: {current_player.character_name}")
+                    await sio.emit("new_speech", {
+                        "room_id": str(room_id),
+                        "speaker_id": str(current_player.player_id),
+                        "speaker_name": current_player.character_name,
+                        "statement": speech,
+                        "is_ai": True,
+                        "timestamp": datetime.now(timezone.utc).isoformat()
+                    }, room=str(room_id))
+                    logger.info(f"WebSocket event emitted successfully for {current_player.character_name}")
+                except Exception as ws_error:
+                    logger.error(f"Failed to emit WebSocket event for {current_player.character_name}: {ws_error}", exc_info=True)
+                    # WebSocket失敗してもゲーム進行は続ける
                 
                 return {
                     "auto_progressed": True,
