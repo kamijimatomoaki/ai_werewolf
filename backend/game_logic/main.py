@@ -2765,10 +2765,12 @@ def auto_progress_logic(room_id: uuid.UUID, db: Session):
         try:
             # AI発言を生成（同期関数を非同期コンテキストで安全に実行）
             try:
+                logger.info(f"[DEBUG] About to call generate_ai_speech for player {current_player.character_name} (ID: {current_player.player_id})")
                 ai_speech = generate_ai_speech(db, room_id, current_player.player_id)
-                logger.info(f"AI speech generated successfully: {ai_speech[:50]}...")
+                logger.info(f"[DEBUG] AI speech generated successfully: {ai_speech[:50]}...")
             except Exception as speech_error:
-                logger.error(f"Error generating AI speech: {speech_error}", exc_info=True)
+                logger.error(f"[DEBUG] Error generating AI speech: {speech_error}", exc_info=True)
+                logger.error(f"[DEBUG] Current player info - Name: {current_player.character_name}, ID: {current_player.player_id}")
                 return {"auto_progressed": False, "message": f"Error generating AI speech: {str(speech_error)}"}
             
             if ai_speech:
