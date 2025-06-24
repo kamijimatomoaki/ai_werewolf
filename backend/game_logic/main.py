@@ -1353,9 +1353,15 @@ def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid.UUID)
         
         # Debug: root_agent の詳細をログ出力
         if root_agent is None:
-            logger.error("root_agent is None - AI agent not properly initialized")
+            logger.error("❌ CRITICAL: root_agent is None - AI agent not properly initialized")
+            logger.error("This indicates a problem with the npc_agent import or initialization")
             logger.info("Using ultra-safe fallback due to missing root_agent")
             return random.choice(ULTRA_SAFE_FALLBACK_SPEECHES)
+        
+        # root_agentの型とメソッドを確認
+        logger.info(f"✅ root_agent type: {type(root_agent)}")
+        logger.info(f"✅ root_agent methods: {dir(root_agent)}")
+        logger.info(f"✅ Has generate_speech method: {hasattr(root_agent, 'generate_speech')}")
         
         # Google AI設定の確認
         if root_agent and GOOGLE_PROJECT_ID and GOOGLE_LOCATION:
@@ -1409,10 +1415,15 @@ def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid.UUID)
             logger.info(f"Recent messages count: {len(recent_messages)}")
             
             try:
+                logger.info("🚀 Calling root_agent.generate_speech()...")
                 speech = root_agent.generate_speech(player_info, game_context, recent_messages)
-                logger.info(f"Successfully called root_agent.generate_speech(), result: {speech}")
+                logger.info(f"✅ Successfully called root_agent.generate_speech()")
+                logger.info(f"📝 Generated speech: {speech}")
+                logger.info(f"📏 Speech length: {len(speech) if speech else 0} characters")
             except Exception as agent_error:
-                logger.error(f"Error in root_agent.generate_speech(): {agent_error}", exc_info=True)
+                logger.error(f"❌ CRITICAL ERROR in root_agent.generate_speech(): {agent_error}", exc_info=True)
+                logger.error(f"Error type: {type(agent_error)}")
+                logger.error(f"Error args: {agent_error.args}")
                 logger.info("Using ultra-safe fallback due to root_agent error")
                 return random.choice(ULTRA_SAFE_FALLBACK_SPEECHES)
             

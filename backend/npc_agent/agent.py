@@ -14,14 +14,22 @@ load_dotenv()
 GOOGLE_PROJECT_ID = os.getenv("GOOGLE_PROJECT_ID") or os.getenv("GOOGLE_CLOUD_PROJECT", "").strip('"')
 GOOGLE_LOCATION = os.getenv("GOOGLE_LOCATION") or os.getenv("GOOGLE_CLOUD_LOCATION", "").strip('"')
 
+print(f"[INIT] Vertex AI initialization check:")
+print(f"[INIT] GOOGLE_PROJECT_ID: '{GOOGLE_PROJECT_ID}'")
+print(f"[INIT] GOOGLE_LOCATION: '{GOOGLE_LOCATION}'")
+
 if GOOGLE_PROJECT_ID and GOOGLE_LOCATION:
     try:
         vertexai.init(project=GOOGLE_PROJECT_ID, location=GOOGLE_LOCATION)
-        print(f"[DEBUG] Vertex AI initialized in npc_agent: {GOOGLE_PROJECT_ID} @ {GOOGLE_LOCATION}")
+        print(f"✅ [SUCCESS] Vertex AI initialized: {GOOGLE_PROJECT_ID} @ {GOOGLE_LOCATION}")
     except Exception as e:
-        print(f"[WARNING] Failed to initialize Vertex AI in npc_agent: {e}")
+        print(f"❌ [ERROR] Failed to initialize Vertex AI: {e}")
+        import traceback
+        print(f"[ERROR] Full traceback: {traceback.format_exc()}")
 else:
-    print(f"[WARNING] Missing Vertex AI credentials: PROJECT={GOOGLE_PROJECT_ID}, LOCATION={GOOGLE_LOCATION}")
+    print(f"❌ [ERROR] Missing Vertex AI credentials:")
+    print(f"   GOOGLE_PROJECT_ID: '{GOOGLE_PROJECT_ID}' (empty: {not GOOGLE_PROJECT_ID})")
+    print(f"   GOOGLE_LOCATION: '{GOOGLE_LOCATION}' (empty: {not GOOGLE_LOCATION})")
 
 def generate_content_with_timeout(model, prompt, timeout_seconds=30):
     """シンプルで確実なcontent生成（Cloud Run環境対応）"""
@@ -748,4 +756,13 @@ class RootAgent:
 """
 
 # グローバルインスタンス
-root_agent = RootAgent()
+try:
+    print("[INIT] Creating RootAgent instance...")
+    root_agent = RootAgent()
+    print(f"✅ [SUCCESS] RootAgent created successfully: {type(root_agent)}")
+    print(f"✅ [SUCCESS] RootAgent methods: {[m for m in dir(root_agent) if not m.startswith('_')]}")
+except Exception as e:
+    print(f"❌ [ERROR] Failed to create RootAgent: {e}")
+    import traceback
+    print(f"[ERROR] Full traceback: {traceback.format_exc()}")
+    root_agent = None
