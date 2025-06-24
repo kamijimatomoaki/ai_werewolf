@@ -2752,16 +2752,27 @@ async def auto_progress_logic(room_id: uuid.UUID, db: Session):
             return {"auto_progressed": False, "message": "Another AI player recently spoke, waiting"}
         
         try:
-            # AI発言を生成
-            ai_speech = generate_ai_speech(db, room_id, current_player.player_id)
+            # AI発言を生成（同期関数を非同期コンテキストで安全に実行）
+            try:
+                ai_speech = generate_ai_speech(db, room_id, current_player.player_id)
+                logger.info(f"AI speech generated successfully: {ai_speech[:50]}...")
+            except Exception as speech_error:
+                logger.error(f"Error generating AI speech: {speech_error}", exc_info=True)
+                return {"auto_progressed": False, "message": f"Error generating AI speech: {str(speech_error)}"}
+            
             if ai_speech:
-                # 発言を実行
-                updated_room = speak_logic(
-                    room_id=room_id,
-                    player_id=current_player.player_id,
-                    statement=ai_speech,
-                    db=db
-                )
+                # 発言を実行（同期関数を非同期コンテキストで安全に実行）
+                try:
+                    updated_room = speak_logic(
+                        room_id=room_id,
+                        player_id=current_player.player_id,
+                        statement=ai_speech,
+                        db=db
+                    )
+                    logger.info(f"Speech logic executed successfully for {current_player.player_name}")
+                except Exception as speak_error:
+                    logger.error(f"Error in speak_logic: {speak_error}", exc_info=True)
+                    return {"auto_progressed": False, "message": f"Error executing speech: {str(speak_error)}"}
                 
                 # WebSocket通知を送信
                 try:
@@ -2824,15 +2835,26 @@ async def auto_progress_logic(room_id: uuid.UUID, db: Session):
         try:
             # AI投票先を決定 - 投票可能なターゲットを取得
             possible_targets = [p for p in alive_players if p.player_id != ai_player.player_id]
-            vote_target = generate_ai_vote_decision(db, room_id, ai_player, possible_targets)
+            try:
+                vote_target = generate_ai_vote_decision(db, room_id, ai_player, possible_targets)
+                logger.info(f"AI vote target determined: {vote_target.player_name if vote_target else 'None'}")
+            except Exception as vote_decision_error:
+                logger.error(f"Error in generate_ai_vote_decision: {vote_decision_error}", exc_info=True)
+                return {"auto_progressed": False, "message": f"Error determining vote target: {str(vote_decision_error)}"}
+            
             if vote_target:
                 # 投票を実行
-                vote_result = process_vote(
-                    room_id=room_id,
-                    voter_id=ai_player.player_id,
-                    target_id=vote_target.player_id,
-                    db=db
-                )
+                try:
+                    vote_result = process_vote(
+                        room_id=room_id,
+                        voter_id=ai_player.player_id,
+                        target_id=vote_target.player_id,
+                        db=db
+                    )
+                    logger.info(f"Vote processed successfully: {ai_player.player_name} -> {vote_target.player_name}")
+                except Exception as process_vote_error:
+                    logger.error(f"Error in process_vote: {process_vote_error}", exc_info=True)
+                    return {"auto_progressed": False, "message": f"Error processing vote: {str(process_vote_error)}"}
                 
                 # WebSocket通知を送信
                 try:
