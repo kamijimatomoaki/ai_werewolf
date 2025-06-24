@@ -1,7 +1,6 @@
 import os
 import random
 import asyncio
-import signal
 from typing import List, Dict, Optional
 import vertexai
 from vertexai.generative_models import GenerativeModel, FunctionDeclaration, Tool, GenerationConfig
@@ -24,12 +23,8 @@ if GOOGLE_PROJECT_ID and GOOGLE_LOCATION:
 else:
     print(f"[WARNING] Missing Vertex AI credentials: PROJECT={GOOGLE_PROJECT_ID}, LOCATION={GOOGLE_LOCATION}")
 
-def timeout_handler(signum, frame):
-    """タイムアウトハンドラー"""
-    raise TimeoutError("Vertex AI API call timed out")
-
 def generate_content_with_timeout(model, prompt, timeout_seconds=30):
-    """タイムアウト付きのcontent生成"""
+    """シンプルで確実なcontent生成（Cloud Run環境対応）"""
     try:
         # GenerationConfigでより確実な制限を設定
         generation_config = GenerationConfig(
@@ -38,24 +33,19 @@ def generate_content_with_timeout(model, prompt, timeout_seconds=30):
             top_p=0.9               # nucleus sampling
         )
         
-        # シグナルアラームでタイムアウトを設定
-        signal.signal(signal.SIGALRM, timeout_handler)
-        signal.alarm(timeout_seconds)
+        print(f"[DEBUG] Calling Vertex AI API (timeout={timeout_seconds}s)")
         
-        try:
-            response = model.generate_content(prompt, generation_config=generation_config)
-            signal.alarm(0)  # タイムアウトをクリア
-            return response
-        except Exception as e:
-            signal.alarm(0)  # タイムアウトをクリア
-            raise e
+        # Cloud Run環境では信号処理を避け、直接APIを呼び出す
+        # Vertex AI自体にタイムアウトが組み込まれているため
+        response = model.generate_content(prompt, generation_config=generation_config)
+        print(f"[DEBUG] Vertex AI API call successful")
+        return response
             
-    except TimeoutError:
-        print(f"[ERROR] Vertex AI API call timed out after {timeout_seconds} seconds")
-        raise TimeoutError(f"API call timed out after {timeout_seconds} seconds")
     except Exception as e:
-        signal.alarm(0)  # 念のためタイムアウトをクリア
         print(f"[ERROR] Error in generate_content_with_timeout: {e}")
+        # 詳細なエラー情報をログに記録
+        import traceback
+        print(f"[ERROR] Full traceback: {traceback.format_exc()}")
         raise e
 
 class WerewolfAgent:

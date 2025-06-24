@@ -2881,7 +2881,10 @@ def auto_progress_logic(room_id: uuid.UUID, db: Session):
 async def handle_auto_progress(room_id: uuid.UUID, db: Session = Depends(get_db)):
     """ゲームの自動進行（AIプレイヤーのターン処理）"""
     try:
+        # 同期関数を非同期コンテキストで安全に実行
+        logger.info(f"Starting auto_progress for room {room_id}")
         result = auto_progress_logic(room_id, db)
+        logger.info(f"auto_progress_logic completed: {result}")
         
         # WebSocket通知を送信（auto_progress_logicから移動）
         if result.get("auto_progressed") and "websocket_data" in result:
@@ -2901,8 +2904,17 @@ async def handle_auto_progress(room_id: uuid.UUID, db: Session = Depends(get_db)
         
         return result
     except Exception as e:
-        logger.error(f"Error in auto progress: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to auto progress game")
+        logger.error(f"Error in auto progress for room {room_id}: {e}", exc_info=True)
+        # より詳細なエラー情報を返す
+        error_detail = f"Failed to auto progress game: {str(e)}"
+        if "generate_ai_speech" in str(e):
+            error_detail += " (AI speech generation failed)"
+        elif "database" in str(e).lower():
+            error_detail += " (Database error)"
+        elif "vertex" in str(e).lower() or "ai" in str(e).lower():
+            error_detail += " (AI service error)"
+        
+        raise HTTPException(status_code=500, detail=error_detail)
 
 @app.get("/api/rooms/{room_id}/summary")
 async def get_game_summary(room_id: uuid.UUID, db: Session = Depends(get_db)):
