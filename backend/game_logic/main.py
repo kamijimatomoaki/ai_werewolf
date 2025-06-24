@@ -14,6 +14,7 @@ import uuid
 import json
 import random
 import secrets
+import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Dict, Any
 
@@ -497,6 +498,100 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# --- Background Task for Auto Game Progression ---
+game_loop_task = None
+
+async def game_loop_monitor():
+    """Continuous monitoring and auto-progression for AI player turns"""
+    logger.info("Starting AI game auto-progression monitor...")
+    
+    while True:
+        try:
+            # Get database session
+            db = SessionLocal()
+            try:
+                # Check all active game rooms
+                active_rooms = db.query(Room).filter(
+                    Room.status.in_(['day_discussion', 'day_vote']),
+                    Room.last_activity >= datetime.now(timezone.utc) - timedelta(hours=2)
+                ).all()
+                
+                for room in active_rooms:
+                    await check_and_progress_ai_turns(room.room_id, db)
+                    
+            finally:
+                db.close()
+                
+        except Exception as e:
+            logger.error(f"Game loop monitor error: {e}")
+        
+        # Wait 3 seconds before next check
+        await asyncio.sleep(3)
+
+async def delayed_ai_progression(room_id: uuid.UUID, delay_seconds: float):
+    """Schedule AI progression after a delay"""
+    await asyncio.sleep(delay_seconds)
+    try:
+        db = SessionLocal()
+        try:
+            await check_and_progress_ai_turns(room_id, db)
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"Error in delayed AI progression for room {room_id}: {e}")
+
+async def check_and_progress_ai_turns(room_id: uuid.UUID, db: Session):
+    """Check if current player is AI and progress if needed"""
+    try:
+        room = get_room(db, room_id)
+        if not room or room.status not in ['day_discussion', 'day_vote']:
+            return
+            
+        # Get current player
+        current_player = get_current_turn_player(room)
+        if not current_player or current_player.is_human:
+            return  # Human player or no current player, skip
+            
+        # Check if AI player hasn't acted recently (more than 5 seconds ago)
+        if room.last_activity and (datetime.now(timezone.utc) - room.last_activity).total_seconds() < 5:
+            return  # Recent activity, wait a bit more
+            
+        logger.info(f"Auto-progressing AI player {current_player.player_name} in room {room_id}")
+        
+        # Call auto_progress logic (reuse existing function)
+        try:
+            result = await auto_progress_logic(room_id, db)
+            if result.get("auto_progressed"):
+                logger.info(f"Successfully auto-progressed room {room_id}: {result.get('message', 'No message')}")
+        except Exception as e:
+            logger.error(f"Error in auto_progress_logic for room {room_id}: {e}")
+            
+    except Exception as e:
+        logger.error(f"Error checking AI turns for room {room_id}: {e}")
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize background tasks on application startup"""
+    global game_loop_task
+    logger.info("Starting application startup tasks...")
+    
+    # Start the game loop monitor task
+    game_loop_task = asyncio.create_task(game_loop_monitor())
+    logger.info("AI game auto-progression monitor started")
+
+@app.on_event("shutdown") 
+async def shutdown_event():
+    """Clean up background tasks on application shutdown"""
+    global game_loop_task
+    logger.info("Shutting down application...")
+    
+    if game_loop_task:
+        game_loop_task.cancel()
+        try:
+            await game_loop_task
+        except asyncio.CancelledError:
+            logger.info("Game loop monitor task cancelled successfully")
+
 # --- グローバル例外ハンドラー ---
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
@@ -666,6 +761,18 @@ def start_game_logic(db: Session, room_id: uuid.UUID) -> Room:
     db.refresh(db_room)
     logger.info(f"Game started in room {room_id}. Turn order: {db_room.turn_order}")
     
+    # Check if first player is AI and trigger progression
+    try:
+        if db_room.turn_order and db_room.current_turn_index is not None:
+            first_player_id = db_room.turn_order[db_room.current_turn_index]
+            first_player = get_player(db, uuid.UUID(first_player_id))
+            if first_player and not first_player.is_human and first_player.is_alive:
+                logger.info(f"Scheduling AI progression for first player {first_player.player_name}")
+                # Schedule AI progression with a small delay to allow game start to complete
+                asyncio.create_task(delayed_ai_progression(room_id, 3.0))
+    except Exception as e:
+        logger.error(f"Error scheduling initial AI progression: {e}")
+    
     return db_room
 
 def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement: str) -> Room:
@@ -728,6 +835,19 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
         db.refresh(db_room)
         
         logger.info(f"Turn advanced: {current_index} -> {next_index}, status: {db_room.status}")
+        
+        # Trigger AI progression if next player is AI
+        try:
+            if db_room.status == 'day_discussion' and next_index < len(turn_order):
+                next_player_id = turn_order[next_index]
+                next_player = get_player(db, uuid.UUID(next_player_id))
+                if next_player and not next_player.is_human and next_player.is_alive:
+                    logger.info(f"Scheduling AI progression for player {next_player.player_name}")
+                    # Schedule AI progression with a small delay
+                    asyncio.create_task(delayed_ai_progression(room_id, 2.0))
+        except Exception as e:
+            logger.error(f"Error scheduling AI progression: {e}")
+        
         return db_room
         
     except Exception as e:
@@ -2527,216 +2647,193 @@ async def handle_ai_speak(room_id: uuid.UUID, ai_player_id: uuid.UUID, db: Sessi
         logger.error(f"Error in AI speak: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to generate AI speech")
 
+async def auto_progress_logic(room_id: uuid.UUID, db: Session):
+    """Core auto-progression logic that can be called from API or background task"""
+    room = get_room(db, room_id)
+    if not room:
+        return {"auto_progressed": False, "message": "Room not found"}
+    
+    if room.status not in ['day_discussion', 'day_vote']:
+        return {"auto_progressed": False, "message": "Auto progress only available during discussion and voting phases"}
+    
+    # 発言フェーズでの処理
+    if room.status == 'day_discussion':
+        # 現在のターンプレイヤーを確認
+        if not room.turn_order or room.current_turn_index is None:
+            return {"auto_progressed": False, "message": "Turn order not initialized"}
+            
+        # インデックス範囲チェック
+        current_index = room.current_turn_index
+        turn_order = room.turn_order
+        if current_index >= len(turn_order):
+            # インデックスが範囲外の場合、最初の生存プレイヤーを見つける
+            logger.warning(f"Turn index {current_index} out of range for {len(turn_order)} players. Auto-correcting...")
+            players = get_players_in_room(db, room_id)
+            alive_players = [p for p in players if p.is_alive]
+            if alive_players:
+                # 最初の生存プレイヤーのIDを見つけて、turn_orderでのインデックスを設定
+                first_alive_id = str(alive_players[0].player_id)
+                if first_alive_id in turn_order:
+                    room.current_turn_index = turn_order.index(first_alive_id)
+                    db.commit()
+                    logger.info(f"Reset turn index to {room.current_turn_index} for player {first_alive_id}")
+                else:
+                    return {"auto_progressed": False, "message": "No valid alive players found in turn order"}
+            else:
+                return {"auto_progressed": False, "message": "No alive players found"}
+        
+        # 現在のプレイヤーを取得
+        current_player_id = turn_order[current_index]
+        current_player = get_player(db, uuid.UUID(current_player_id))
+        
+        if not current_player or not current_player.is_alive:
+            # 死亡プレイヤーの場合、次の生存プレイヤーに進む
+            logger.info(f"Current player {current_player_id} is dead, advancing to next alive player")
+            try:
+                next_alive_index = find_next_alive_player_global(room, db)
+                if next_alive_index is not None:
+                    room.current_turn_index = next_alive_index
+                    db.commit()
+                    logger.info(f"Advanced to next alive player at index {next_alive_index}")
+                    return {"auto_progressed": True, "message": "Advanced past dead player"}
+                else:
+                    return {"auto_progressed": False, "message": "No alive players found"}
+            except Exception as e:
+                logger.error(f"Error finding next alive player: {e}")
+                return {"auto_progressed": False, "message": f"Error advancing turn: {str(e)}"}
+        
+        # 人間プレイヤーの場合、自動進行しない
+        if current_player.is_human:
+            return {"auto_progressed": False, "message": "Current player is human, manual input required"}
+        
+        # AIプレイヤーの発言生成
+        logger.info(f"Generating speech for AI player: {current_player.player_name}")
+        
+        # 同時実行制御: 他のAIプレイヤーが最近発言したかチェック
+        recent_cutoff = datetime.now(timezone.utc) - timedelta(seconds=3)
+        recent_ai_speeches = db.query(GameLog).filter(
+            GameLog.room_id == room_id,
+            GameLog.action == "speak", 
+            GameLog.timestamp >= recent_cutoff,
+            GameLog.player_id != current_player.player_id
+        ).count()
+        
+        if recent_ai_speeches > 0:
+            logger.info("Another AI player recently spoke, waiting...")
+            return {"auto_progressed": False, "message": "Another AI player recently spoke, waiting"}
+        
+        try:
+            # AI発言を生成
+            ai_speech = await generate_ai_speech(current_player, room, db)
+            if ai_speech:
+                # 発言を実行
+                updated_room = speak_logic(
+                    room_id=room_id,
+                    player_id=current_player.player_id,
+                    statement=ai_speech,
+                    db=db
+                )
+                
+                # WebSocket通知を送信
+                try:
+                    speech_data = {
+                        "player_id": str(current_player.player_id),
+                        "player_name": current_player.player_name,
+                        "statement": ai_speech,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "is_ai": True
+                    }
+                    await sio.emit("new_speech", speech_data, room=str(room_id))
+                    logger.info(f"WebSocket notification sent for AI speech from {current_player.player_name}")
+                except Exception as ws_error:
+                    logger.error(f"WebSocket notification failed: {ws_error}")
+                
+                return {
+                    "auto_progressed": True,
+                    "message": f"AI player {current_player.player_name} spoke",
+                    "speaker": current_player.player_name,
+                    "statement": ai_speech[:100] + "..." if len(ai_speech) > 100 else ai_speech
+                }
+            else:
+                logger.warning(f"Failed to generate speech for AI player {current_player.player_name}")
+                return {"auto_progressed": False, "message": "Failed to generate AI speech"}
+                
+        except Exception as e:
+            logger.error(f"Error generating AI speech: {e}")
+            return {"auto_progressed": False, "message": f"Error generating AI speech: {str(e)}"}
+    
+    # 投票フェーズでの処理
+    elif room.status == 'day_vote':
+        # まだ投票していないAIプレイヤーを見つける
+        players = get_players_in_room(db, room_id)
+        alive_players = [p for p in players if p.is_alive]
+        
+        # 投票済みプレイヤーを取得
+        voted_player_ids = set()
+        votes = db.query(Vote).filter(Vote.room_id == room_id, Vote.day == room.day).all()
+        for vote in votes:
+            voted_player_ids.add(vote.voter_id)
+        
+        # 未投票のAIプレイヤーを探す
+        unvoted_ai_players = [
+            p for p in alive_players 
+            if not p.is_human and p.player_id not in voted_player_ids
+        ]
+        
+        if not unvoted_ai_players:
+            return {"auto_progressed": False, "message": "No AI players need to vote"}
+        
+        # 1人ずつ処理（同時投票を避ける）
+        ai_player = unvoted_ai_players[0]
+        logger.info(f"Processing vote for AI player: {ai_player.player_name}")
+        
+        try:
+            # AI投票先を決定
+            vote_target_id = generate_ai_vote_decision(ai_player, room, db)
+            if vote_target_id:
+                # 投票を実行
+                vote_result = process_vote(
+                    room_id=room_id,
+                    voter_id=ai_player.player_id,
+                    target_id=vote_target_id,
+                    db=db
+                )
+                
+                # WebSocket通知を送信
+                try:
+                    vote_data = {
+                        "voter_id": str(ai_player.player_id),
+                        "voter_name": ai_player.player_name,
+                        "target_id": str(vote_target_id),
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "is_ai": True
+                    }
+                    await sio.emit("new_vote", vote_data, room=str(room_id))
+                    logger.info(f"WebSocket notification sent for AI vote from {ai_player.player_name}")
+                except Exception as ws_error:
+                    logger.error(f"WebSocket notification failed: {ws_error}")
+                
+                return {
+                    "auto_progressed": True,
+                    "message": f"AI player {ai_player.player_name} voted",
+                    "voter": ai_player.player_name,
+                    "vote_result": vote_result
+                }
+            else:
+                return {"auto_progressed": False, "message": f"Failed to determine vote target for {ai_player.player_name}"}
+                
+        except Exception as e:
+            logger.error(f"Error processing AI vote: {e}")
+            return {"auto_progressed": False, "message": f"Error processing AI vote: {str(e)}"}
+    
+    return {"auto_progressed": False, "message": "No auto-progression needed"}
+
 @app.post("/api/rooms/{room_id}/auto_progress")
 async def handle_auto_progress(room_id: uuid.UUID, db: Session = Depends(get_db)):
     """ゲームの自動進行（AIプレイヤーのターン処理）"""
     try:
-        room = get_room(db, room_id)
-        if not room:
-            raise HTTPException(status_code=404, detail="Room not found")
-        
-        if room.status not in ['day_discussion', 'day_vote']:
-            return {"message": "Auto progress only available during discussion and voting phases"}
-        
-        # 発言フェーズでの処理
-        if room.status == 'day_discussion':
-            # 現在のターンプレイヤーを確認
-            if not room.turn_order or room.current_turn_index is None:
-                return {"message": "Turn order not initialized"}
-                
-            # インデックス範囲チェック
-            current_index = room.current_turn_index
-            turn_order = room.turn_order
-            if current_index >= len(turn_order):
-                logger.error(f"Invalid current_turn_index {current_index} for turn_order length {len(turn_order)}")
-                # 最初の生存プレイヤーにリセット
-                first_alive_index = find_next_alive_player_global(db, room, -1)  # -1から開始して最初の生存者を見つける
-                if first_alive_index is None:
-                    return {"message": "No alive players found"}
-                
-                db.execute(
-                    text("UPDATE rooms SET current_turn_index = :index WHERE room_id = :room_id"),
-                    {"index": first_alive_index, "room_id": str(room_id)}
-                )
-                db.commit()
-                current_index = first_alive_index
-            
-            current_player_id = turn_order[current_index]
-            current_player = get_player(db, uuid.UUID(current_player_id))
-            
-            if not current_player:
-                logger.error(f"Current player {current_player_id} not found")
-                return {"message": "Current player not found"}
-                
-            if not current_player.is_alive:
-                logger.info(f"Current player {current_player.character_name} is dead, advancing turn")
-                # 死んだプレイヤーの場合は次の生存プレイヤーに進める
-                next_index = find_next_alive_player_global(db, room, current_index)
-                if next_index is None:
-                    return {"message": "No alive players to advance to"}
-                    
-                db.execute(
-                    text("UPDATE rooms SET current_turn_index = :index WHERE room_id = :room_id"),
-                    {"index": next_index, "room_id": str(room_id)}
-                )
-                db.commit()
-                
-                next_player_id = turn_order[next_index]
-                next_player = get_player(db, uuid.UUID(next_player_id))
-                return {
-                    "auto_progressed": True,
-                    "message": f"Player {current_player.character_name} is dead, advanced to {next_player.character_name if next_player else 'unknown'}"
-                }
-            
-            # AIプレイヤーの場合、自動発言
-            if not current_player.is_human:
-                # シンプル化：ラウンドチェックを無効化し、常にAI発言を実行
-                
-                # より厳密な同時実行防止 - 現在のターンプレイヤーの再確認
-                # DB から最新の room 情報を再取得
-                latest_room = get_room(db, room_id)
-                if not latest_room or not latest_room.turn_order or latest_room.current_turn_index is None:
-                    return {"auto_progressed": False, "message": "Room state invalid"}
-                
-                # 最新のターン情報で再検証
-                latest_current_player_id = latest_room.turn_order[latest_room.current_turn_index]
-                if latest_current_player_id != str(current_player.player_id):
-                    logger.info(f"Turn changed while processing. Expected: {current_player.character_name}, Actual: {latest_current_player_id}")
-                    return {
-                        "auto_progressed": False,
-                        "message": f"Turn changed during processing. Current player: {latest_current_player_id}"
-                    }
-                
-                # 他のAIプレイヤーが発言中でないかチェック（同時実行防止）- 10秒から3秒に短縮
-                active_ai_speech = db.query(GameLog).filter(
-                    GameLog.room_id == room_id,
-                    GameLog.phase == "day_discussion", 
-                    GameLog.event_type == "speech",
-                    GameLog.created_at >= func.now() - text("INTERVAL '3 seconds'")
-                ).order_by(GameLog.created_at.desc()).first()
-                
-                if active_ai_speech and active_ai_speech.actor_player_id != current_player.player_id:
-                    logger.warning(f"Another AI player (ID: {active_ai_speech.actor_player_id}) just spoke recently, waiting before {current_player.character_name} (ID: {current_player.player_id}) speaks")
-                    return {
-                        "auto_progressed": False,
-                        "message": "Another AI player just spoke, waiting for turn order",
-                        "recent_speaker_id": str(active_ai_speech.actor_player_id) if active_ai_speech else None,
-                        "current_player_id": str(current_player.player_id)
-                    }
-                
-                try:
-                    logger.info(f"Generating AI speech for {current_player.character_name}")
-                    speech = generate_ai_speech(db, room_id, current_player.player_id)
-                    logger.info(f"Generated speech: '{speech}' for {current_player.character_name}")
-                    
-                    logger.info(f"Executing speak_logic for {current_player.character_name}")
-                    updated_room = speak_logic(db, room_id, current_player.player_id, speech)
-                    logger.info(f"speak_logic completed for {current_player.character_name}")
-                    
-                    # Update room activity after successful AI speech in auto progress
-                    update_room_activity(db, room_id)
-                    
-                except HTTPException as e:
-                    logger.error(f"HTTPException in AI speech for {current_player.character_name}: {e.detail}", exc_info=True)
-                    return {
-                        "auto_progressed": False,
-                        "message": f"AI speech failed (HTTP): {e.detail}"
-                    }
-                except Exception as e:
-                    logger.error(f"General exception in AI speech for {current_player.character_name}: {str(e)}", exc_info=True)
-                    return {
-                        "auto_progressed": False,
-                        "message": f"AI speech failed (General): {str(e)}"
-                    }
-                
-                # 最新のルーム情報を再取得して確実な情報を取得
-                latest_room = get_room(db, room_id)
-                
-                # WebSocketで発言を通知（エラーハンドリング追加）
-                try:
-                    logger.info(f"Emitting WebSocket event for AI speech: {current_player.character_name}")
-                    await sio.emit("new_speech", {
-                        "room_id": str(room_id),
-                        "speaker_id": str(current_player.player_id),
-                        "speaker_name": current_player.character_name,
-                        "statement": speech,
-                        "is_ai": True,
-                        "timestamp": datetime.now(timezone.utc).isoformat()
-                    }, room=str(room_id))
-                    logger.info(f"WebSocket event emitted successfully for {current_player.character_name}")
-                except Exception as ws_error:
-                    logger.error(f"Failed to emit WebSocket event for {current_player.character_name}: {ws_error}", exc_info=True)
-                    # WebSocket失敗してもゲーム進行は続ける
-                
-                return {
-                    "auto_progressed": True,
-                    "speaker": current_player.character_name,
-                    "speech": speech,
-                    "room_status": latest_room.status if latest_room else updated_room.status,
-                    "current_turn_index": latest_room.current_turn_index if latest_room else updated_room.current_turn_index,
-                    "next_player": latest_room.turn_order[latest_room.current_turn_index] if latest_room and latest_room.turn_order else None
-                }
-            else:
-                return {
-                    "auto_progressed": False,
-                    "message": "Current player is human, waiting for manual input"
-                }
-        
-        # 投票フェーズでの処理
-        elif room.status == 'day_vote':
-            # 未投票のAIプレイヤーを特定して自動投票
-            vote_logs = db.query(GameLog).filter(
-                GameLog.room_id == room_id,
-                GameLog.event_type == "vote",
-                GameLog.phase == "day_vote"
-            ).all()
-            
-            voted_players = set()
-            for log in vote_logs:
-                if log.actor_player_id:
-                    voted_players.add(str(log.actor_player_id))
-            
-            ai_players = [p for p in room.players if p.is_alive and not p.is_human]
-            unvoted_ai_players = [p for p in ai_players if str(p.player_id) not in voted_players]
-            
-            if unvoted_ai_players:
-                # 最初の未投票AIプレイヤーのみ投票させる
-                ai_player = unvoted_ai_players[0]
-                possible_targets = [p for p in room.players if p.is_alive and p.player_id != ai_player.player_id]
-                
-                if possible_targets:
-                    # LLMベースの投票先決定
-                    target = generate_ai_vote_decision(db, room_id, ai_player, possible_targets)
-                    vote_result = process_vote(db, room_id, ai_player.player_id, target.player_id)
-                    
-                    # Update room activity after successful AI vote in auto progress
-                    update_room_activity(db, room_id)
-                    
-                    # WebSocketで投票を通知
-                    await sio.emit("vote_cast", {
-                        "room_id": str(room_id),
-                        "voter_id": str(ai_player.player_id),
-                        "target_id": str(target.player_id),
-                        "is_ai": True
-                    }, room=str(room_id))
-                    
-                    return {
-                        "auto_progressed": True,
-                        "voter": ai_player.character_name,
-                        "target": target.character_name,
-                        "vote_result": vote_result.message
-                    }
-            
-            return {
-                "auto_progressed": False,
-                "message": "No AI players need to vote"
-            }
-        
-        return {
-            "auto_progressed": False,
-            "message": "Invalid game phase"
-        }
-            
+        result = await auto_progress_logic(room_id, db)
+        return result
     except Exception as e:
         logger.error(f"Error in auto progress: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to auto progress game")

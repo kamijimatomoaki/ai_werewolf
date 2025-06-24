@@ -132,11 +132,22 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
       
       if (currentPlayer && !currentPlayer.is_human) {
         console.log(`AI player turn detected: ${currentPlayer.character_name} (Round: ${roomData.current_round || 1})`);
+        // Backend should handle AI progression automatically now
+        // Only trigger frontend fallback after extended waiting period
         setAutoProgressInProgress(true);
         setTimeout(async () => {
           try {
-            const result = await apiService.autoProgress(roomId);
-            console.log('Auto progress result:', result);
+            // Check if AI player is still current after longer wait (backend should have processed by now)
+            const currentRoomData = await apiService.getRoom(roomId);
+            const stillCurrentPlayer = currentRoomData.turn_order[currentRoomData.current_turn_index] === currentPlayerId;
+            
+            if (stillCurrentPlayer && currentRoomData.status === roomData.status) {
+              console.log('Backend auto-progression might have failed, triggering frontend fallback');
+              const result = await apiService.autoProgress(roomId);
+              console.log('Fallback auto progress result:', result);
+            } else {
+              console.log('Backend auto-progression already processed, no fallback needed');
+            }
             
             // 無限ループを防ぐため、autoProgressをスキップして取得
             await fetchRoomData(true);
@@ -153,27 +164,35 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
           } finally {
             setAutoProgressInProgress(false);
           }
-        }, 1500); // 待機時間を短縮
+        }, 8000); // Backend auto-progression fallback timeout increased to 8 seconds
       }
     }
     
-    // 投票フェーズでのAI自動投票
+    // 投票フェーズでのAI自動投票 (Backend should handle this automatically)
     if (roomData.status === 'day_vote') {
       const aiPlayers = roomData.players.filter((p: any) => p.is_alive && !p.is_human);
       if (aiPlayers.length > 0) {
-        console.log(`AI auto vote check for ${aiPlayers.length} AI players`);
+        console.log(`AI auto vote check for ${aiPlayers.length} AI players - Backend should handle automatically`);
+        // Reduced frontend intervention for voting phase
         setAutoProgressInProgress(true);
         setTimeout(async () => {
           try {
-            const result = await apiService.autoProgress(roomId);
-            console.log('Auto vote result:', result);
+            // Only trigger if backend hasn't processed voting after extended wait
+            const currentRoomData = await apiService.getRoom(roomId);
+            if (currentRoomData.status === 'day_vote') {
+              console.log('Backend auto-voting fallback triggered');
+              const result = await apiService.autoProgress(roomId);
+              console.log('Fallback auto vote result:', result);
+            } else {
+              console.log('Backend already processed voting phase');
+            }
             await fetchRoomData(true); // 無限ループ防止
           } catch (error) {
             console.error('AI auto vote failed:', error);
           } finally {
             setAutoProgressInProgress(false);
           }
-        }, 1500);
+        }, 6000); // Longer wait for backend processing
       }
     }
   }, [roomId, autoProgressInProgress]);
