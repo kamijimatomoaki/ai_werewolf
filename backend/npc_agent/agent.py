@@ -1,8 +1,10 @@
 import os
 import random
+import asyncio
+import signal
 from typing import List, Dict, Optional
 import vertexai
-from vertexai.generative_models import GenerativeModel, FunctionDeclaration, Tool
+from vertexai.generative_models import GenerativeModel, FunctionDeclaration, Tool, GenerationConfig
 from dotenv import load_dotenv
 from . import prompt
 
@@ -21,6 +23,40 @@ if GOOGLE_PROJECT_ID and GOOGLE_LOCATION:
         print(f"[WARNING] Failed to initialize Vertex AI in npc_agent: {e}")
 else:
     print(f"[WARNING] Missing Vertex AI credentials: PROJECT={GOOGLE_PROJECT_ID}, LOCATION={GOOGLE_LOCATION}")
+
+def timeout_handler(signum, frame):
+    """タイムアウトハンドラー"""
+    raise TimeoutError("Vertex AI API call timed out")
+
+def generate_content_with_timeout(model, prompt, timeout_seconds=30):
+    """タイムアウト付きのcontent生成"""
+    try:
+        # GenerationConfigでより確実な制限を設定
+        generation_config = GenerationConfig(
+            max_output_tokens=1000,  # 最大出力トークン数
+            temperature=0.7,         # ランダム性
+            top_p=0.9               # nucleus sampling
+        )
+        
+        # シグナルアラームでタイムアウトを設定
+        signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(timeout_seconds)
+        
+        try:
+            response = model.generate_content(prompt, generation_config=generation_config)
+            signal.alarm(0)  # タイムアウトをクリア
+            return response
+        except Exception as e:
+            signal.alarm(0)  # タイムアウトをクリア
+            raise e
+            
+    except TimeoutError:
+        print(f"[ERROR] Vertex AI API call timed out after {timeout_seconds} seconds")
+        raise TimeoutError(f"API call timed out after {timeout_seconds} seconds")
+    except Exception as e:
+        signal.alarm(0)  # 念のためタイムアウトをクリア
+        print(f"[ERROR] Error in generate_content_with_timeout: {e}")
+        raise e
 
 class WerewolfAgent:
     """Vertex AIベースの人狼ゲームエージェント"""
@@ -45,7 +81,7 @@ class WerewolfAgent:
 
 発言:
 """
-            response = self.model.generate_content(prompt_text)
+            response = generate_content_with_timeout(self.model, prompt_text, timeout_seconds=20)
             speech = response.text.strip()
             
             # 自然な切断処理
@@ -311,8 +347,8 @@ class RootAgent:
             tool_prompt = self._build_tool_enhanced_prompt(player_info, game_context, context, recent_messages)
             
             print("[DEBUG] Attempting tool-enhanced speech generation")
-            # AIモデルにツール使用を含めて発言生成を依頼
-            response = self.model.generate_content(tool_prompt)
+            # AIモデルにツール使用を含めて発言生成を依頼（タイムアウト付き）
+            response = generate_content_with_timeout(self.model, tool_prompt, timeout_seconds=25)
             
             # レスポンスを処理（ツール呼び出しを含む）
             final_speech = self._process_response_with_tools(response, player_info, game_context)
@@ -320,11 +356,36 @@ class RootAgent:
             print(f"[DEBUG] Tool-enhanced speech generated: {final_speech[:100]}...")
             return final_speech
             
-        except Exception as e:
-            # エラー時のフォールバック - 従来の方法を使用
+        except (TimeoutError, Exception) as e:
+            # タイムアウトやその他のエラー時のフォールバック - 従来の方法を使用
             print(f"[ERROR] Tool-enhanced speech generation failed: {e}")
             print(f"[DEBUG] Falling back to traditional agent system")
-            return self._generate_traditional_speech(player_info, game_context, recent_messages)
+            try:
+                return self._generate_traditional_speech(player_info, game_context, recent_messages)
+            except (TimeoutError, Exception) as fallback_error:
+                print(f"[ERROR] Traditional speech generation also failed: {fallback_error}")
+                print(f"[DEBUG] Using emergency fallback speech")
+                return self._emergency_fallback_speech(player_info)
+
+    def _emergency_fallback_speech(self, player_info: Dict) -> str:
+        """緊急時フォールバック発言（AIモデルを使わない）"""
+        fallback_speeches = [
+            "少し考えさせてください。",
+            "状況を整理している途中です。",
+            "もう少し様子を見ます。",
+            "慎重に判断したいと思います。",
+            "皆さんの意見を聞かせてください。"
+        ]
+        
+        # プレイヤー名に基づいて一貫性のある発言を選択
+        player_name = player_info.get('name', 'プレイヤー')
+        import hashlib
+        seed = int(hashlib.md5(player_name.encode()).hexdigest()[:8], 16)
+        random.seed(seed)
+        
+        selected_speech = random.choice(fallback_speeches)
+        print(f"[DEBUG] Emergency fallback speech for {player_name}: {selected_speech}")
+        return selected_speech
 
     def _build_tool_enhanced_prompt(self, player_info: Dict, game_context: Dict, context: str, recent_messages: List[Dict]) -> str:
         """ツール使用を促すプロンプトを構築"""
@@ -400,9 +461,9 @@ class RootAgent:
                         final_prompt = self._build_final_speech_prompt(
                             player_info, game_context, tool_results, text_parts
                         )
-                        # ツールなしモデルで最終発言を生成
+                        # ツールなしモデルで最終発言を生成（タイムアウト付き）
                         simple_model = GenerativeModel("gemini-1.5-flash")
-                        final_response = simple_model.generate_content(final_prompt)
+                        final_response = generate_content_with_timeout(simple_model, final_prompt, timeout_seconds=20)
                         return final_response.text.strip()
                     
                     # ツール呼び出しがない場合は通常のテキストを返す
@@ -495,9 +556,9 @@ class RootAgent:
             # ルートエージェントが最終判断（ツールなしモデル使用）
             final_prompt = self._build_final_prompt(player_info, game_context, context, agent_outputs)
             
-            # ツールなしの従来モデルを使用
+            # ツールなしの従来モデルを使用（タイムアウト付き）
             simple_model = GenerativeModel("gemini-1.5-flash")
-            response = simple_model.generate_content(final_prompt)
+            response = generate_content_with_timeout(simple_model, final_prompt, timeout_seconds=20)
             speech = response.text.strip()
             
             # 発言の長さを制限（500文字に設定）
@@ -510,8 +571,10 @@ class RootAgent:
                 
             return speech
             
-        except Exception as e:
-            print(f"[ERROR] Traditional speech generation also failed: {e}")
+        except (TimeoutError, Exception) as e:
+            print(f"[ERROR] Traditional speech generation failed: {e}")
+            if isinstance(e, TimeoutError):
+                print(f"[WARNING] Traditional speech generation timed out, using simple fallback")
             # 最後のフォールバック
             return self._generate_simple_fallback_speech(player_info, game_context)
     
