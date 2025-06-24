@@ -143,8 +143,28 @@ GOOGLE_PROJECT_ID = os.getenv("GOOGLE_PROJECT_ID")
 GOOGLE_LOCATION = os.getenv("GOOGLE_LOCATION")
 
 if not DATABASE_URL:
-    logger.warning("DATABASE_URL not set, using SQLite in-memory database")
+    logger.warning("DATABASE_URL not set, using SQLite database")
     DATABASE_URL = "sqlite:///./werewolf_game.db"
+else:
+    # Test PostgreSQL connection and fallback to SQLite if it fails
+    try:
+        import psycopg2
+        from urllib.parse import urlparse
+        parsed = urlparse(DATABASE_URL)
+        conn = psycopg2.connect(
+            host=parsed.hostname,
+            port=parsed.port,
+            user=parsed.username,
+            password=parsed.password,
+            database=parsed.path[1:],  # Remove leading slash
+            connect_timeout=10
+        )
+        conn.close()
+        logger.info("PostgreSQL connection test successful")
+    except Exception as e:
+        logger.warning(f"PostgreSQL connection failed: {e}")
+        logger.warning("Falling back to SQLite database")
+        DATABASE_URL = "sqlite:///./werewolf_game.db"
 if not GOOGLE_PROJECT_ID or not GOOGLE_LOCATION:
     logger.warning("WARNING: GOOGLE_PROJECT_ID or GOOGLE_LOCATION environment variable not set. AI persona generation will not work.")
 else:
@@ -154,7 +174,12 @@ else:
 
 # --- Database Setup (SQLAlchemy) ---
 try:
-    engine = create_engine(DATABASE_URL)
+    # Use SQLite with timeout to avoid hangs
+    if DATABASE_URL.startswith("sqlite"):
+        engine = create_engine(DATABASE_URL, connect_args={"timeout": 20})
+    else:
+        engine = create_engine(DATABASE_URL, pool_timeout=20, pool_recycle=3600)
+    
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     Base = declarative_base()
     logger.info("Database engine created successfully.")
@@ -542,7 +567,19 @@ def health_check():
         "status": "healthy",
         "service": "AI Werewolf Game Logic Service",
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "version": "1.0.0"
+        "version": "1.0.0",
+        "database": "SQLite" if DATABASE_URL.startswith("sqlite") else "PostgreSQL"
+    }
+
+@app.get("/api/health", summary="API経由でのアプリケーション稼働状態確認")
+def api_health_check():
+    """API経由でのサービス稼働状態を確認"""
+    return {
+        "status": "healthy",
+        "service": "AI Werewolf Game Logic Service",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "version": "1.0.0",
+        "database": "SQLite" if DATABASE_URL.startswith("sqlite") else "PostgreSQL"
     }
 
 # --- Game Logic & CRUD Operations ---
@@ -1153,7 +1190,11 @@ def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid.UUID)
     try:
         # プレイヤーとルーム情報を取得
         ai_player = get_player(db, ai_player_id)
-        if not ai_player or ai_player.is_human:
+        if not ai_player:
+            logger.error(f"AI player not found: {ai_player_id}")
+            raise HTTPException(status_code=404, detail="AI player not found")
+        if ai_player.is_human:
+            logger.error(f"Player {ai_player.character_name} is not an AI player")
             raise HTTPException(status_code=400, detail="Not an AI player")
         
         room = get_room(db, room_id)
@@ -1239,13 +1280,18 @@ def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid.UUID)
             return generate_fallback_ai_speech(ai_player, room, db)
             
     except Exception as e:
-        logger.error(f"Error generating AI speech for {ai_player.character_name}: {e}", exc_info=True)
+        # ai_playerがNoneの場合の安全な処理
+        player_name = getattr(ai_player, 'character_name', 'Unknown Player') if ai_player else 'Unknown Player'
+        player_id_str = str(ai_player.player_id) if ai_player else str(ai_player_id)
+        
+        logger.error(f"Error generating AI speech for {player_name}: {e}", exc_info=True)
         logger.error(f"Error type: {type(e).__name__}")
         logger.error(f"Error details: {str(e)}")
-        logger.error(f"Player ID: {ai_player.player_id}, Character: {ai_player.character_name}, Role: {ai_player.role}")
+        logger.error(f"Player ID: {player_id_str}, Character: {player_name}, Role: {getattr(ai_player, 'role', 'unknown') if ai_player else 'unknown'}")
         
         # エラー時のフォールバック - より詳細な発言を生成（ペルソナも考慮）
-        persona_hint = getattr(ai_player, 'character_persona', None) or ""
+        persona_hint = getattr(ai_player, 'character_persona', None) if ai_player else None
+        persona_hint = persona_hint or ""
         if "丁寧" in persona_hint or "敬語" in persona_hint:
             fallback_speeches = [
                 "申し訳ございません、少しお時間をいただけますでしょうか。",
@@ -1268,7 +1314,7 @@ def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid.UUID)
             ]
         
         fallback_speech = random.choice(fallback_speeches)
-        logger.info(f"Using fallback speech for {ai_player.character_name}: '{fallback_speech}'")
+        logger.info(f"Using fallback speech for {player_name}: '{fallback_speech}'")
         return fallback_speech
 
 def generate_ai_vote_decision(db: Session, room_id: uuid.UUID, ai_player, possible_targets) -> Player:

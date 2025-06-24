@@ -187,14 +187,14 @@ class ApiService {
 
   // ヘルスチェック（ネットワーク状態確認用）
   async healthCheck(): Promise<{ status: string }> {
-    const response = await fetch(`${API_BASE_URL}/../health`);
+    const response = await fetch(`${API_BASE_URL}/health`);
     if (!response.ok) throw new Error('Health check failed');
     return response.json();
   }
 
   // データベース初期化（開発用）
   async initializeDatabase(): Promise<{ message: string }> {
-    const response = await fetch(`${API_BASE_URL}/../initdb`);
+    const response = await fetch(`${API_BASE_URL}/initdb`);
     if (!response.ok) throw new Error('Failed to initialize database');
     return response.json();
   }
