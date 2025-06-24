@@ -564,7 +564,7 @@ async def check_and_progress_ai_turns(room_id: uuid.UUID, db: Session):
         
         # Call auto_progress logic (reuse existing function)
         try:
-            result = await auto_progress_logic(room_id, db)
+            result = auto_progress_logic(room_id, db)
             if result.get("auto_progressed"):
                 logger.info(f"Successfully auto-progressed room {room_id}: {result.get('message', 'No message')}")
         except Exception as e:
@@ -2667,7 +2667,7 @@ async def handle_ai_speak(room_id: uuid.UUID, ai_player_id: uuid.UUID, db: Sessi
         logger.error(f"Error in AI speak: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to generate AI speech")
 
-async def auto_progress_logic(room_id: uuid.UUID, db: Session):
+def auto_progress_logic(room_id: uuid.UUID, db: Session):
     """Core auto-progression logic that can be called from API or background task"""
     room = get_room(db, room_id)
     if not room:
@@ -2774,25 +2774,21 @@ async def auto_progress_logic(room_id: uuid.UUID, db: Session):
                     logger.error(f"Error in speak_logic: {speak_error}", exc_info=True)
                     return {"auto_progressed": False, "message": f"Error executing speech: {str(speak_error)}"}
                 
-                # WebSocket通知を送信
-                try:
-                    speech_data = {
-                        "player_id": str(current_player.player_id),
-                        "player_name": current_player.player_name,
-                        "statement": ai_speech,
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
-                        "is_ai": True
-                    }
-                    await sio.emit("new_speech", speech_data, room=str(room_id))
-                    logger.info(f"WebSocket notification sent for AI speech from {current_player.player_name}")
-                except Exception as ws_error:
-                    logger.error(f"WebSocket notification failed: {ws_error}")
+                # レスポンスにWebSocket送信用データを含める
+                speech_data = {
+                    "player_id": str(current_player.player_id),
+                    "player_name": current_player.player_name,
+                    "statement": ai_speech,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "is_ai": True
+                }
                 
                 return {
                     "auto_progressed": True,
                     "message": f"AI player {current_player.player_name} spoke",
                     "speaker": current_player.player_name,
-                    "statement": ai_speech[:100] + "..." if len(ai_speech) > 100 else ai_speech
+                    "statement": ai_speech[:100] + "..." if len(ai_speech) > 100 else ai_speech,
+                    "websocket_data": {"type": "new_speech", "data": speech_data}
                 }
             else:
                 logger.warning(f"Failed to generate speech for AI player {current_player.player_name}")
@@ -2856,25 +2852,21 @@ async def auto_progress_logic(room_id: uuid.UUID, db: Session):
                     logger.error(f"Error in process_vote: {process_vote_error}", exc_info=True)
                     return {"auto_progressed": False, "message": f"Error processing vote: {str(process_vote_error)}"}
                 
-                # WebSocket通知を送信
-                try:
-                    vote_data = {
-                        "voter_id": str(ai_player.player_id),
-                        "voter_name": ai_player.player_name,
-                        "target_id": str(vote_target.player_id),
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
-                        "is_ai": True
-                    }
-                    await sio.emit("new_vote", vote_data, room=str(room_id))
-                    logger.info(f"WebSocket notification sent for AI vote from {ai_player.player_name}")
-                except Exception as ws_error:
-                    logger.error(f"WebSocket notification failed: {ws_error}")
+                # レスポンスにWebSocket送信用データを含める
+                vote_data = {
+                    "voter_id": str(ai_player.player_id),
+                    "voter_name": ai_player.player_name,
+                    "target_id": str(vote_target.player_id),
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "is_ai": True
+                }
                 
                 return {
                     "auto_progressed": True,
                     "message": f"AI player {ai_player.player_name} voted",
                     "voter": ai_player.player_name,
-                    "vote_result": vote_result
+                    "vote_result": vote_result,
+                    "websocket_data": {"type": "new_vote", "data": vote_data}
                 }
             else:
                 return {"auto_progressed": False, "message": f"Failed to determine vote target for {ai_player.player_name}"}
@@ -2889,7 +2881,24 @@ async def auto_progress_logic(room_id: uuid.UUID, db: Session):
 async def handle_auto_progress(room_id: uuid.UUID, db: Session = Depends(get_db)):
     """ゲームの自動進行（AIプレイヤーのターン処理）"""
     try:
-        result = await auto_progress_logic(room_id, db)
+        result = auto_progress_logic(room_id, db)
+        
+        # WebSocket通知を送信（auto_progress_logicから移動）
+        if result.get("auto_progressed") and "websocket_data" in result:
+            try:
+                ws_data = result["websocket_data"]
+                if ws_data["type"] == "new_speech":
+                    await sio.emit("new_speech", ws_data["data"], room=str(room_id))
+                    logger.info(f"WebSocket notification sent for AI speech")
+                elif ws_data["type"] == "new_vote":
+                    await sio.emit("new_vote", ws_data["data"], room=str(room_id))
+                    logger.info(f"WebSocket notification sent for AI vote")
+            except Exception as ws_error:
+                logger.error(f"WebSocket notification failed: {ws_error}")
+            
+            # レスポンスからWebSocketデータを削除
+            del result["websocket_data"]
+        
         return result
     except Exception as e:
         logger.error(f"Error in auto progress: {e}", exc_info=True)
