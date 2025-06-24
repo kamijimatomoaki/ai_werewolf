@@ -1337,6 +1337,11 @@ def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid.UUID)
         # AIエージェントが利用可能な場合
         logger.info(f"Checking AI agent availability: root_agent={root_agent is not None}, GOOGLE_PROJECT_ID='{GOOGLE_PROJECT_ID}', GOOGLE_LOCATION='{GOOGLE_LOCATION}'")
         
+        # Debug: root_agent の詳細をログ出力
+        if root_agent is None:
+            logger.error("root_agent is None - AI agent not properly initialized")
+            return generate_fallback_ai_speech(ai_player, room, db)
+        
         # Google AI設定の確認
         if root_agent and GOOGLE_PROJECT_ID and GOOGLE_LOCATION:
             logger.info("Using root_agent with Google AI credentials")
@@ -1383,7 +1388,18 @@ def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid.UUID)
                     })
             
             # AIエージェントで発言を生成
-            speech = root_agent.generate_speech(player_info, game_context, recent_messages)
+            logger.info(f"About to call root_agent.generate_speech() for {ai_player.character_name}")
+            logger.info(f"Player info: {player_info}")
+            logger.info(f"Game context: {game_context}")
+            logger.info(f"Recent messages count: {len(recent_messages)}")
+            
+            try:
+                speech = root_agent.generate_speech(player_info, game_context, recent_messages)
+                logger.info(f"Successfully called root_agent.generate_speech(), result: {speech}")
+            except Exception as agent_error:
+                logger.error(f"Error in root_agent.generate_speech(): {agent_error}", exc_info=True)
+                logger.error(f"Falling back to fallback speech generation")
+                return generate_fallback_ai_speech(ai_player, room, db)
             
             # レスポンスの検証と整形
             if speech and isinstance(speech, str) and speech.strip():
