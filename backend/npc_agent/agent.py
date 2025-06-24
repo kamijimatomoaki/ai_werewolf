@@ -14,20 +14,30 @@ load_dotenv()
 GOOGLE_PROJECT_ID = os.getenv("GOOGLE_PROJECT_ID") or os.getenv("GOOGLE_CLOUD_PROJECT", "").strip('"')
 GOOGLE_LOCATION = os.getenv("GOOGLE_LOCATION") or os.getenv("GOOGLE_CLOUD_LOCATION", "").strip('"')
 
+# Cloud Run環境でのデフォルト値設定
+if not GOOGLE_PROJECT_ID:
+    GOOGLE_PROJECT_ID = "fourth-dynamo-423103-q2"
+    print(f"[INIT] Using default project ID: {GOOGLE_PROJECT_ID}")
+
+if not GOOGLE_LOCATION:
+    GOOGLE_LOCATION = "asia-northeast1"
+    print(f"[INIT] Using default location: {GOOGLE_LOCATION}")
+
 print(f"[INIT] Vertex AI initialization check:")
 print(f"[INIT] GOOGLE_PROJECT_ID: '{GOOGLE_PROJECT_ID}'")
 print(f"[INIT] GOOGLE_LOCATION: '{GOOGLE_LOCATION}'")
 
-if GOOGLE_PROJECT_ID and GOOGLE_LOCATION:
-    try:
-        vertexai.init(project=GOOGLE_PROJECT_ID, location=GOOGLE_LOCATION)
-        print(f"✅ [SUCCESS] Vertex AI initialized: {GOOGLE_PROJECT_ID} @ {GOOGLE_LOCATION}")
-    except Exception as e:
-        print(f"❌ [ERROR] Failed to initialize Vertex AI: {e}")
-        import traceback
-        print(f"[ERROR] Full traceback: {traceback.format_exc()}")
-else:
-    print(f"❌ [ERROR] Missing Vertex AI credentials:")
+# Vertex AI初期化を試行
+vertex_ai_initialized = False
+try:
+    vertexai.init(project=GOOGLE_PROJECT_ID, location=GOOGLE_LOCATION)
+    print(f"✅ [SUCCESS] Vertex AI initialized: {GOOGLE_PROJECT_ID} @ {GOOGLE_LOCATION}")
+    vertex_ai_initialized = True
+except Exception as e:
+    print(f"❌ [ERROR] Failed to initialize Vertex AI: {e}")
+    import traceback
+    print(f"[ERROR] Full traceback: {traceback.format_exc()}")
+    vertex_ai_initialized = False
     print(f"   GOOGLE_PROJECT_ID: '{GOOGLE_PROJECT_ID}' (empty: {not GOOGLE_PROJECT_ID})")
     print(f"   GOOGLE_LOCATION: '{GOOGLE_LOCATION}' (empty: {not GOOGLE_LOCATION})")
 
@@ -249,19 +259,41 @@ class RootAgent:
     """複数のエージェントを統合するルートエージェント（ツール使用対応）"""
     
     def __init__(self):
+        print("[DEBUG] RootAgent initialization starting...")
+        
+        # Vertex AI初期化状態をチェック
+        if not vertex_ai_initialized:
+            print("[ERROR] Vertex AI not initialized, using emergency fallback mode")
+            self.model = None
+            self.tools_available = False
+            self.fallback_mode = True
+            return
+        
         # ツール対応モデルを初期化
         try:
+            print("[DEBUG] Creating werewolf tools...")
             self.werewolf_tools = create_werewolf_tools()
+            print("[DEBUG] Initializing GenerativeModel with tools...")
             self.model = GenerativeModel(
                 "gemini-1.5-flash",
                 tools=[self.werewolf_tools]
             )
             self.tools_available = True
-            print("[DEBUG] Tool-enabled model initialized successfully")
+            self.fallback_mode = False
+            print("✅ [SUCCESS] Tool-enabled model initialized successfully")
         except Exception as e:
             print(f"[WARNING] Failed to initialize tool-enabled model: {e}")
-            self.model = GenerativeModel("gemini-1.5-flash")  # フォールバック
-            self.tools_available = False
+            try:
+                print("[DEBUG] Trying fallback model without tools...")
+                self.model = GenerativeModel("gemini-1.5-flash")  # フォールバック
+                self.tools_available = False
+                self.fallback_mode = False
+                print("✅ [SUCCESS] Fallback model initialized successfully")
+            except Exception as fallback_error:
+                print(f"[ERROR] Even fallback model failed: {fallback_error}")
+                self.model = None
+                self.tools_available = False
+                self.fallback_mode = True
             
         # 従来のエージェントツールも保持
         self.question_tool = AgentTool(question_agent)
@@ -326,11 +358,18 @@ class RootAgent:
         """ツール使用対応の発言生成"""
         # デバッグログ追加
         print(f"[DEBUG] RootAgent.generate_speech called for {player_info.get('name', 'unknown')}")
-        print(f"[DEBUG] Tools available: {self.tools_available}")
+        print(f"[DEBUG] Fallback mode: {getattr(self, 'fallback_mode', False)}")
+        print(f"[DEBUG] Tools available: {getattr(self, 'tools_available', False)}")
+        print(f"[DEBUG] Model available: {self.model is not None}")
         print(f"[DEBUG] Player info keys: {list(player_info.keys())}")
         print(f"[DEBUG] Persona data: {player_info.get('persona', 'No persona')}")
         print(f"[DEBUG] Game context: {game_context}")
         print(f"[DEBUG] Recent messages count: {len(recent_messages)}")
+        
+        # 緊急フォールバックモードかチェック
+        if getattr(self, 'fallback_mode', False) or self.model is None:
+            print("[DEBUG] Using emergency fallback speech (no AI model available)")
+            return self._emergency_fallback_speech(player_info)
         
         # ツール使用が利用可能かチェック
         if not self.tools_available:
