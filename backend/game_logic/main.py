@@ -560,7 +560,7 @@ async def check_and_progress_ai_turns(room_id: uuid.UUID, db: Session):
         if room.last_activity and (datetime.now(timezone.utc) - room.last_activity).total_seconds() < 5:
             return  # Recent activity, wait a bit more
             
-        logger.info(f"Auto-progressing AI player {current_player.player_name} in room {room_id}")
+        logger.info(f"Auto-progressing AI player {current_player.character_name} in room {room_id}")
         
         # Call auto_progress logic (reuse existing function)
         try:
@@ -771,7 +771,7 @@ def start_game_logic(db: Session, room_id: uuid.UUID) -> Room:
             first_player_id = db_room.turn_order[db_room.current_turn_index]
             first_player = get_player(db, uuid.UUID(first_player_id))
             if first_player and not first_player.is_human and first_player.is_alive:
-                logger.info(f"Scheduling AI progression for first player {first_player.player_name}")
+                logger.info(f"Scheduling AI progression for first player {first_player.character_name}")
                 # Schedule AI progression with a small delay to allow game start to complete
                 asyncio.create_task(delayed_ai_progression(room_id, 3.0))
     except Exception as e:
@@ -846,7 +846,7 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
                 next_player_id = turn_order[next_index]
                 next_player = get_player(db, uuid.UUID(next_player_id))
                 if next_player and not next_player.is_human and next_player.is_alive:
-                    logger.info(f"Scheduling AI progression for player {next_player.player_name}")
+                    logger.info(f"Scheduling AI progression for player {next_player.character_name}")
                     # Schedule AI progression with a small delay
                     asyncio.create_task(delayed_ai_progression(room_id, 2.0))
         except Exception as e:
@@ -2747,7 +2747,7 @@ def auto_progress_logic(room_id: uuid.UUID, db: Session):
             return {"auto_progressed": False, "message": "Current player is human, manual input required"}
         
         # AIプレイヤーの発言生成
-        logger.info(f"Generating speech for AI player: {current_player.player_name}")
+        logger.info(f"Generating speech for AI player: {current_player.character_name}")
         
         # 同時実行制御: 他のAIプレイヤーが最近発言したかチェック
         recent_cutoff = datetime.now(timezone.utc) - timedelta(seconds=3)
@@ -2780,7 +2780,7 @@ def auto_progress_logic(room_id: uuid.UUID, db: Session):
                         statement=ai_speech,
                         db=db
                     )
-                    logger.info(f"Speech logic executed successfully for {current_player.player_name}")
+                    logger.info(f"Speech logic executed successfully for {current_player.character_name}")
                 except Exception as speak_error:
                     logger.error(f"Error in speak_logic: {speak_error}", exc_info=True)
                     return {"auto_progressed": False, "message": f"Error executing speech: {str(speak_error)}"}
@@ -2788,7 +2788,7 @@ def auto_progress_logic(room_id: uuid.UUID, db: Session):
                 # レスポンスにWebSocket送信用データを含める
                 speech_data = {
                     "player_id": str(current_player.player_id),
-                    "player_name": current_player.player_name,
+                    "player_name": current_player.character_name,
                     "statement": ai_speech,
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                     "is_ai": True
@@ -2796,13 +2796,13 @@ def auto_progress_logic(room_id: uuid.UUID, db: Session):
                 
                 return {
                     "auto_progressed": True,
-                    "message": f"AI player {current_player.player_name} spoke",
-                    "speaker": current_player.player_name,
+                    "message": f"AI player {current_player.character_name} spoke",
+                    "speaker": current_player.character_name,
                     "statement": ai_speech[:100] + "..." if len(ai_speech) > 100 else ai_speech,
                     "websocket_data": {"type": "new_speech", "data": speech_data}
                 }
             else:
-                logger.warning(f"Failed to generate speech for AI player {current_player.player_name}")
+                logger.warning(f"Failed to generate speech for AI player {current_player.character_name}")
                 return {"auto_progressed": False, "message": "Failed to generate AI speech"}
                 
         except Exception as e:
@@ -2837,14 +2837,14 @@ def auto_progress_logic(room_id: uuid.UUID, db: Session):
         
         # 1人ずつ処理（同時投票を避ける）
         ai_player = unvoted_ai_players[0]
-        logger.info(f"Processing vote for AI player: {ai_player.player_name}")
+        logger.info(f"Processing vote for AI player: {ai_player.character_name}")
         
         try:
             # AI投票先を決定 - 投票可能なターゲットを取得
             possible_targets = [p for p in alive_players if p.player_id != ai_player.player_id]
             try:
                 vote_target = generate_ai_vote_decision(db, room_id, ai_player, possible_targets)
-                logger.info(f"AI vote target determined: {vote_target.player_name if vote_target else 'None'}")
+                logger.info(f"AI vote target determined: {vote_target.character_name if vote_target else 'None'}")
             except Exception as vote_decision_error:
                 logger.error(f"Error in generate_ai_vote_decision: {vote_decision_error}", exc_info=True)
                 return {"auto_progressed": False, "message": f"Error determining vote target: {str(vote_decision_error)}"}
@@ -2858,7 +2858,7 @@ def auto_progress_logic(room_id: uuid.UUID, db: Session):
                         target_id=vote_target.player_id,
                         db=db
                     )
-                    logger.info(f"Vote processed successfully: {ai_player.player_name} -> {vote_target.player_name}")
+                    logger.info(f"Vote processed successfully: {ai_player.character_name} -> {vote_target.character_name}")
                 except Exception as process_vote_error:
                     logger.error(f"Error in process_vote: {process_vote_error}", exc_info=True)
                     return {"auto_progressed": False, "message": f"Error processing vote: {str(process_vote_error)}"}
@@ -2866,7 +2866,7 @@ def auto_progress_logic(room_id: uuid.UUID, db: Session):
                 # レスポンスにWebSocket送信用データを含める
                 vote_data = {
                     "voter_id": str(ai_player.player_id),
-                    "voter_name": ai_player.player_name,
+                    "voter_name": ai_player.character_name,
                     "target_id": str(vote_target.player_id),
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                     "is_ai": True
@@ -2874,13 +2874,13 @@ def auto_progress_logic(room_id: uuid.UUID, db: Session):
                 
                 return {
                     "auto_progressed": True,
-                    "message": f"AI player {ai_player.player_name} voted",
-                    "voter": ai_player.player_name,
+                    "message": f"AI player {ai_player.character_name} voted",
+                    "voter": ai_player.character_name,
                     "vote_result": vote_result,
                     "websocket_data": {"type": "new_vote", "data": vote_data}
                 }
             else:
-                return {"auto_progressed": False, "message": f"Failed to determine vote target for {ai_player.player_name}"}
+                return {"auto_progressed": False, "message": f"Failed to determine vote target for {ai_player.character_name}"}
                 
         except Exception as e:
             logger.error(f"Error processing AI vote: {e}")
