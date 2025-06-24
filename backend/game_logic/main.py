@@ -548,7 +548,11 @@ async def check_and_progress_ai_turns(room_id: uuid.UUID, db: Session):
             return
             
         # Get current player
-        current_player = get_current_turn_player(room)
+        current_player = None
+        if room.turn_order and room.current_turn_index is not None and room.current_turn_index < len(room.turn_order):
+            current_player_id = room.turn_order[room.current_turn_index]
+            current_player = get_player(db, uuid.UUID(current_player_id))
+        
         if not current_player or current_player.is_human:
             return  # Human player or no current player, skip
             
@@ -2724,7 +2728,7 @@ async def auto_progress_logic(room_id: uuid.UUID, db: Session):
         
         try:
             # AI発言を生成
-            ai_speech = await generate_ai_speech(current_player, room, db)
+            ai_speech = generate_ai_speech(db, room_id, current_player.player_id)
             if ai_speech:
                 # 発言を実行
                 updated_room = speak_logic(
@@ -2788,14 +2792,15 @@ async def auto_progress_logic(room_id: uuid.UUID, db: Session):
         logger.info(f"Processing vote for AI player: {ai_player.player_name}")
         
         try:
-            # AI投票先を決定
-            vote_target_id = generate_ai_vote_decision(ai_player, room, db)
-            if vote_target_id:
+            # AI投票先を決定 - 投票可能なターゲットを取得
+            possible_targets = [p for p in alive_players if p.player_id != ai_player.player_id]
+            vote_target = generate_ai_vote_decision(db, room_id, ai_player, possible_targets)
+            if vote_target:
                 # 投票を実行
                 vote_result = process_vote(
                     room_id=room_id,
                     voter_id=ai_player.player_id,
-                    target_id=vote_target_id,
+                    target_id=vote_target.player_id,
                     db=db
                 )
                 
@@ -2804,7 +2809,7 @@ async def auto_progress_logic(room_id: uuid.UUID, db: Session):
                     vote_data = {
                         "voter_id": str(ai_player.player_id),
                         "voter_name": ai_player.player_name,
-                        "target_id": str(vote_target_id),
+                        "target_id": str(vote_target.player_id),
                         "timestamp": datetime.now(timezone.utc).isoformat(),
                         "is_ai": True
                     }
