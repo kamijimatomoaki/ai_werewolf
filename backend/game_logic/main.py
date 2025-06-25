@@ -179,20 +179,20 @@ try:
     if DATABASE_URL.startswith("sqlite"):
         engine = create_engine(DATABASE_URL, connect_args={"timeout": 20})
     else:
-        # PostgreSQL CloudSQL用の最適化された接続設定（スケーラビリティ対応）
+        # PostgreSQL CloudSQL用の最適化された接続設定（緊急対応：プール拡張）
         engine = create_engine(
             DATABASE_URL, 
-            pool_timeout=30,           # 接続取得タイムアウト（延長）
+            pool_timeout=15,           # 接続取得タイムアウト（短縮：フェイルファスト）
             pool_recycle=1800,         # 30分でリサイクル（CloudSQL推奨）
             pool_pre_ping=True,        # 接続前にテストpingを送信
-            pool_size=15,              # 基本接続プールサイズ（増加）
-            max_overflow=35,           # 最大追加接続数（合計50接続）
+            pool_size=20,              # 基本接続プールサイズ（増加）
+            max_overflow=30,           # 最大追加接続数（合計50接続維持）
             echo_pool=False,           # プール状況ログ（本番ではFalse）
             connect_args={
-                "connect_timeout": 30,      # 接続タイムアウト30秒
+                "connect_timeout": 15,      # 接続タイムアウト15秒（短縮）
                 "application_name": "werewolf_game",
-                "keepalives_idle": 600,     # TCP keepalive 10分
-                "keepalives_interval": 30,  # keepalive間隔 30秒
+                "keepalives_idle": 300,     # TCP keepalive 5分（短縮）
+                "keepalives_interval": 10,  # keepalive間隔 10秒（短縮）
                 "keepalives_count": 3       # keepalive試行回数
             }
         )
@@ -3263,7 +3263,7 @@ def auto_progress_logic(room_id: uuid.UUID, db: Session):
                         if created_at.tzinfo is None:
                             created_at = created_at.replace(tzinfo=timezone.utc)
                         time_since_last_speech = (datetime.now(timezone.utc) - created_at).total_seconds()
-                        if time_since_last_speech > 90:  # 90秒以上待機
+                        if time_since_last_speech > 30:  # 30秒以上待機（緊急修正）
                             emergency_skip = True
                             logger.warning(f"Emergency skip triggered: {current_player.character_name} has been waiting {time_since_last_speech:.1f}s")
                     except Exception as timezone_error:

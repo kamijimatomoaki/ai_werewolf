@@ -565,7 +565,7 @@ class RootAgent:
             print("[DEBUG] Attempting tool-enhanced speech generation")
             # AIモデルにツール使用を含めて発言生成を依頼（第1段階: 30秒タイムアウト）
             # Function Callingツールの複雑な処理に対応するため、十分な時間を確保
-            response = generate_content_with_timeout(self.model, tool_prompt, timeout_seconds=30)
+            response = generate_content_with_timeout(self.model, tool_prompt, timeout_seconds=15)
             
             # レスポンスを処理（ツール呼び出しを含む）
             final_speech = self._process_response_with_tools(response, player_info, game_context)
@@ -1017,45 +1017,65 @@ class RootAgent:
         player_name = player_info.get('name')
         
         if room_id and player_name:
-            # ゲームサマリーを取得（優先）
+            # ゲームサマリーを取得（優先）- 緊急修正：タイムアウト付き
             try:
                 from game_logic.main import SessionLocal, get_latest_game_summary
+                import asyncio
+                from concurrent.futures import ThreadPoolExecutor, TimeoutError
                 
-                db = SessionLocal()
+                def get_summary_with_timeout():
+                    db = SessionLocal()
+                    try:
+                        room_uuid = uuid.UUID(room_id)
+                        summary = get_latest_game_summary(
+                            db=db,
+                            room_id=room_uuid,
+                            day_number=game_context.get('day_number'),
+                            phase=game_context.get('phase')
+                        )
+                        return summary
+                    finally:
+                        db.close()
+                
+                # 10秒タイムアウトでサマリー取得
                 try:
-                    room_uuid = uuid.UUID(room_id)
-                    summary = get_latest_game_summary(
-                        db=db,
-                        room_id=room_uuid,
-                        day_number=game_context.get('day_number'),
-                        phase=game_context.get('phase')
-                    )
+                    with ThreadPoolExecutor() as executor:
+                        future = executor.submit(get_summary_with_timeout)
+                        summary = future.result(timeout=10)  # 10秒でタイムアウト
+                except TimeoutError:
+                    print(f"[WARNING] Summary fetch timed out for room {room_id}")
+                    summary = None
+                except Exception as db_error:
+                    print(f"[WARNING] Summary fetch failed: {db_error}")
+                    summary = None
+                
+                if summary:
+                    context_parts.append("# ゲーム進行サマリー")
+                    context_parts.append(f"- {summary['summary_content']}")
                     
-                    if summary:
-                        context_parts.append("# ゲーム進行サマリー")
-                        context_parts.append(f"- {summary['summary_content']}")
-                        
-                        if summary.get('important_events'):
-                            events = summary['important_events']
-                            if isinstance(events, list) and events:
-                                context_parts.append(f"- 重要イベント: {', '.join(events[:3])}")  # 最新3件
-                        
-                        if summary.get('player_suspicions'):
-                            suspicions = summary['player_suspicions']
-                            if isinstance(suspicions, dict) and suspicions:
-                                top_suspects = sorted(suspicions.items(), key=lambda x: x[1], reverse=True)[:2]
-                                context_parts.append(f"- 疑惑度: {', '.join([f'{k}({v}%)' for k, v in top_suspects])}")
+                    if summary.get('important_events'):
+                        events = summary['important_events']
+                        if isinstance(events, list) and events:
+                            context_parts.append(f"- 重要イベント: {', '.join(events[:3])}")  # 最新3件
+                    
+                    if summary.get('player_suspicions'):
+                        suspicions = summary['player_suspicions']
+                        if isinstance(suspicions, dict) and suspicions:
+                            top_suspects = sorted(suspicions.items(), key=lambda x: x[1], reverse=True)[:2]
+                            context_parts.append(f"- 疑惑度: {', '.join([f'{k}({v}%)' for k, v in top_suspects])}")
+                else:
+                    # サマリー取得失敗時は基本情報のみ使用
+                    context_parts.append("# ゲーム進行サマリー")
+                    if game_context.get('day_number', 1) == 1:
+                        context_parts.append("- 1日目開始：全員が初対面、情報収集の段階")
                     else:
-                        context_parts.append("# ゲーム進行サマリー")
-                        context_parts.append("- まだサマリーが生成されていません（ゲーム序盤）")
+                        context_parts.append("- 前日の情報は直接の発言ログを参照してください")
                         
-                finally:
-                    db.close()
-                    
             except Exception as e:
                 print(f"[WARNING] Failed to get game summary: {e}")
+                # サマリー機能完全失敗時もゲーム続行
                 context_parts.append("# ゲーム進行サマリー")
-                context_parts.append("- サマリー取得に失敗（データベース接続エラー）")
+                context_parts.append("- 基本情報のみで進行中（サマリー機能一時停止）")
             
             # 自身の発言履歴を取得（重要）
             try:
