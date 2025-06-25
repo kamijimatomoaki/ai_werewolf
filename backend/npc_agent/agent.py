@@ -406,13 +406,60 @@ class RootAgent:
 
     def _emergency_fallback_speech(self, player_info: Dict) -> str:
         """緊急時フォールバック発言（AIモデルを使わない）"""
-        fallback_speeches = [
-            "少し考えさせてください。",
-            "状況を整理している途中です。",
-            "もう少し様子を見ます。",
-            "慎重に判断したいと思います。",
-            "皆さんの意見を聞かせてください。"
-        ]
+        # ペルソナ情報を取得
+        persona = player_info.get('persona', {})
+        speech_style = ""
+        
+        if isinstance(persona, dict):
+            speech_style = persona.get('speech_style', '')
+        elif isinstance(persona, str):
+            if '話し方:' in persona:
+                try:
+                    speech_style = persona.split('話し方:')[1].split('。')[0].strip()
+                except:
+                    speech_style = ""
+        
+        # ペルソナに基づいたフォールバック発言を生成
+        if 'でござる' in speech_style:
+            fallback_speeches = [
+                "少し考えさせてくだされ。",
+                "状況を整理している途中でござる。",
+                "もう少し様子を見ますでござる。",
+                "慎重に判断したいと思うでござる。",
+                "皆の意見を聞かせてくだされ。"
+            ]
+        elif 'なんでやねん' in speech_style or '関西弁' in speech_style:
+            fallback_speeches = [
+                "ちょっと考えさせてもらうわ。",
+                "状況を整理しとるとこやねん。",
+                "もうちょい様子見るで。",
+                "慎重に判断したいんや。",
+                "みんなの意見聞かせてもらえる？"
+            ]
+        elif 'ナリ' in speech_style:
+            fallback_speeches = [
+                "少し考えさせてほしいナリ。",
+                "状況を整理している途中ナリ。",
+                "もう少し様子を見るナリ。",
+                "慎重に判断したいナリ。",
+                "皆さんの意見を聞かせてほしいナリ。"
+            ]
+        elif 'だよ' in speech_style:
+            fallback_speeches = [
+                "ちょっと考えるよ！",
+                "いま状況を整理してるんだよ！",
+                "もうちょっと様子を見るよ！",
+                "慎重に考えたいんだよ！",
+                "みんなの意見を聞きたいよ！"
+            ]
+        else:
+            fallback_speeches = [
+                "少し考えさせてください。",
+                "状況を整理している途中です。",
+                "もう少し様子を見ます。",
+                "慎重に判断したいと思います。",
+                "皆さんの意見を聞かせてください。"
+            ]
         
         # プレイヤー名に基づいて一貫性のある発言を選択
         player_name = player_info.get('name', 'プレイヤー')
@@ -652,34 +699,101 @@ class RootAgent:
             return self._generate_simple_fallback_speech(player_info, game_context)
     
     def _generate_simple_fallback_speech(self, player_info: Dict, game_context: Dict) -> str:
-        """最終フォールバック発言生成"""
+        """最終フォールバック発言生成（ペルソナ対応）"""
         role = player_info.get('role', 'villager')
         day_number = game_context.get('day_number', 1)
         
-        fallback_speeches = {
-            'villager': [
-                "情報を整理して冷静に判断しましょう。",
-                "疑わしい点があれば教えてください。",
-                "みんなで協力して真実を見つけましょう。"
-            ],
-            'werewolf': [
-                "慎重に考えたいと思います。",
-                "皆さんの意見を聞かせてください。",
-                "状況を整理してみましょう。"
-            ],
-            'seer': [
-                "次の占い結果を見てから判断したいです。",
-                "現在の情報ではまだ不十分です。",
-                "結果を整理してから話します。"
-            ],
-            'bodyguard': [
-                "守るべき人を慎重に選びたいです。",
-                "みんなを守りたいと思います。",
-                "信頼できる人を探しています。"
-            ]
-        }
+        # ペルソナ情報を取得
+        persona = player_info.get('persona', {})
+        speech_style = ""
         
-        speeches = fallback_speeches.get(role, fallback_speeches['villager'])
+        if isinstance(persona, dict):
+            speech_style = persona.get('speech_style', '')
+        elif isinstance(persona, str):
+            if '話し方:' in persona:
+                try:
+                    speech_style = persona.split('話し方:')[1].split('。')[0].strip()
+                except:
+                    speech_style = ""
+        
+        # ペルソナ別のフォールバック発言を生成
+        if 'でござる' in speech_style:
+            fallback_speeches = {
+                'villager': [
+                    "情報を整理して冷静に判断するでござる。",
+                    "疑わしい点があれば聞かせてくだされ。",
+                    "皆で協力して真実を見つけるでござる。"
+                ],
+                'werewolf': [
+                    "慎重に考えたいと思うでござる。",
+                    "皆の意見を聞かせてくだされ。",
+                    "状況を整理してみるでござる。"
+                ]
+            }
+        elif 'なんでやねん' in speech_style or '関西弁' in speech_style:
+            fallback_speeches = {
+                'villager': [
+                    "情報を整理して冷静に判断せなあかんな。",
+                    "疑わしい点があったら教えてもらえる？",
+                    "みんなで協力して真実を見つけよう。"
+                ],
+                'werewolf': [
+                    "慎重に考えたいと思うんや。",
+                    "みんなの意見聞かせてもらえるか？",
+                    "状況を整理してみるわ。"
+                ]
+            }
+        elif 'ナリ' in speech_style:
+            fallback_speeches = {
+                'villager': [
+                    "情報を整理して冷静に判断するナリ。",
+                    "疑わしい点があれば教えてほしいナリ。",
+                    "皆で協力して真実を見つけるナリ。"
+                ],
+                'werewolf': [
+                    "慎重に考えたいと思うナリ。",
+                    "皆さんの意見を聞かせてほしいナリ。",
+                    "状況を整理してみるナリ。"
+                ]
+            }
+        elif 'だよ' in speech_style:
+            fallback_speeches = {
+                'villager': [
+                    "情報を整理して冷静に判断するよ！",
+                    "疑わしい点があったら教えてよ！",
+                    "みんなで協力して真実を見つけよう！"
+                ],
+                'werewolf': [
+                    "慎重に考えたいと思うよ！",
+                    "みんなの意見を聞かせてよ！",
+                    "状況を整理してみるよ！"
+                ]
+            }
+        else:
+            fallback_speeches = {
+                'villager': [
+                    "情報を整理して冷静に判断しましょう。",
+                    "疑わしい点があれば教えてください。",
+                    "みんなで協力して真実を見つけましょう。"
+                ],
+                'werewolf': [
+                    "慎重に考えたいと思います。",
+                    "皆さんの意見を聞かせてください。",
+                    "状況を整理してみましょう。"
+                ],
+                'seer': [
+                    "次の占い結果を見てから判断したいです。",
+                    "現在の情報ではまだ不十分です。",
+                    "結果を整理してから話します。"
+                ],
+                'bodyguard': [
+                    "守るべき人を慎重に選びたいです。",
+                    "みんなを守りたいと思います。",
+                    "信頼できる人を探しています。"
+                ]
+            }
+        
+        speeches = fallback_speeches.get(role, fallback_speeches.get('villager', fallback_speeches['villager']))
         return random.choice(speeches)
     
     def _build_context(self, player_info: Dict, game_context: Dict, recent_messages: List[Dict]) -> str:
