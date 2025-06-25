@@ -179,17 +179,21 @@ try:
     if DATABASE_URL.startswith("sqlite"):
         engine = create_engine(DATABASE_URL, connect_args={"timeout": 20})
     else:
-        # PostgreSQL CloudSQL用の最適化された接続設定
+        # PostgreSQL CloudSQL用の最適化された接続設定（スケーラビリティ対応）
         engine = create_engine(
             DATABASE_URL, 
-            pool_timeout=20,           # 接続取得タイムアウト
-            pool_recycle=3600,         # 1時間で接続をリサイクル
+            pool_timeout=30,           # 接続取得タイムアウト（延長）
+            pool_recycle=1800,         # 30分でリサイクル（CloudSQL推奨）
             pool_pre_ping=True,        # 接続前にテストpingを送信
-            pool_size=10,              # 基本接続プールサイズ
-            max_overflow=20,           # 最大追加接続数
+            pool_size=15,              # 基本接続プールサイズ（増加）
+            max_overflow=35,           # 最大追加接続数（合計50接続）
+            echo_pool=False,           # プール状況ログ（本番ではFalse）
             connect_args={
-                "connect_timeout": 30,  # 接続タイムアウト30秒
-                "application_name": "werewolf_game"  # 接続識別用
+                "connect_timeout": 30,      # 接続タイムアウト30秒
+                "application_name": "werewolf_game",
+                "keepalives_idle": 600,     # TCP keepalive 10分
+                "keepalives_interval": 30,  # keepalive間隔 30秒
+                "keepalives_count": 3       # keepalive試行回数
             }
         )
     
@@ -525,30 +529,76 @@ app.add_middleware(
 
 # --- Background Task for Auto Game Progression ---
 game_loop_task = None
+pool_monitor_task = None
+
+async def connection_pool_monitor():
+    """データベース接続プール使用率の継続監視"""
+    logger.info("Starting database connection pool monitor...")
+    
+    while True:
+        try:
+            pool = engine.pool
+            usage_rate = (pool.checkedout() + pool.overflow()) / (pool.size() + getattr(pool, '_max_overflow', 35))
+            
+            # 80%超過でワーニング、90%超過でクリティカル
+            if usage_rate > 0.9:
+                logger.critical(f"🚨 CRITICAL: Database pool usage at {usage_rate:.1%} "
+                               f"(checked_out: {pool.checkedout()}, overflow: {pool.overflow()})")
+            elif usage_rate > 0.8:
+                logger.warning(f"⚠️ WARNING: Database pool usage at {usage_rate:.1%} "
+                              f"(checked_out: {pool.checkedout()}, overflow: {pool.overflow()})")
+            elif usage_rate > 0.7:
+                logger.info(f"📊 INFO: Database pool usage at {usage_rate:.1%}")
+            
+        except Exception as e:
+            logger.error(f"Pool monitoring error: {e}")
+        
+        # 30秒間隔で監視
+        await asyncio.sleep(30)
 
 async def game_loop_monitor():
     """Continuous monitoring and auto-progression for AI player turns"""
     logger.info("Starting AI game auto-progression monitor...")
     
     while True:
+        db = None
         try:
-            # Get database session
-            db = SessionLocal()
+            # Get database session with timeout protection
             try:
+                db = SessionLocal()
+                # Set session timeout to prevent long-running queries
+                db.execute(text("SET statement_timeout = '30s'"))
+                
                 # Check all active game rooms
                 active_rooms = db.query(Room).filter(
                     Room.status.in_(['day_discussion', 'day_vote']),
                     Room.last_activity >= datetime.now(timezone.utc) - timedelta(hours=2)
                 ).all()
                 
+                # Process rooms sequentially to avoid connection starvation
                 for room in active_rooms:
-                    await check_and_progress_ai_turns(room.room_id, db)
-                    
-            finally:
-                db.close()
+                    try:
+                        await check_and_progress_ai_turns(room.room_id, db)
+                    except Exception as room_error:
+                        logger.error(f"Error processing room {room.room_id}: {room_error}")
+                        # Continue with other rooms
+                        continue
+                        
+            except Exception as db_error:
+                logger.error(f"Database error in game loop monitor: {db_error}")
+                # If DB connection fails, wait longer before retry
+                await asyncio.sleep(10)
+                continue
                 
         except Exception as e:
             logger.error(f"Game loop monitor error: {e}")
+        finally:
+            # Ensure database session is always closed
+            if db:
+                try:
+                    db.close()
+                except Exception as close_error:
+                    logger.error(f"Error closing database session: {close_error}")
         
         # Wait 2 seconds before next check (faster for vote processing)
         await asyncio.sleep(2)
@@ -807,25 +857,38 @@ async def check_and_progress_ai_turns(room_id: uuid.UUID, db: Session):
 @app.on_event("startup")
 async def startup_event():
     """Initialize background tasks on application startup"""
-    global game_loop_task
+    global game_loop_task, pool_monitor_task
     logger.info("Starting application startup tasks...")
     
     # Start the game loop monitor task
     game_loop_task = asyncio.create_task(game_loop_monitor())
     logger.info("AI game auto-progression monitor started")
+    
+    # Start the connection pool monitor task
+    pool_monitor_task = asyncio.create_task(connection_pool_monitor())
+    logger.info("Database connection pool monitor started")
 
 @app.on_event("shutdown") 
 async def shutdown_event():
     """Clean up background tasks on application shutdown"""
-    global game_loop_task
+    global game_loop_task, pool_monitor_task
     logger.info("Shutting down application...")
     
+    # Cancel game loop monitor
     if game_loop_task:
         game_loop_task.cancel()
         try:
             await game_loop_task
         except asyncio.CancelledError:
             logger.info("Game loop monitor task cancelled successfully")
+    
+    # Cancel pool monitor
+    if pool_monitor_task:
+        pool_monitor_task.cancel()
+        try:
+            await pool_monitor_task
+        except asyncio.CancelledError:
+            logger.info("Connection pool monitor task cancelled successfully")
 
 # --- グローバル例外ハンドラー ---
 @app.exception_handler(HTTPException)
@@ -3923,6 +3986,79 @@ async def force_ai_vote(room_id: uuid.UUID, db: Session = Depends(get_db)):
     except Exception as e:
         logger.error(f"Error forcing AI votes: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to force AI votes")
+
+# --- Database Health API Endpoints ---
+@app.get("/api/health/db-pool")
+async def get_db_pool_status():
+    """データベース接続プール状況を取得（スケーラビリティ監視用）"""
+    try:
+        pool = engine.pool
+        
+        # プール統計を取得
+        pool_status = {
+            "pool_size": pool.size(),
+            "checked_in": pool.checkedin(),
+            "checked_out": pool.checkedout(),
+            "overflow": pool.overflow(),
+            "invalid": pool.invalid(),
+            "total_capacity": pool.size() + getattr(pool, '_max_overflow', 0),
+            "usage_percentage": round((pool.checkedout() + pool.overflow()) / (pool.size() + getattr(pool, '_max_overflow', 0)) * 100, 2),
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+        
+        # アラート判定
+        usage_rate = pool_status["usage_percentage"] / 100
+        if usage_rate > 0.9:
+            pool_status["alert_level"] = "critical"
+            pool_status["message"] = "接続プール使用率が90%を超えています"
+        elif usage_rate > 0.8:
+            pool_status["alert_level"] = "warning"
+            pool_status["message"] = "接続プール使用率が80%を超えています"
+        else:
+            pool_status["alert_level"] = "normal"
+            pool_status["message"] = "接続プール使用率は正常です"
+        
+        # ログ出力（高使用率の場合）
+        if usage_rate > 0.8:
+            logger.warning(f"Database pool usage high: {pool_status['usage_percentage']}% "
+                          f"(checked_out: {pool_status['checked_out']}, overflow: {pool_status['overflow']})")
+        
+        return pool_status
+        
+    except Exception as e:
+        logger.error(f"Error getting DB pool status: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to get database pool status")
+
+@app.get("/api/health/db-connection")
+async def test_db_connection():
+    """データベース接続テスト"""
+    try:
+        start_time = datetime.now()
+        
+        # 簡単なクエリでDB接続をテスト
+        db = SessionLocal()
+        try:
+            result = db.execute(text("SELECT 1 as test_value")).fetchone()
+            connection_time = (datetime.now() - start_time).total_seconds() * 1000
+            
+            return {
+                "status": "healthy",
+                "test_value": result[0] if result else None,
+                "connection_time_ms": round(connection_time, 2),
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
+        finally:
+            db.close()
+            
+    except Exception as e:
+        connection_time = (datetime.now() - start_time).total_seconds() * 1000
+        logger.error(f"Database connection test failed: {e}", exc_info=True)
+        return {
+            "status": "unhealthy",
+            "error": str(e),
+            "connection_time_ms": round(connection_time, 2),
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
 
 # --- Spectator API Endpoints ---
 @app.post("/api/rooms/{room_id}/spectators/join", response_model=SpectatorJoinResponse)
