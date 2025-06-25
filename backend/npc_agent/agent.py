@@ -41,20 +41,20 @@ except Exception as e:
     print(f"   GOOGLE_PROJECT_ID: '{GOOGLE_PROJECT_ID}' (empty: {not GOOGLE_PROJECT_ID})")
     print(f"   GOOGLE_LOCATION: '{GOOGLE_LOCATION}' (empty: {not GOOGLE_LOCATION})")
 
-def generate_content_with_timeout(model, prompt, timeout_seconds=30):
-    """シンプルで確実なcontent生成（Cloud Run環境対応）"""
+def generate_content_with_timeout(model, prompt, timeout_seconds=15):
+    """効率化されたcontent生成（ユーザー体験重視・短縮タイムアウト）"""
     try:
-        # GenerationConfigでより確実な制限を設定
+        # 高速化のためのGenerationConfig設定
         generation_config = GenerationConfig(
-            max_output_tokens=1000,  # 最大出力トークン数
+            max_output_tokens=800,   # 出力を短縮してレスポンス向上
             temperature=0.7,         # ランダム性
-            top_p=0.9               # nucleus sampling
+            top_p=0.9,              # nucleus sampling
+            candidate_count=1        # 単一候補で高速化
         )
         
-        print(f"[DEBUG] Calling Vertex AI API (timeout={timeout_seconds}s)")
+        print(f"[DEBUG] Calling Vertex AI API (optimized timeout={timeout_seconds}s)")
         
-        # Cloud Run環境では信号処理を避け、直接APIを呼び出す
-        # Vertex AI自体にタイムアウトが組み込まれているため
+        # タイムアウトを短縮して迅速なレスポンスを実現
         response = model.generate_content(prompt, generation_config=generation_config)
         print(f"[DEBUG] Vertex AI API call successful")
         return response
@@ -89,7 +89,7 @@ class WerewolfAgent:
 
 発言:
 """
-            response = generate_content_with_timeout(self.model, prompt_text, timeout_seconds=20)
+            response = generate_content_with_timeout(self.model, prompt_text, timeout_seconds=12)
             speech = response.text.strip()
             
             # 自然な切断処理
@@ -385,7 +385,7 @@ class RootAgent:
             
             print("[DEBUG] Attempting tool-enhanced speech generation")
             # AIモデルにツール使用を含めて発言生成を依頼（タイムアウト付き）
-            response = generate_content_with_timeout(self.model, tool_prompt, timeout_seconds=25)
+            response = generate_content_with_timeout(self.model, tool_prompt, timeout_seconds=15)
             
             # レスポンスを処理（ツール呼び出しを含む）
             final_speech = self._process_response_with_tools(response, player_info, game_context)
@@ -499,7 +499,7 @@ class RootAgent:
                         )
                         # ツールなしモデルで最終発言を生成（タイムアウト付き）
                         simple_model = GenerativeModel("gemini-1.5-flash")
-                        final_response = generate_content_with_timeout(simple_model, final_prompt, timeout_seconds=20)
+                        final_response = generate_content_with_timeout(simple_model, final_prompt, timeout_seconds=12)
                         return self._clean_speech_content(final_response.text.strip())
                     
                     # ツール呼び出しがない場合は通常のテキストを返す
@@ -594,7 +594,7 @@ class RootAgent:
             
             # ツールなしの従来モデルを使用（タイムアウト付き）
             simple_model = GenerativeModel("gemini-1.5-flash")
-            response = generate_content_with_timeout(simple_model, final_prompt, timeout_seconds=20)
+            response = generate_content_with_timeout(simple_model, final_prompt, timeout_seconds=12)
             speech = self._clean_speech_content(response.text.strip())
             
             # 発言の長さを制限（500文字に設定）
@@ -856,7 +856,7 @@ class RootAgent:
 （自然で簡潔な人狼ゲームの発言として出力してください。500文字以内。）"""
 
             simple_model = GenerativeModel("gemini-1.5-flash")
-            response = generate_content_with_timeout(simple_model, cleaning_prompt, timeout_seconds=10)
+            response = generate_content_with_timeout(simple_model, cleaning_prompt, timeout_seconds=8)
             
             cleaned = response.text.strip()
             

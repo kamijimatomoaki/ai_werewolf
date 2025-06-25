@@ -1328,8 +1328,8 @@ def get_detailed_game_result(db: Session, room_id: uuid.UUID) -> GameResult:
         game_duration=game_duration
     )
 
-def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid.UUID) -> str:
-    """AIプレイヤーの発言を生成（AIエージェント使用）"""
+def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid.UUID, emergency_skip: bool = False) -> str:
+    """AIプレイヤーの発言を生成（AIエージェント使用・緊急スキップ対応）"""
     # 超堅牢なフォールバック用の発言リスト
     ULTRA_SAFE_FALLBACK_SPEECHES = [
         "状況を確認しています。",
@@ -1339,6 +1339,11 @@ def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid.UUID)
         "情報を整理中です。",
         "よく考えてみます。"
     ]
+    
+    # 緊急スキップモード：即座にフォールバック発言を返す
+    if emergency_skip:
+        logger.warning(f"Emergency skip activated for AI player {ai_player_id}")
+        return random.choice(ULTRA_SAFE_FALLBACK_SPEECHES)
     
     try:
         # 最初にフォールバック用の基本情報を取得
@@ -2770,8 +2775,8 @@ def auto_progress_logic(room_id: uuid.UUID, db: Session):
         # AIプレイヤーの発言生成
         logger.info(f"Generating speech for AI player: {current_player.character_name}")
         
-        # 同時実行制御: 他のAIプレイヤーが最近発言したかチェック（保護時間を10秒に延長）
-        recent_cutoff = datetime.now(timezone.utc) - timedelta(seconds=10)
+        # 同時実行制御: 他のAIプレイヤーが最近発言したかチェック（保護時間を5秒に短縮）
+        recent_cutoff = datetime.now(timezone.utc) - timedelta(seconds=5)
         recent_ai_speeches = db.query(GameLog).filter(
             GameLog.room_id == room_id,
             GameLog.event_type == "speech", 
@@ -2787,12 +2792,29 @@ def auto_progress_logic(room_id: uuid.UUID, db: Session):
             # AI発言を生成（同期関数を非同期コンテキストで安全に実行）
             try:
                 logger.info(f"[DEBUG] About to call generate_ai_speech for player {current_player.character_name} (ID: {current_player.player_id})")
-                ai_speech = generate_ai_speech(db, room_id, current_player.player_id)
+                
+                # 長時間待機時間チェック：プレイヤーが90秒以上待機している場合は緊急スキップ
+                player_activity_check = db.query(GameLog).filter(
+                    GameLog.room_id == room_id,
+                    GameLog.actor_player_id == current_player.player_id,
+                    GameLog.event_type == "speech"
+                ).order_by(GameLog.created_at.desc()).first()
+                
+                emergency_skip = False
+                if player_activity_check:
+                    time_since_last_speech = (datetime.now(timezone.utc) - player_activity_check.created_at).total_seconds()
+                    if time_since_last_speech > 90:  # 90秒以上待機
+                        emergency_skip = True
+                        logger.warning(f"Emergency skip triggered: {current_player.character_name} has been waiting {time_since_last_speech:.1f}s")
+                
+                ai_speech = generate_ai_speech(db, room_id, current_player.player_id, emergency_skip=emergency_skip)
                 logger.info(f"[DEBUG] AI speech generated successfully: {ai_speech[:50]}...")
             except Exception as speech_error:
                 logger.error(f"[DEBUG] Error generating AI speech: {speech_error}", exc_info=True)
                 logger.error(f"[DEBUG] Current player info - Name: {current_player.character_name}, ID: {current_player.player_id}")
-                return {"auto_progressed": False, "message": f"Error generating AI speech: {str(speech_error)}"}
+                # 緊急時フォールバック
+                ai_speech = generate_ai_speech(db, room_id, current_player.player_id, emergency_skip=True)
+                logger.warning(f"Used emergency fallback speech for {current_player.character_name}")
             
             if ai_speech:
                 # 発言を実行（同期関数を非同期コンテキストで安全に実行）
