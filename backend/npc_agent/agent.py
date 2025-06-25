@@ -426,13 +426,32 @@ class RootAgent:
 
     def _build_tool_enhanced_prompt(self, player_info: Dict, game_context: Dict, context: str, recent_messages: List[Dict]) -> str:
         """ツール使用を促すプロンプトを構築"""
-        # ペルソナ情報の抽出
+        # ペルソナ情報の抽出と強化
         persona = player_info.get('persona', {})
         persona_info = ""
         
         if persona:
             if isinstance(persona, str):
-                persona_info = f"# あなたのペルソナ設定\n{persona}\n"
+                persona_info = f"""# あなたの詳細なペルソナ設定
+{persona}
+
+【最重要】話し方とキャラクター維持の指示:
+上記のペルソナ設定に記載された話し方、語尾、口調、方言、キャッチフレーズなどの全ての特徴を100%維持して発言してください。
+設定されたキャラクターの個性を完全に反映してください。
+"""
+            elif isinstance(persona, dict):
+                speech_style = persona.get('speech_style', '普通の話し方')
+                persona_info = f"""# あなたの詳細なペルソナ設定
+- 年齢: {persona.get('age', '不明')}歳
+- 性別: {persona.get('gender', '不明')}
+- 性格: {persona.get('personality', '不明')}
+- 話し方: {speech_style}
+- 背景: {persona.get('background', '不明')}
+
+【最重要】話し方の指示:
+{speech_style}で一貫して発言してください。
+語尾や口調、方言、キャッチフレーズなどの特徴を必ず維持してください。
+"""
             else:
                 persona_info = f"# あなたの名前: {player_info.get('name', '不明')}\n"
         
@@ -519,7 +538,25 @@ class RootAgent:
     def _build_final_speech_prompt(self, player_info: Dict, game_context: Dict, tool_results: List[str], text_parts: List[str]) -> str:
         """ツール結果を踏まえた最終発言生成プロンプト"""
         persona = player_info.get('persona', '')
-        persona_info = f"# ペルソナ設定\n{persona}\n" if persona else ""
+        
+        if isinstance(persona, str) and persona:
+            persona_info = f"""# ペルソナ設定
+{persona}
+
+【最重要】キャラクター維持指示:
+上記ペルソナの話し方、語尾、口調、方言、キャッチフレーズなどの全ての特徴を100%維持してください。
+"""
+        elif isinstance(persona, dict):
+            speech_style = persona.get('speech_style', '普通の話し方')
+            persona_info = f"""# ペルソナ設定
+話し方: {speech_style}
+性格: {persona.get('personality', '普通')}
+
+【最重要】キャラクター維持指示:
+{speech_style}で一貫して発言してください。語尾や口調、方言を必ず維持してください。
+"""
+        else:
+            persona_info = ""
         
         return f"""
 {persona_info}
@@ -835,7 +872,20 @@ class RootAgent:
             if len(speech) < 50:
                 return speech
             
+            # プレイヤーのペルソナ情報を取得
+            persona_info = ""
+            if hasattr(self, 'player') and self.player:
+                persona_info = f"""
+【プレイヤーのペルソナ情報】
+- 名前: {self.player.character_name}
+- 性格: {self.player.personality}
+- 話し方: {self.player.speech_style}
+- 背景: {self.player.background}
+"""
+            
             cleaning_prompt = f"""以下のAIプレイヤーの発言から、技術的な説明や内部処理に関する記述を除去し、自然な人狼ゲームの発言に整形してください。
+
+{persona_info}
 
 【除去すべき要素】
 - 関数名や技術的な処理の説明
@@ -848,12 +898,15 @@ class RootAgent:
 - 他プレイヤーへの質問や意見
 - 自己紹介や性格表現
 - 投票や議論に関する発言
+- 【重要】プレイヤーのペルソナ（方言、口調、キャラクター性）は絶対に保持する
+- 【重要】キャラクター固有の語尾や口癖（〜でござる、なんでやねん、〜ナリ、〜だよ！等）は削除しない
+- 【重要】関西弁、江戸弁、特殊な語尾は標準語に変換しない
 
 【元の発言】
 {speech}
 
 【整形後の発言】
-（自然で簡潔な人狼ゲームの発言として出力してください。500文字以内。）"""
+（自然で簡潔な人狼ゲームの発言として出力してください。キャラクターの口調や方言は必ず維持してください。500文字以内。）"""
 
             simple_model = GenerativeModel("gemini-1.5-flash")
             response = generate_content_with_timeout(simple_model, cleaning_prompt, timeout_seconds=8)
