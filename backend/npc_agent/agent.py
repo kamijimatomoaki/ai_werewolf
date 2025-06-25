@@ -797,7 +797,7 @@ class RootAgent:
         """AI発言からツール関連の内部情報を除去"""
         import re
         
-        # 内部ツールラベルパターンを除去
+        # 基本的な正規表現フィルタリング
         tool_label_patterns = [
             r'質問案:\s*',
             r'告発案:\s*',
@@ -806,12 +806,17 @@ class RootAgent:
             r'\[.*?結果\]:\s*',
             r'\[DEBUG\].*?$',
             r'\[ERROR\].*?$',
-            r'function_name.*?$'
+            r'function_name.*?$',
+            r'\(`.*?`\)',  # バッククォートで囲まれた関数名
+            r'\(.*?関数.*?\)',  # 関数に関する説明
         ]
         
         cleaned_speech = speech
         for pattern in tool_label_patterns:
             cleaned_speech = re.sub(pattern, '', cleaned_speech, flags=re.MULTILINE)
+        
+        # LLMを使った追加の整形処理
+        cleaned_speech = self._llm_clean_speech(cleaned_speech)
         
         # 複数の空行を単一の空行に変換
         cleaned_speech = re.sub(r'\n\s*\n', '\n', cleaned_speech)
@@ -820,6 +825,50 @@ class RootAgent:
         cleaned_speech = cleaned_speech.strip()
         
         return cleaned_speech
+    
+    def _llm_clean_speech(self, speech: str) -> str:
+        """LLMを使って発言を自然に整形"""
+        try:
+            from vertexai.generative_models import GenerativeModel
+            
+            # 短すぎる発言はそのまま返す
+            if len(speech) < 50:
+                return speech
+            
+            cleaning_prompt = f"""以下のAIプレイヤーの発言から、技術的な説明や内部処理に関する記述を除去し、自然な人狼ゲームの発言に整形してください。
+
+【除去すべき要素】
+- 関数名や技術的な処理の説明
+- 括弧内のシステム的な説明
+- プログラミングに関する言及
+- 分析ツールや処理に関する説明
+
+【保持すべき要素】
+- ゲームに関する推理や考察
+- 他プレイヤーへの質問や意見
+- 自己紹介や性格表現
+- 投票や議論に関する発言
+
+【元の発言】
+{speech}
+
+【整形後の発言】
+（自然で簡潔な人狼ゲームの発言として出力してください。500文字以内。）"""
+
+            simple_model = GenerativeModel("gemini-1.5-flash")
+            response = generate_content_with_timeout(simple_model, cleaning_prompt, timeout_seconds=10)
+            
+            cleaned = response.text.strip()
+            
+            # 整形結果が元の発言より大幅に短くなった場合は元の発言を使用
+            if len(cleaned) < len(speech) * 0.3:
+                return speech
+                
+            return cleaned
+            
+        except Exception as e:
+            print(f"[WARNING] LLM cleaning failed: {e}")
+            return speech
 
 # グローバルインスタンス
 try:
