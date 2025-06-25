@@ -1200,9 +1200,28 @@ def process_night_actions(db: Session, room_id: uuid.UUID) -> Dict[str, Any]:
         db_room.current_turn_index = 0
         db_room.current_round = 1
         
-        # 生存者でターン順序を再構築
+        # 生存者でターン順序を再構築（相対順序を保持）
         living_players = [p for p in db_room.players if p.is_alive]
-        random.shuffle(living_players)
+        
+        # 前日のターン順序を参照して相対順序を保持
+        if db_room.turn_order:
+            # 前日のターン順序から生存者のみを抽出して順序を保持
+            prev_order_alive = []
+            for player_id_str in db_room.turn_order:
+                player = next((p for p in living_players if str(p.player_id) == player_id_str), None)
+                if player:
+                    prev_order_alive.append(player)
+            
+            # 新しく追加された生存者があれば末尾に追加
+            for player in living_players:
+                if player not in prev_order_alive:
+                    prev_order_alive.append(player)
+                    
+            living_players = prev_order_alive
+        else:
+            # 初回の場合のみランダムシャッフル
+            random.shuffle(living_players)
+            
         db_room.turn_order = [str(p.player_id) for p in living_players]
     
     db.commit()
@@ -2296,7 +2315,8 @@ async def handle_speak(room_id: uuid.UUID, speak_input: SpeakInput, player_id: u
     await sio.emit("new_speech", {
         "room_id": str(room_id),
         "speaker_id": str(player_id),
-        "statement": speak_input.statement
+        "statement": speak_input.statement,
+        "is_human": True
     }, room=str(room_id))
     
     return updated_room
@@ -2680,7 +2700,8 @@ async def handle_ai_speak(room_id: uuid.UUID, ai_player_id: uuid.UUID, db: Sessi
 
 def auto_progress_logic(room_id: uuid.UUID, db: Session):
     """Core auto-progression logic that can be called from API or background task"""
-    room = get_room(db, room_id)
+    # DB-level排他制御（FOR UPDATEロック）
+    room = db.query(Room).filter(Room.room_id == room_id).with_for_update().first()
     if not room:
         return {"auto_progressed": False, "message": "Room not found"}
     
@@ -2730,7 +2751,7 @@ def auto_progress_logic(room_id: uuid.UUID, db: Session):
             # 死亡プレイヤーの場合、次の生存プレイヤーに進む
             logger.info(f"Current player {current_player_id} is dead, advancing to next alive player")
             try:
-                next_alive_index = find_next_alive_player_global(room, db)
+                next_alive_index = find_next_alive_player_global(db, room, current_index)
                 if next_alive_index is not None:
                     room.current_turn_index = next_alive_index
                     db.commit()
@@ -2749,8 +2770,8 @@ def auto_progress_logic(room_id: uuid.UUID, db: Session):
         # AIプレイヤーの発言生成
         logger.info(f"Generating speech for AI player: {current_player.character_name}")
         
-        # 同時実行制御: 他のAIプレイヤーが最近発言したかチェック
-        recent_cutoff = datetime.now(timezone.utc) - timedelta(seconds=3)
+        # 同時実行制御: 他のAIプレイヤーが最近発言したかチェック（保護時間を10秒に延長）
+        recent_cutoff = datetime.now(timezone.utc) - timedelta(seconds=10)
         recent_ai_speeches = db.query(GameLog).filter(
             GameLog.room_id == room_id,
             GameLog.event_type == "speech", 

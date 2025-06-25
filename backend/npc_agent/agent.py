@@ -486,9 +486,8 @@ class RootAgent:
                             function_name = part.function_call.name
                             args = {key: value for key, value in part.function_call.args.items()}
                             
-                            print(f"[DEBUG] Executing tool: {function_name} with args: {args}")
                             tool_result = self.execute_tool_function(function_name, args)
-                            tool_results.append(f"[{function_name}結果]: {tool_result}")
+                            tool_results.append(tool_result)
                             
                         elif hasattr(part, 'text') and part.text:
                             text_parts.append(part.text)
@@ -501,15 +500,15 @@ class RootAgent:
                         # ツールなしモデルで最終発言を生成（タイムアウト付き）
                         simple_model = GenerativeModel("gemini-1.5-flash")
                         final_response = generate_content_with_timeout(simple_model, final_prompt, timeout_seconds=20)
-                        return final_response.text.strip()
+                        return self._clean_speech_content(final_response.text.strip())
                     
                     # ツール呼び出しがない場合は通常のテキストを返す
                     elif text_parts:
-                        return " ".join(text_parts).strip()
+                        return self._clean_speech_content(" ".join(text_parts).strip())
             
             # フォールバック: response.textを使用
             if hasattr(response, 'text') and response.text:
-                return response.text.strip()
+                return self._clean_speech_content(response.text.strip())
                 
             return "少し考えさせてください。"
             
@@ -573,9 +572,9 @@ class RootAgent:
                 accuse_output = self.accuse_tool.execute(context)
                 support_output = self.support_tool.execute(context)
                 agent_outputs.extend([
-                    f"質問案: {question_output}",
-                    f"告発案: {accuse_output}",
-                    f"支援案: {support_output}"
+                    question_output,
+                    accuse_output,
+                    support_output
                 ])
             
             # 終盤（5日目以降）: 決定的行動重視
@@ -583,12 +582,12 @@ class RootAgent:
                 accuse_output = self.accuse_tool.execute(context)
                 support_output = self.support_tool.execute(context)
                 agent_outputs.extend([
-                    f"告発案: {accuse_output}",
-                    f"支援案: {support_output}"
+                    accuse_output,
+                    support_output
                 ])
                 
                 # 終盤でのカミングアウトも検討
-                agent_outputs.append(f"カミングアウト案: {coming_out_output}")
+                agent_outputs.append(coming_out_output)
             
             # ルートエージェントが最終判断（ツールなしモデル使用）
             final_prompt = self._build_final_prompt(player_info, game_context, context, agent_outputs)
@@ -596,7 +595,7 @@ class RootAgent:
             # ツールなしの従来モデルを使用（タイムアウト付き）
             simple_model = GenerativeModel("gemini-1.5-flash")
             response = generate_content_with_timeout(simple_model, final_prompt, timeout_seconds=20)
-            speech = response.text.strip()
+            speech = self._clean_speech_content(response.text.strip())
             
             # 発言の長さを制限（500文字に設定）
             if len(speech) > 500:
@@ -793,6 +792,34 @@ class RootAgent:
 
 最終発言:
 """
+
+    def _clean_speech_content(self, speech: str) -> str:
+        """AI発言からツール関連の内部情報を除去"""
+        import re
+        
+        # 内部ツールラベルパターンを除去
+        tool_label_patterns = [
+            r'質問案:\s*',
+            r'告発案:\s*',
+            r'支援案:\s*',
+            r'カミングアウト案:\s*',
+            r'\[.*?結果\]:\s*',
+            r'\[DEBUG\].*?$',
+            r'\[ERROR\].*?$',
+            r'function_name.*?$'
+        ]
+        
+        cleaned_speech = speech
+        for pattern in tool_label_patterns:
+            cleaned_speech = re.sub(pattern, '', cleaned_speech, flags=re.MULTILINE)
+        
+        # 複数の空行を単一の空行に変換
+        cleaned_speech = re.sub(r'\n\s*\n', '\n', cleaned_speech)
+        
+        # 先頭と末尾の空白を除去
+        cleaned_speech = cleaned_speech.strip()
+        
+        return cleaned_speech
 
 # グローバルインスタンス
 try:
