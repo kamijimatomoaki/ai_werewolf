@@ -18,13 +18,13 @@ spec:
         run.googleapis.com/memory: "4Gi"
         run.googleapis.com/vpc-access-connector: "werewolf-connector"
         run.googleapis.com/vpc-access-egress: "private-ranges-only"
-        run.googleapis.com/cloudsql-instances: "PROJECT_ID:asia-northeast1:werewolf-db"
+        run.googleapis.com/cloudsql-instances: "fourth-dynamo-423103-q2:asia-northeast1:tg-app-db-dev"
     spec:
       containerConcurrency: 80
       timeoutSeconds: 300
-      serviceAccountName: werewolf-backend-sa@PROJECT_ID.iam.gserviceaccount.com
+      serviceAccountName: werewolf-backend-sa@fourth-dynamo-423103-q2.iam.gserviceaccount.com
       containers:
-      - image: gcr.io/PROJECT_ID/werewolf-backend:latest
+      - image: gcr.io/fourth-dynamo-423103-q2/werewolf-backend:latest
         ports:
         - name: http1
           containerPort: 8080
@@ -44,10 +44,7 @@ spec:
         - name: LOG_LEVEL
           value: "INFO"
         - name: DATABASE_URL
-          valueFrom:
-            secretKeyRef:
-              name: database-url
-              key: latest
+          value: "postgresql://postgres:fall0408@/ai_werewolf?host=/cloudsql/fourth-dynamo-423103-q2:asia-northeast1:tg-app-db-dev"
         - name: REDIS_URL
           valueFrom:
             secretKeyRef:
