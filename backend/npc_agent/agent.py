@@ -1,6 +1,7 @@
 import os
 import random
 import asyncio
+import uuid
 from typing import List, Dict, Optional
 import vertexai
 from vertexai.generative_models import GenerativeModel, FunctionDeclaration, Tool, GenerationConfig
@@ -157,6 +158,15 @@ coming_out_agent = WerewolfAgent(
     instruction=prompt.COMING_OUT_AGENT_INSTR,
 )
 
+# 発言履歴分析エージェント
+speech_history_agent = WerewolfAgent(
+    name="speech_history_agent", 
+    description="""発言履歴の収集と分析に特化した情報エージェントです。
+    特定プレイヤーの過去の発言パターンを詳細に分析し、発言の一貫性や矛盾点を特定します。
+    役職推理のための証拠となる発言を収集し、現在の発言生成に活用できる形で整理します。""",
+    instruction=prompt.SPEECH_HISTORY_AGENT_INSTR,
+)
+
 # 人狼ゲーム専用ツール定義
 def create_werewolf_tools():
     """人狼ゲーム専用のFunction Callingツールを作成"""
@@ -248,11 +258,40 @@ def create_werewolf_tools():
         }
     )
     
+    # 発言履歴取得ツール
+    speech_history_tool = FunctionDeclaration(
+        name="get_speech_history",
+        description="特定プレイヤーまたは全プレイヤーの発言履歴を取得・分析する",
+        parameters={
+            "type": "object",
+            "properties": {
+                "room_id": {
+                    "type": "string",
+                    "description": "部屋ID"
+                },
+                "player_name": {
+                    "type": "string",
+                    "description": "分析対象のプレイヤー名（空の場合は全プレイヤー）"
+                },
+                "day_number": {
+                    "type": "integer",
+                    "description": "取得対象の日数（空の場合は全日程）"
+                },
+                "analysis_focus": {
+                    "type": "string",
+                    "description": "分析の焦点（役職示唆、投票理由、矛盾点など）"
+                }
+            },
+            "required": ["room_id", "analysis_focus"]
+        }
+    )
+    
     return Tool(function_declarations=[
         analyze_player_tool,
         vote_strategy_tool, 
         suspicion_rating_tool,
-        coming_out_timing_tool
+        coming_out_timing_tool,
+        speech_history_tool
     ])
 
 class RootAgent:
@@ -300,6 +339,7 @@ class RootAgent:
         self.accuse_tool = AgentTool(accuse_agent)
         self.support_tool = AgentTool(support_agent)
         self.coming_out_tool = AgentTool(coming_out_agent)
+        self.speech_history_tool = AgentTool(speech_history_agent)
     
     def execute_tool_function(self, function_name: str, args: Dict) -> str:
         """ツール関数を実際に実行する"""
@@ -312,6 +352,8 @@ class RootAgent:
                 return self._rate_player_suspicion(args["players"], args["evaluation_criteria"])
             elif function_name == "analyze_coming_out_timing":
                 return self._analyze_coming_out_timing(args["my_role"], args["game_phase"], args["alive_count"])
+            elif function_name == "get_speech_history":
+                return self._get_speech_history(args["room_id"], args.get("player_name"), args.get("day_number"), args["analysis_focus"])
             else:
                 return f"Unknown tool function: {function_name}"
         except Exception as e:
@@ -353,6 +395,143 @@ class RootAgent:
             return "投票フェーズでの戦略的カミングアウトを検討してください。"
         else:
             return "現在はカミングアウトよりも情報収集を優先することを推奨します。"
+    
+    def _get_speech_history(self, room_id: str, player_name: Optional[str], day_number: Optional[int], analysis_focus: str) -> str:
+        """発言履歴取得ツールの実装（PostgreSQL CloudSQL連携）"""
+        try:
+            # データベースセッションを取得
+            from game_logic.main import SessionLocal, Player, get_player_speech_history
+            
+            db = SessionLocal()
+            try:
+                # room_idをUUIDに変換
+                room_uuid = uuid.UUID(room_id)
+                
+                # プレイヤー名からプレイヤーIDを取得
+                player_id = None
+                if player_name:
+                    player = db.query(Player).filter(Player.character_name == player_name).first()
+                    if player:
+                        player_id = player.player_id
+                    else:
+                        return f"プレイヤー '{player_name}' が見つかりません。"
+                
+                # 発言履歴を取得
+                speech_logs = get_player_speech_history(
+                    db=db,
+                    room_id=room_uuid,
+                    player_id=player_id,
+                    day_number=day_number,
+                    limit=30  # 分析用に十分な数を取得
+                )
+                
+                # 発言履歴が空の場合
+                if not speech_logs:
+                    return f"発言履歴が見つかりません（プレイヤー: {player_name or '全員'}, 日数: {day_number or '全期間'}）"
+                
+                # 発言履歴を分析して結果を生成
+                if player_name:
+                    analysis_result = f"{player_name}の発言履歴分析（{analysis_focus}）:\n"
+                    analysis_result += f"- 発言数: {len(speech_logs)}件\n"
+                    
+                    # 発言内容から傾向を分析
+                    contents = [log['content'] for log in speech_logs if log['content']]
+                    if contents:
+                        # 最新の発言から分析
+                        recent_speeches = contents[-5:]  # 最新5件
+                        analysis_result += f"- 最新の発言傾向: {self._analyze_speech_patterns(recent_speeches, analysis_focus)}\n"
+                        
+                        # 時系列での変化を分析
+                        if len(contents) >= 3:
+                            early_speeches = contents[:len(contents)//2]
+                            late_speeches = contents[len(contents)//2:]
+                            analysis_result += f"- 発言の変化: {self._compare_speech_periods(early_speeches, late_speeches)}\n"
+                        
+                        # 具体的な発言例を追加
+                        analysis_result += f"- 注目発言: 「{recent_speeches[-1][:50]}...」\n"
+                    
+                else:
+                    analysis_result = f"全プレイヤーの発言履歴分析（{analysis_focus}）:\n"
+                    analysis_result += f"- 総発言数: {len(speech_logs)}件\n"
+                    
+                    # プレイヤー別発言数
+                    player_counts = {}
+                    for log in speech_logs:
+                        name = log['player_name']
+                        player_counts[name] = player_counts.get(name, 0) + 1
+                    
+                    analysis_result += f"- 発言者分布: {dict(sorted(player_counts.items(), key=lambda x: x[1], reverse=True))}\n"
+                    analysis_result += f"- 議論の活発度: {'高' if len(speech_logs) > 20 else '中' if len(speech_logs) > 10 else '低'}\n"
+                    
+                    # 最新の議論傾向
+                    recent_contents = [log['content'] for log in speech_logs[-10:] if log['content']]
+                    if recent_contents:
+                        analysis_result += f"- 最新の議論傾向: {self._analyze_recent_discussion(recent_contents, analysis_focus)}"
+                
+                return analysis_result
+                
+            finally:
+                db.close()
+                
+        except Exception as e:
+            print(f"[ERROR] Speech history analysis failed: {e}")
+            import traceback
+            print(f"[ERROR] Full traceback: {traceback.format_exc()}")
+            return f"発言履歴取得エラー: データベース接続またはクエリに失敗しました。({str(e)})"
+    
+    def _analyze_speech_patterns(self, speeches: List[str], focus: str) -> str:
+        """発言パターンを分析（簡易版）"""
+        if not speeches:
+            return "発言がありません"
+        
+        # キーワード分析
+        suspicious_words = ['疑わしい', '怪しい', '人狼', '偽', '嘘']
+        defensive_words = ['信じる', '擁護', '確実', '真']
+        aggressive_words = ['投票', '処刑', '告発', '確信']
+        
+        suspicious_count = sum(any(word in speech for word in suspicious_words) for speech in speeches)
+        defensive_count = sum(any(word in speech for word in defensive_words) for speech in speeches)
+        aggressive_count = sum(any(word in speech for word in aggressive_words) for speech in speeches)
+        
+        if suspicious_count > defensive_count and suspicious_count > aggressive_count:
+            return "疑惑提起型（他プレイヤーへの疑念を多く表明）"
+        elif defensive_count > aggressive_count:
+            return "擁護型（信頼関係を重視する発言が多い）"
+        elif aggressive_count > 0:
+            return "積極型（投票や告発に関する発言が多い）"
+        else:
+            return "情報収集型（質問や分析中心の発言）"
+    
+    def _compare_speech_periods(self, early_speeches: List[str], late_speeches: List[str]) -> str:
+        """時期による発言の変化を分析"""
+        early_avg_length = sum(len(s) for s in early_speeches) / len(early_speeches) if early_speeches else 0
+        late_avg_length = sum(len(s) for s in late_speeches) / len(late_speeches) if late_speeches else 0
+        
+        if late_avg_length > early_avg_length * 1.5:
+            return "発言が詳細化（後半でより長く具体的な発言）"
+        elif late_avg_length < early_avg_length * 0.7:
+            return "発言が簡潔化（後半で短く要点を絞った発言）"
+        else:
+            return "発言スタイルは一貫している"
+    
+    def _analyze_recent_discussion(self, recent_contents: List[str], focus: str) -> str:
+        """最近の議論傾向を分析"""
+        if not recent_contents:
+            return "最近の発言がありません"
+        
+        # フォーカスに応じた分析
+        if "役職示唆" in focus:
+            role_keywords = ['占い師', 'ボディガード', '村人', '人狼', 'カミングアウト', 'CO']
+            role_mentions = sum(any(word in content for word in role_keywords) for content in recent_contents)
+            return f"役職関連の発言が{role_mentions}件（活発な役職議論）" if role_mentions > 2 else "役職議論は控えめ"
+        
+        elif "投票理由" in focus:
+            vote_keywords = ['投票', '処刑', '吊り', '理由']
+            vote_mentions = sum(any(word in content for word in vote_keywords) for content in recent_contents)
+            return f"投票関連の発言が{vote_mentions}件（投票戦略が活発）" if vote_mentions > 1 else "投票戦略の議論は少ない"
+        
+        else:
+            return f"活発な議論（最近{len(recent_contents)}件の発言）"
 
     def generate_speech(self, player_info: Dict, game_context: Dict, recent_messages: List[Dict]) -> str:
         """ツール使用対応の発言生成"""
@@ -368,8 +547,8 @@ class RootAgent:
         
         # 緊急フォールバックモードかチェック
         if getattr(self, 'fallback_mode', False) or self.model is None:
-            print("[DEBUG] Using emergency fallback speech (no AI model available)")
-            return self._emergency_fallback_speech(player_info)
+            print("[DEBUG] AI model not available")
+            return self._handle_speech_generation_failure(player_info, Exception("AI model not available"))
         
         # ツール使用が利用可能かチェック
         if not self.tools_available:
@@ -384,8 +563,9 @@ class RootAgent:
             tool_prompt = self._build_tool_enhanced_prompt(player_info, game_context, context, recent_messages)
             
             print("[DEBUG] Attempting tool-enhanced speech generation")
-            # AIモデルにツール使用を含めて発言生成を依頼（タイムアウト付き）
-            response = generate_content_with_timeout(self.model, tool_prompt, timeout_seconds=15)
+            # AIモデルにツール使用を含めて発言生成を依頼（第1段階: 30秒タイムアウト）
+            # Function Callingツールの複雑な処理に対応するため、十分な時間を確保
+            response = generate_content_with_timeout(self.model, tool_prompt, timeout_seconds=30)
             
             # レスポンスを処理（ツール呼び出しを含む）
             final_speech = self._process_response_with_tools(response, player_info, game_context)
@@ -395,17 +575,43 @@ class RootAgent:
             
         except (TimeoutError, Exception) as e:
             # タイムアウトやその他のエラー時のフォールバック - 従来の方法を使用
-            print(f"[ERROR] Tool-enhanced speech generation failed: {e}")
+            if isinstance(e, TimeoutError):
+                print(f"[WARNING] Tool-enhanced speech generation timed out after 30 seconds: {e}")
+            else:
+                print(f"[ERROR] Tool-enhanced speech generation failed: {e}")
             print(f"[DEBUG] Falling back to traditional agent system")
             try:
                 return self._generate_traditional_speech(player_info, game_context, recent_messages)
             except (TimeoutError, Exception) as fallback_error:
-                print(f"[ERROR] Traditional speech generation also failed: {fallback_error}")
-                print(f"[DEBUG] Using emergency fallback speech")
-                return self._emergency_fallback_speech(player_info)
+                if isinstance(fallback_error, TimeoutError):
+                    print(f"[WARNING] Traditional speech generation timed out after 25 seconds: {fallback_error}")
+                else:
+                    print(f"[ERROR] Traditional speech generation also failed: {fallback_error}")
+                print(f"[CRITICAL] All speech generation methods failed for {player_info.get('name', 'unknown player')}")
+                return self._handle_speech_generation_failure(player_info, fallback_error)
+
+    def _handle_speech_generation_failure(self, player_info: Dict, error: Exception) -> str:
+        """発言生成失敗時の適切な処理"""
+        player_name = player_info.get('name', 'AIプレイヤー')
+        
+        # ログに詳細なエラー情報を記録
+        print(f"[CRITICAL] Speech generation failed for {player_name}: {error}")
+        import traceback
+        print(f"[CRITICAL] Full traceback: {traceback.format_exc()}")
+        
+        # エラーの種類によって適切なメッセージを返す
+        if isinstance(error, TimeoutError):
+            return f"[システム] {player_name}の発言生成がタイムアウトしました。しばらくお待ちください..."
+        else:
+            return f"[システムエラー] {player_name}の発言生成に失敗しました。システム管理者にお問い合わせください。"
 
     def _emergency_fallback_speech(self, player_info: Dict) -> str:
-        """緊急時フォールバック発言（AIモデルを使わない）"""
+        """緊急時フォールバック発言（AIモデルを使わない）
+        
+        注意: この関数は廃止予定です。
+        新しいエラーハンドリングにより、この定型文ベースのフォールバックは使用されません。
+        _handle_speech_generation_failure()を使用してください。
+        """
         # ペルソナ情報を取得
         persona = player_info.get('persona', {})
         speech_style = ""
@@ -565,7 +771,7 @@ class RootAgent:
                         )
                         # ツールなしモデルで最終発言を生成（タイムアウト付き）
                         simple_model = GenerativeModel("gemini-1.5-flash")
-                        final_response = generate_content_with_timeout(simple_model, final_prompt, timeout_seconds=12)
+                        final_response = generate_content_with_timeout(simple_model, final_prompt, timeout_seconds=25)
                         return self._clean_speech_content(final_response.text.strip())
                     
                     # ツール呼び出しがない場合は通常のテキストを返す
@@ -676,9 +882,10 @@ class RootAgent:
             # ルートエージェントが最終判断（ツールなしモデル使用）
             final_prompt = self._build_final_prompt(player_info, game_context, context, agent_outputs)
             
-            # ツールなしの従来モデルを使用（タイムアウト付き）
+            # ツールなしの従来モデルを使用（第2段階: 25秒タイムアウト）
+            # 複数エージェント協調システムに対応するため、適切な処理時間を確保
             simple_model = GenerativeModel("gemini-1.5-flash")
-            response = generate_content_with_timeout(simple_model, final_prompt, timeout_seconds=12)
+            response = generate_content_with_timeout(simple_model, final_prompt, timeout_seconds=25)
             speech = self._clean_speech_content(response.text.strip())
             
             # 発言の長さを制限（500文字に設定）
@@ -692,11 +899,12 @@ class RootAgent:
             return speech
             
         except (TimeoutError, Exception) as e:
-            print(f"[ERROR] Traditional speech generation failed: {e}")
             if isinstance(e, TimeoutError):
-                print(f"[WARNING] Traditional speech generation timed out, using simple fallback")
-            # 最後のフォールバック
-            return self._generate_simple_fallback_speech(player_info, game_context)
+                print(f"[WARNING] Traditional speech generation timed out after 25 seconds: {e}")
+            else:
+                print(f"[ERROR] Traditional speech generation failed: {e}")
+            # エラーハンドリング
+            raise e
     
     def _generate_simple_fallback_speech(self, player_info: Dict, game_context: Dict) -> str:
         """最終フォールバック発言生成（ペルソナ対応）"""
@@ -797,19 +1005,105 @@ class RootAgent:
         return random.choice(speeches)
     
     def _build_context(self, player_info: Dict, game_context: Dict, recent_messages: List[Dict]) -> str:
-        """エージェントに渡すコンテキストを構築"""
+        """エージェントに渡すコンテキストを構築（Phase 4: サマリー+自身の発言を優先）"""
         context_parts = []
         
         # ゲーム状況
         context_parts.append(f"現在{game_context.get('day_number', 1)}日目の{game_context.get('phase', '昼')}フェーズです。")
         context_parts.append(f"生存プレイヤー数: {game_context.get('alive_count', '不明')}人")
         
-        # 最近の発言履歴
+        # Phase 4 実装: サマリー+自身の発言をデフォルトインプットに変更
+        room_id = game_context.get('room_id')
+        player_name = player_info.get('name')
+        
+        if room_id and player_name:
+            # ゲームサマリーを取得（優先）
+            try:
+                from game_logic.main import SessionLocal, get_latest_game_summary
+                
+                db = SessionLocal()
+                try:
+                    room_uuid = uuid.UUID(room_id)
+                    summary = get_latest_game_summary(
+                        db=db,
+                        room_id=room_uuid,
+                        day_number=game_context.get('day_number'),
+                        phase=game_context.get('phase')
+                    )
+                    
+                    if summary:
+                        context_parts.append("# ゲーム進行サマリー")
+                        context_parts.append(f"- {summary['summary_content']}")
+                        
+                        if summary.get('important_events'):
+                            events = summary['important_events']
+                            if isinstance(events, list) and events:
+                                context_parts.append(f"- 重要イベント: {', '.join(events[:3])}")  # 最新3件
+                        
+                        if summary.get('player_suspicions'):
+                            suspicions = summary['player_suspicions']
+                            if isinstance(suspicions, dict) and suspicions:
+                                top_suspects = sorted(suspicions.items(), key=lambda x: x[1], reverse=True)[:2]
+                                context_parts.append(f"- 疑惑度: {', '.join([f'{k}({v}%)' for k, v in top_suspects])}")
+                    else:
+                        context_parts.append("# ゲーム進行サマリー")
+                        context_parts.append("- まだサマリーが生成されていません（ゲーム序盤）")
+                        
+                finally:
+                    db.close()
+                    
+            except Exception as e:
+                print(f"[WARNING] Failed to get game summary: {e}")
+                context_parts.append("# ゲーム進行サマリー")
+                context_parts.append("- サマリー取得に失敗（データベース接続エラー）")
+            
+            # 自身の発言履歴を取得（重要）
+            try:
+                from game_logic.main import SessionLocal, Player, get_player_own_speeches
+                
+                db = SessionLocal()
+                try:
+                    # プレイヤー名からIDを取得
+                    player = db.query(Player).filter(Player.character_name == player_name).first()
+                    if player:
+                        room_uuid = uuid.UUID(room_id)
+                        own_speeches = get_player_own_speeches(
+                            db=db,
+                            room_id=room_uuid,
+                            player_id=player.player_id,
+                            limit=5  # 最新5件の自分の発言
+                        )
+                        
+                        if own_speeches:
+                            context_parts.append(f"# {player_name}の過去の発言")
+                            for i, speech in enumerate(own_speeches[-3:], 1):  # 最新3件
+                                content = speech['content']
+                                if len(content) > 80:
+                                    content = content[:80] + "..."
+                                context_parts.append(f"- {i}回前: 「{content}」")
+                        else:
+                            context_parts.append(f"# {player_name}の過去の発言")
+                            context_parts.append("- まだ発言がありません（初回発言）")
+                    else:
+                        context_parts.append(f"# {player_name}の過去の発言")
+                        context_parts.append("- プレイヤー情報が見つかりません")
+                        
+                finally:
+                    db.close()
+                    
+            except Exception as e:
+                print(f"[WARNING] Failed to get own speech history: {e}")
+                context_parts.append(f"# {player_name}の過去の発言")
+                context_parts.append("- 発言履歴取得に失敗（データベース接続エラー）")
+        
+        # フォールバック: 従来のrecent_messagesも使用（緊急時・補完用）
         if recent_messages:
-            context_parts.append("最近の発言:")
-            for msg in recent_messages[-3:]:  # 最新3件
+            context_parts.append("# 最新の議論")
+            for msg in recent_messages[-2:]:  # 最新2件に削減（コスト効率化）
                 speaker = msg.get('speaker', '不明')
                 content = msg.get('content', '')
+                if len(content) > 100:  # 長すぎる発言は要約
+                    content = content[:100] + "..."
                 context_parts.append(f"- {speaker}: {content}")
         
         return "\n".join(context_parts)

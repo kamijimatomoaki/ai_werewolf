@@ -264,6 +264,19 @@ class SpectatorMessage(Base):
     room = relationship("Room")
     spectator = relationship("Spectator")
 
+class GameSummary(Base):
+    __tablename__ = "game_summaries"
+    summary_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    room_id = Column(UUID(as_uuid=True), ForeignKey("rooms.room_id"), nullable=False)
+    day_number = Column(Integer, nullable=False)
+    phase = Column(String, nullable=False)  # day_discussion, day_vote, night
+    summary_content = Column(Text, nullable=False)  # LLM生成のサマリー
+    important_events = Column(JSON, nullable=True)  # 重要イベントのリスト
+    player_suspicions = Column(JSON, nullable=True)  # プレイヤー疑惑度情報
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    room = relationship("Room")
+
 # 起動時にテーブルを自動作成
 try:
     Base.metadata.create_all(bind=engine)
@@ -808,6 +821,14 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
         # 発言を記録
         create_game_log(db, room_id, "day_discussion", "speech", actor_player_id=player_id, content=statement)
         
+        # 自動サマリー更新
+        try:
+            update_game_summary_auto(db, room_id)
+            logger.info(f"Auto-summary updated for room {room_id} after speech")
+        except Exception as e:
+            logger.warning(f"Failed to update auto-summary for room {room_id}: {e}")
+            # サマリー更新失敗はゲーム進行を止めない
+        
         # 次のプレイヤーを探す（簡素化）
         next_index = find_next_alive_player_safe(db, room_id, current_index)
         
@@ -894,6 +915,86 @@ def create_game_log(db: Session, room_id: uuid.UUID, phase: str, event_type: str
     )
     db.add(log_entry)
     return log_entry
+
+def get_player_speech_history(db: Session, room_id: uuid.UUID, player_id: Optional[uuid.UUID] = None, 
+                            day_number: Optional[int] = None, limit: int = 50) -> List[Dict]:
+    """特定プレイヤーまたは全プレイヤーの発言履歴を取得（専門エージェント・Function Calling用）"""
+    try:
+        query = db.query(GameLog).filter(
+            GameLog.room_id == room_id,
+            GameLog.event_type == "speech"
+        )
+        
+        # プレイヤー指定がある場合
+        if player_id:
+            query = query.filter(GameLog.actor_player_id == player_id)
+        
+        # 日数指定がある場合
+        if day_number:
+            query = query.filter(GameLog.day_number == day_number)
+        
+        # 時系列順（新しい順）で取得
+        logs = query.order_by(GameLog.created_at.desc()).limit(limit).all()
+        
+        # 結果を辞書形式で返す
+        result = []
+        for log in reversed(logs):  # 古い順に並び替え
+            player = get_player(db, log.actor_player_id) if log.actor_player_id else None
+            result.append({
+                "log_id": str(log.log_id),
+                "day_number": log.day_number,
+                "phase": log.phase,
+                "player_id": str(log.actor_player_id) if log.actor_player_id else None,
+                "player_name": player.character_name if player else "不明",
+                "content": log.content,
+                "created_at": log.created_at.isoformat() if log.created_at else None
+            })
+        
+        logger.info(f"Retrieved {len(result)} speech logs for room {room_id}, player {player_id}")
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error retrieving speech history: {e}")
+        return []
+
+def get_player_own_speeches(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, limit: int = 20) -> List[Dict]:
+    """特定プレイヤー自身の発言履歴のみを取得（デフォルトインプット用）"""
+    return get_player_speech_history(db, room_id, player_id, limit=limit)
+
+def get_latest_game_summary(db: Session, room_id: uuid.UUID, day_number: Optional[int] = None, phase: Optional[str] = None) -> Optional[Dict]:
+    """最新のゲームサマリーを取得（Phase 4: デフォルトインプット用）"""
+    try:
+        query = db.query(GameSummary).filter(GameSummary.room_id == room_id)
+        
+        # 日数指定がある場合
+        if day_number:
+            query = query.filter(GameSummary.day_number == day_number)
+        
+        # フェーズ指定がある場合
+        if phase:
+            query = query.filter(GameSummary.phase == phase)
+        
+        # 最新のサマリーを取得
+        summary = query.order_by(GameSummary.updated_at.desc()).first()
+        
+        if summary:
+            return {
+                "summary_id": str(summary.summary_id),
+                "room_id": str(summary.room_id),
+                "day_number": summary.day_number,
+                "phase": summary.phase,
+                "summary_content": summary.summary_content,
+                "important_events": summary.important_events,
+                "player_suspicions": summary.player_suspicions,
+                "updated_at": summary.updated_at.isoformat() if summary.updated_at else None
+            }
+        else:
+            logger.info(f"No game summary found for room {room_id}")
+            return None
+            
+    except Exception as e:
+        logger.error(f"Error retrieving latest game summary: {e}")
+        return None
 
 def get_player(db: Session, player_id: uuid.UUID) -> Optional[Player]:
     return db.query(Player).filter(Player.player_id == player_id).first()
@@ -2998,6 +3099,134 @@ async def get_game_summary(room_id: uuid.UUID, db: Session = Depends(get_db)):
         detail = f"Failed to generate game summary: {str(e)}"
         raise HTTPException(status_code=500, detail=detail)
 
+def update_game_summary_auto(db: Session, room_id: uuid.UUID) -> bool:
+    """
+    発言・アクション後に自動的にゲームサマリーを更新
+    """
+    try:
+        room = get_room(db, room_id)
+        if not room:
+            return False
+        
+        # 現在の最新サマリーを取得
+        current_summary = db.query(GameSummary).filter(
+            GameSummary.room_id == room_id,
+            GameSummary.day_number == room.day_number,
+            GameSummary.phase == room.status
+        ).first()
+        
+        # 新しいイベントがあるかチェック
+        if current_summary:
+            last_update = current_summary.updated_at
+            new_logs = db.query(GameLog).filter(
+                GameLog.room_id == room_id,
+                GameLog.created_at > last_update
+            ).count()
+            
+            # 新しいログがない場合はスキップ
+            if new_logs == 0:
+                return True
+        
+        # インクリメンタル（効率的）サマリー生成
+        new_summary_content = generate_incremental_summary(db, room_id, current_summary)
+        
+        if current_summary:
+            # 既存サマリーを更新
+            current_summary.summary_content = new_summary_content
+            current_summary.updated_at = datetime.now(timezone.utc)
+        else:
+            # 新規サマリーを作成
+            new_summary = GameSummary(
+                room_id=room_id,
+                day_number=room.day_number,
+                phase=room.status,
+                summary_content=new_summary_content,
+                important_events=[],
+                player_suspicions={}
+            )
+            db.add(new_summary)
+        
+        db.commit()
+        logger.info(f"Game summary auto-updated for room {room_id}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error auto-updating game summary: {e}")
+        db.rollback()
+        return False
+
+def generate_incremental_summary(db: Session, room_id: uuid.UUID, previous_summary: GameSummary = None) -> str:
+    """
+    効率的なインクリメンタルサマリー生成
+    前回のサマリーから新しい情報のみを追加して更新
+    """
+    try:
+        room = get_room(db, room_id)
+        if not room:
+            return "ルーム情報を取得できませんでした。"
+        
+        # 前回サマリー以降の新しいログを取得
+        if previous_summary:
+            new_logs = db.query(GameLog).filter(
+                GameLog.room_id == room_id,
+                GameLog.created_at > previous_summary.updated_at
+            ).order_by(GameLog.created_at.asc()).all()
+            base_summary = previous_summary.summary_content
+        else:
+            # 初回の場合は当日の全ログ
+            new_logs = db.query(GameLog).filter(
+                GameLog.room_id == room_id,
+                GameLog.day_number == room.day_number
+            ).order_by(GameLog.created_at.asc()).all()
+            base_summary = ""
+        
+        # 新しい重要イベントと発言を抽出
+        new_speeches = []
+        new_events = []
+        
+        for log in new_logs:
+            if log.event_type == "speech" and log.actor:
+                new_speeches.append(f"{log.actor.character_name}: {log.content}")
+            elif log.event_type in ["execution", "attack", "investigate", "vote"]:
+                new_events.append(f"{log.event_type}: {log.content}")
+        
+        # Google AI が利用可能な場合はLLMでサマリー生成
+        if GOOGLE_PROJECT_ID and GOOGLE_LOCATION and (new_speeches or new_events):
+            try:
+                prompt = f"""
+現在のゲーム状況: {room.day_number}日目の{room.status}フェーズ
+
+前回のサマリー:
+{base_summary if base_summary else '（初回サマリー生成）'}
+
+新しい出来事:
+{chr(10).join(new_events) if new_events else '特になし'}
+
+新しい発言:
+{chr(10).join(new_speeches[-5:]) if new_speeches else '新しい発言なし'}
+
+上記の新しい情報を踏まえて、ゲーム状況のサマリーを300文字程度で更新してください。
+前回のサマリーと新しい情報を統合し、重要な状況変化、プレイヤーの疑惑度、戦略の変化を詳しく反映してください。
+"""
+                
+                model = GenerativeModel("gemini-1.5-flash")
+                response = generate_content_with_timeout(model, prompt, timeout_seconds=10)
+                
+                if response and response.text:
+                    return response.text.strip()
+                    
+            except Exception as e:
+                logger.error(f"Error in incremental LLM summary: {e}")
+        
+        # フォールバック: 基本的なサマリー生成
+        alive_players = [p for p in room.players if p.is_alive]
+        return f"{room.day_number}日目{room.status}。生存者: {', '.join([p.character_name for p in alive_players])}。" + \
+               (f"新しい発言: {len(new_speeches)}件。" if new_speeches else "")
+        
+    except Exception as e:
+        logger.error(f"Error generating incremental summary: {e}")
+        return "サマリー生成に失敗しました。"
+
 def generate_game_summary(db: Session, room_id: uuid.UUID) -> dict:
     """
     ゲーム状況の包括的なサマリーを生成
@@ -3134,10 +3363,11 @@ def build_game_summary_prompt(room, all_logs) -> str:
 【最近の発言】
 {chr(10).join(recent_speeches) if recent_speeches else 'まだ発言なし'}
 
-以下の点で150文字程度でサマリーしてください：
+以下の点で300文字程度でサマリーしてください：
 1. 現在の状況と勢力関係
 2. 疑いをかけられているプレイヤー
 3. 今後の展望や注目ポイント
+4. プレイヤー間の相互関係や疑惑の詳細
 """
     
     return prompt
