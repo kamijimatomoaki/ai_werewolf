@@ -3263,7 +3263,7 @@ def auto_progress_logic(room_id: uuid.UUID, db: Session):
                         if created_at.tzinfo is None:
                             created_at = created_at.replace(tzinfo=timezone.utc)
                         time_since_last_speech = (datetime.now(timezone.utc) - created_at).total_seconds()
-                        if time_since_last_speech > 30:  # 30秒以上待機（緊急修正）
+                        if time_since_last_speech > 60:  # 60秒以上待機（調整済み）
                             emergency_skip = True
                             logger.warning(f"Emergency skip triggered: {current_player.character_name} has been waiting {time_since_last_speech:.1f}s")
                     except Exception as timezone_error:

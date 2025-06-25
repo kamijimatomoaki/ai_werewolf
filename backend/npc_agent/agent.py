@@ -565,7 +565,7 @@ class RootAgent:
             print("[DEBUG] Attempting tool-enhanced speech generation")
             # AIモデルにツール使用を含めて発言生成を依頼（第1段階: 30秒タイムアウト）
             # Function Callingツールの複雑な処理に対応するため、十分な時間を確保
-            response = generate_content_with_timeout(self.model, tool_prompt, timeout_seconds=15)
+            response = generate_content_with_timeout(self.model, tool_prompt, timeout_seconds=30)
             
             # レスポンスを処理（ツール呼び出しを含む）
             final_speech = self._process_response_with_tools(response, player_info, game_context)
@@ -1037,11 +1037,11 @@ class RootAgent:
                     finally:
                         db.close()
                 
-                # 10秒タイムアウトでサマリー取得
+                # 20秒タイムアウトでサマリー取得
                 try:
                     with ThreadPoolExecutor() as executor:
                         future = executor.submit(get_summary_with_timeout)
-                        summary = future.result(timeout=10)  # 10秒でタイムアウト
+                        summary = future.result(timeout=20)  # 20秒でタイムアウト
                 except TimeoutError:
                     print(f"[WARNING] Summary fetch timed out for room {room_id}")
                     summary = None
