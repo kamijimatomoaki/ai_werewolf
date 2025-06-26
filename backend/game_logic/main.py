@@ -1053,16 +1053,18 @@ def create_room(db: Session, room: RoomCreate, host_name: str) -> Room:
             db.flush()
             
         # AIプレイヤーを作成
-        for i in range(room.ai_players):
+        # total_players から既にいる人間プレイヤーの数を引いた残りをAIプレイヤーとして追加
+        num_ai_to_add = room.total_players - room.human_players
+        for i in range(num_ai_to_add):
             ai_player = Player(
-                room_id=db_room.room_id, 
-                character_name=f"AIプレイヤー{i+1}", 
+                room_id=db_room.room_id,
+                character_name=f"AIプレイヤー{i+1}",
                 is_human=False,
-                character_persona=None,  # ペルソナは手動設定を前提
-                is_claimed=False # AIはclaimedではない
+                character_persona=None,
+                is_claimed=False
             )
             db.add(ai_player)
-            db.flush() # 追加
+            db.flush()
             
         db.commit()
         db.refresh(db_room)
