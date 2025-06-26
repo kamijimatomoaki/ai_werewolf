@@ -15,8 +15,10 @@ import json
 import random
 import secrets
 import asyncio
+import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Set
 
 import socketio
 import vertexai
@@ -1980,6 +1982,314 @@ def generate_ai_vote_decision(db: Session, room_id: uuid.UUID, ai_player, possib
     # フォールバック: ランダム選択
     return random.choice(possible_targets)
 
+# =================================================================
+# 並列AI投票処理（パフォーマンス改善）
+# =================================================================
+
+# 重複実行防止用グローバル変数
+_active_auto_progress: Set[uuid.UUID] = set()
+_voting_lock = asyncio.Lock()
+
+# =================================================================
+# 詳細ログとメトリクス
+# =================================================================
+
+class VotingMetrics:
+    """投票処理のメトリクスとログ管理"""
+    
+    @staticmethod
+    def log_voting_start(room_id: uuid.UUID, player_count: int, ai_count: int):
+        logger.info(
+            f"VOTING_START: room={room_id}, total_players={player_count}, ai_players={ai_count}, timestamp={time.time()}"
+        )
+    
+    @staticmethod
+    def log_ai_vote_attempt(room_id: uuid.UUID, player_name: str, attempt: int, timeout: int):
+        logger.info(
+            f"AI_VOTE_ATTEMPT: room={room_id}, player={player_name}, attempt={attempt}, timeout={timeout}s, timestamp={time.time()}"
+        )
+    
+    @staticmethod
+    def log_ai_vote_success(room_id: uuid.UUID, player_name: str, target_name: str, duration: float, method: str):
+        logger.info(
+            f"AI_VOTE_SUCCESS: room={room_id}, voter={player_name}, target={target_name}, duration={duration:.2f}s, method={method}, timestamp={time.time()}"
+        )
+    
+    @staticmethod
+    def log_ai_vote_failure(room_id: uuid.UUID, player_name: str, error: str, duration: float):
+        logger.error(
+            f"AI_VOTE_FAILURE: room={room_id}, player={player_name}, error={error}, duration={duration:.2f}s, timestamp={time.time()}"
+        )
+    
+    @staticmethod
+    def log_parallel_voting_complete(room_id: uuid.UUID, total_duration: float, success_count: int, failure_count: int):
+        logger.info(
+            f"PARALLEL_VOTING_COMPLETE: room={room_id}, duration={total_duration:.2f}s, success={success_count}, failed={failure_count}, timestamp={time.time()}"
+        )
+    
+    @staticmethod
+    def log_voting_timeout(room_id: uuid.UUID, duration: float, completed_count: int, remaining_count: int):
+        logger.warning(
+            f"VOTING_TIMEOUT: room={room_id}, duration={duration:.2f}s, completed={completed_count}, remaining={remaining_count}, timestamp={time.time()}"
+        )
+
+async def generate_ai_vote_decision_with_retry(
+    db: Session,
+    room_id: uuid.UUID,
+    ai_player,
+    possible_targets: list,
+    max_retries: int = 2
+) -> Optional[any]:
+    """リトライ機構付きAI投票決定"""
+    
+    for attempt in range(max_retries + 1):
+        try:
+            # Vertex AI呼び出し（指数バックオフ）
+            timeout = 10 + (attempt * 5)  # 10秒, 15秒, 20秒
+            VotingMetrics.log_ai_vote_attempt(room_id, ai_player.character_name, attempt + 1, timeout)
+            
+            result = await generate_vote_with_timeout(
+                db, room_id, ai_player, possible_targets, timeout
+            )
+            
+            if result:
+                return result
+                
+        except asyncio.TimeoutError:
+            logger.warning(f"AI vote timeout (attempt {attempt + 1}/{max_retries + 1}) for {ai_player.character_name}")
+            if attempt == max_retries:
+                logger.error(f"All retry attempts failed for {ai_player.character_name}")
+                break
+        except Exception as e:
+            logger.error(f"AI vote error (attempt {attempt + 1}): {e}")
+            if attempt == max_retries:
+                break
+            await asyncio.sleep(1)  # 1秒待機
+    
+    # フォールバック: ランダム選択
+    logger.info(f"Using random fallback for {ai_player.character_name}")
+    return random.choice(possible_targets) if possible_targets else None
+
+async def generate_vote_with_timeout(
+    db: Session,
+    room_id: uuid.UUID,
+    ai_player,
+    possible_targets: list,
+    timeout: int = 15
+) -> Optional[any]:
+    """タイムアウト付きAI投票生成"""
+    
+    try:
+        # ゲーム状況を収集
+        room = get_room(db, room_id)
+        recent_logs = db.query(GameLog).filter(
+            GameLog.room_id == room_id,
+            GameLog.day_number == room.day_number,
+            GameLog.event_type == "speech"
+        ).order_by(GameLog.created_at.desc()).limit(10).all()
+        
+        # 投票用プロンプトを構築
+        prompt = build_ai_vote_prompt(ai_player, room, possible_targets, recent_logs)
+        
+        if GOOGLE_PROJECT_ID and GOOGLE_LOCATION:
+            model = GenerativeModel("gemini-1.5-flash")
+            
+            # 非同期でVertex AI呼び出し
+            loop = asyncio.get_event_loop()
+            future = loop.run_in_executor(
+                None, 
+                lambda: model.generate_content(prompt)
+            )
+            
+            response = await asyncio.wait_for(future, timeout=timeout)
+            
+            # レスポンスからプレイヤー名を抽出
+            decision_text = response.text.strip()
+            
+            # プレイヤー名でマッチング
+            for target in possible_targets:
+                if target.character_name in decision_text:
+                    logger.info(f"AI {ai_player.character_name} decided to vote for {target.character_name} via LLM")
+                    return target
+            
+            # マッチしなかった場合は最初のターゲット
+            logger.warning(f"AI {ai_player.character_name} LLM vote decision unclear: {decision_text}, using first target")
+            return possible_targets[0] if possible_targets else None
+        else:
+            # Vertex AIが設定されていない場合
+            return random.choice(possible_targets) if possible_targets else None
+            
+    except Exception as e:
+        logger.error(f"Error in generate_vote_with_timeout: {e}")
+        raise
+
+async def process_single_ai_vote_async(
+    room_id: uuid.UUID,
+    ai_player,
+    possible_targets: list,
+    db: Session
+) -> Dict[str, any]:
+    """単一AI投票の非同期処理"""
+    start_time = time.time()
+    
+    try:
+        # Vertex AI呼び出しにリトライ機構を追加
+        vote_target = await generate_ai_vote_decision_with_retry(
+            db, room_id, ai_player, possible_targets, max_retries=2
+        )
+        
+        if vote_target:
+            # データベース操作
+            vote_result = process_vote(db, room_id, ai_player.player_id, vote_target.player_id)
+            
+            processing_time = time.time() - start_time
+            VotingMetrics.log_ai_vote_success(
+                room_id, ai_player.character_name, vote_target.character_name, 
+                processing_time, "llm"
+            )
+            
+            return {
+                "status": "success",
+                "player_id": str(ai_player.player_id),
+                "player_name": ai_player.character_name,
+                "target_id": str(vote_target.player_id),
+                "target_name": vote_target.character_name,
+                "processing_time": processing_time,
+                "vote_result": vote_result
+            }
+        else:
+            raise ValueError("Failed to determine vote target")
+            
+    except Exception as e:
+        processing_time = time.time() - start_time
+        VotingMetrics.log_ai_vote_failure(room_id, ai_player.character_name, str(e), processing_time)
+        return {
+            "status": "error",
+            "player_id": str(ai_player.player_id),
+            "player_name": ai_player.character_name,
+            "error": str(e),
+            "processing_time": processing_time
+        }
+
+async def process_ai_voting_parallel(
+    room_id: uuid.UUID, 
+    db: Session,
+    unvoted_ai_players: list,
+    possible_targets: list
+) -> Dict[str, any]:
+    """AI投票を並列処理で高速化"""
+    
+    if not unvoted_ai_players:
+        return {"status": "no_unvoted_players"}
+    
+    start_time = time.time()
+    VotingMetrics.log_voting_start(room_id, len(unvoted_ai_players) + len([p for p in possible_targets if p.is_human]), len(unvoted_ai_players))
+    logger.info(f"Starting parallel AI voting for {len(unvoted_ai_players)} players")
+    
+    # 並列投票タスクを作成
+    voting_tasks = []
+    for ai_player in unvoted_ai_players:
+        # 各AIプレイヤー用の投票可能ターゲットを作成
+        player_targets = [p for p in possible_targets if p.player_id != ai_player.player_id]
+        task = asyncio.create_task(
+            process_single_ai_vote_async(
+                room_id, ai_player, player_targets, db
+            )
+        )
+        voting_tasks.append(task)
+    
+    # 並列実行（最大90秒タイムアウト）
+    results = []
+    successful_votes = 0
+    failed_votes = 0
+    
+    try:
+        completed_results = await asyncio.wait_for(
+            asyncio.gather(*voting_tasks, return_exceptions=True),
+            timeout=90.0
+        )
+        
+        for i, result in enumerate(completed_results):
+            if isinstance(result, Exception):
+                logger.error(f"AI voting task failed: {result}")
+                # 緊急フォールバック: ランダム投票
+                ai_player = unvoted_ai_players[i]
+                player_targets = [p for p in possible_targets if p.player_id != ai_player.player_id]
+                if player_targets:
+                    fallback_target = random.choice(player_targets)
+                    try:
+                        process_vote(db, room_id, ai_player.player_id, fallback_target.player_id)
+                        VotingMetrics.log_ai_vote_success(
+                            room_id, ai_player.character_name, fallback_target.character_name, 
+                            0.0, "fallback"
+                        )
+                        results.append({
+                            "status": "fallback",
+                            "player_name": ai_player.character_name,
+                            "target_name": fallback_target.character_name
+                        })
+                        successful_votes += 1
+                    except Exception as fallback_error:
+                        VotingMetrics.log_ai_vote_failure(room_id, ai_player.character_name, str(fallback_error), 0.0)
+                        logger.error(f"Fallback vote failed for {ai_player.character_name}: {fallback_error}")
+                        failed_votes += 1
+                else:
+                    failed_votes += 1
+            else:
+                results.append(result)
+                if result.get("status") == "success":
+                    successful_votes += 1
+                else:
+                    failed_votes += 1
+        
+    except asyncio.TimeoutError:
+        timeout_duration = time.time() - start_time
+        completed_count = len([task for task in voting_tasks if task.done()])
+        remaining_count = len(voting_tasks) - completed_count
+        
+        VotingMetrics.log_voting_timeout(room_id, timeout_duration, completed_count, remaining_count)
+        logger.error(f"AI voting timeout for room {room_id}")
+        
+        # 未完了タスクをキャンセル
+        for task in voting_tasks:
+            if not task.done():
+                task.cancel()
+        
+        # 強制ランダム投票
+        await force_remaining_votes_async(room_id, db, unvoted_ai_players, possible_targets)
+        return {"status": "timeout_fallback", "processing_time": timeout_duration}
+    
+    total_time = time.time() - start_time
+    VotingMetrics.log_parallel_voting_complete(room_id, total_time, successful_votes, failed_votes)
+    logger.info(f"Parallel AI voting completed: {successful_votes} success, {failed_votes} failed, {total_time:.2f}s total")
+    
+    return {
+        "status": "completed",
+        "results": results,
+        "successful_votes": successful_votes,
+        "failed_votes": failed_votes,
+        "processing_time": total_time
+    }
+
+async def force_remaining_votes_async(
+    room_id: uuid.UUID, 
+    db: Session, 
+    unvoted_players: list, 
+    possible_targets: list
+):
+    """未投票プレイヤーに強制ランダム投票"""
+    logger.info(f"Forcing random votes for {len(unvoted_players)} remaining players")
+    
+    for ai_player in unvoted_players:
+        player_targets = [p for p in possible_targets if p.player_id != ai_player.player_id]
+        if player_targets:
+            target = random.choice(player_targets)
+            try:
+                process_vote(db, room_id, ai_player.player_id, target.player_id)
+                logger.info(f"Forced random vote: {ai_player.character_name} -> {target.character_name}")
+            except Exception as e:
+                logger.error(f"Failed to force vote for {ai_player.character_name}: {e}")
+
 def build_ai_vote_prompt(ai_player, room, possible_targets, recent_logs) -> str:
     """
     AI投票用プロンプトを構築
@@ -3158,10 +3468,26 @@ async def handle_ai_speak(room_id: uuid.UUID, ai_player_id: uuid.UUID, db: Sessi
         logger.error(f"Error in AI speak: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to generate AI speech")
 
-def auto_progress_logic(room_id: uuid.UUID, db: Session):
-    """Core auto-progression logic that can be called from API or background task"""
-    # DB-level排他制御（FOR UPDATEロック）
-    room = db.query(Room).filter(Room.room_id == room_id).with_for_update().first()
+async def auto_progress_logic(room_id: uuid.UUID, db: Session):
+    """Core auto-progression logic with parallel AI voting (IMPROVED)"""
+    
+    # 重複実行防止チェック
+    if room_id in _active_auto_progress:
+        logger.info(f"Auto progress already running for room {room_id}")
+        return {"auto_progressed": False, "message": "Auto progress already running"}
+    
+    _active_auto_progress.add(room_id)
+    try:
+        return await _auto_progress_logic_impl(room_id, db)
+    finally:
+        _active_auto_progress.discard(room_id)
+
+async def _auto_progress_logic_impl(room_id: uuid.UUID, db: Session):
+    """実際の自動進行処理実装"""
+    start_time = time.time()
+    
+    # データベースロック時間を最小化（FOR UPDATE削除）
+    room = db.query(Room).filter(Room.room_id == room_id).first()
     if not room:
         return {"auto_progressed": False, "message": "Room not found"}
     
@@ -3379,16 +3705,16 @@ def auto_progress_logic(room_id: uuid.UUID, db: Session):
             logger.error(f"Error generating AI speech: {e}")
             return {"auto_progressed": False, "message": f"Error generating AI speech: {str(e)}"}
     
-    # 投票フェーズでの処理
+    # 投票フェーズでの処理（並列処理版）
     elif room.status == 'day_vote':
-        logger.info(f"Auto-progress: Processing voting phase for room {room_id}")
+        logger.info(f"Auto-progress: Processing voting phase (PARALLEL) for room {room_id}")
         
-        # まだ投票していないAIプレイヤーを見つける
+        # 生存プレイヤーを取得
         players = get_players_in_room(db, room_id)
         alive_players = [p for p in players if p.is_alive]
-        logger.info(f"Alive players count: {len(alive_players)} ({[p.character_name for p in alive_players]})")
+        logger.info(f"Alive players: {len(alive_players)} ({[p.character_name for p in alive_players]})")
         
-        # 投票済みプレイヤーを取得 (GameLogから投票記録を取得)
+        # 投票済みプレイヤーを取得
         voted_player_ids = set()
         vote_logs = db.query(GameLog).filter(
             GameLog.room_id == room_id,
@@ -3396,14 +3722,9 @@ def auto_progress_logic(room_id: uuid.UUID, db: Session):
             GameLog.event_type == "vote"
         ).all()
         
-        logger.info(f"Found {len(vote_logs)} vote logs for day {room.day_number}")
-        
         for vote_log in vote_logs:
             if vote_log.actor_player_id:
                 voted_player_ids.add(vote_log.actor_player_id)
-                logger.debug(f"Vote recorded: {vote_log.actor_player_id} -> {vote_log.content}")
-        
-        logger.info(f"Voted player IDs: {voted_player_ids}")
         
         # 未投票のAIプレイヤーを探す
         unvoted_ai_players = [
@@ -3411,73 +3732,59 @@ def auto_progress_logic(room_id: uuid.UUID, db: Session):
             if not p.is_human and p.player_id not in voted_player_ids
         ]
         
-        ai_players = [p for p in alive_players if not p.is_human]
-        logger.info(f"AI players: {[p.character_name for p in ai_players]}")
         logger.info(f"Unvoted AI players: {[p.character_name for p in unvoted_ai_players]}")
         
         if not unvoted_ai_players:
-            logger.info("No AI players need to vote - all have already voted")
+            logger.info("No AI players need to vote - checking if voting complete")
+            
+            # 全員投票完了をチェック
+            if len(voted_player_ids) >= len(alive_players):
+                logger.info("All players have voted - processing results")
+                # 投票完了時は夜フェーズ移行などの処理が必要
+                # 現在のロジックでは自動的に処理される
+            
             return {"auto_progressed": False, "message": "No AI players need to vote"}
         
-        # 1人ずつ処理（同時投票を避ける）
-        ai_player = unvoted_ai_players[0]
-        logger.info(f"Processing vote for AI player: {ai_player.character_name} (ID: {ai_player.player_id})")
+        # 並列AI投票処理を実行
+        possible_targets = alive_players  # 各プレイヤーは自分以外に投票可能
         
         try:
-            # AI投票先を決定 - 投票可能なターゲットを取得
-            possible_targets = [p for p in alive_players if p.player_id != ai_player.player_id]
-            logger.info(f"Possible vote targets for {ai_player.character_name}: {[t.character_name for t in possible_targets]}")
+            voting_result = await process_ai_voting_parallel(
+                room_id, db, unvoted_ai_players, possible_targets
+            )
             
-            vote_target = None
-            try:
-                vote_target = generate_ai_vote_decision(db, room_id, ai_player, possible_targets)
-                logger.info(f"AI vote target determined via LLM: {vote_target.character_name if vote_target else 'None'}")
-            except Exception as vote_decision_error:
-                logger.error(f"Error in generate_ai_vote_decision: {vote_decision_error}", exc_info=True)
-                # フォールバック: ランダム選択
-                if possible_targets:
-                    vote_target = random.choice(possible_targets)
-                    logger.warning(f"Fallback to random vote target for {ai_player.character_name}: {vote_target.character_name}")
-                else:
-                    logger.error(f"No possible targets for {ai_player.character_name}")
-                    return {"auto_progressed": False, "message": "No possible vote targets"}
+            total_time = time.time() - start_time
+            logger.info(f"Parallel voting completed in {total_time:.2f}s: {voting_result}")
             
-            if vote_target:
-                # 投票を実行
-                try:
-                    vote_result = process_vote(
-                        room_id=room_id,
-                        voter_id=ai_player.player_id,
-                        target_id=vote_target.player_id,
-                        db=db
-                    )
-                    logger.info(f"Vote processed successfully: {ai_player.character_name} -> {vote_target.character_name}")
-                except Exception as process_vote_error:
-                    logger.error(f"Error in process_vote: {process_vote_error}", exc_info=True)
-                    return {"auto_progressed": False, "message": f"Error processing vote: {str(process_vote_error)}"}
-                
-                # レスポンスにWebSocket送信用データを含める
-                vote_data = {
-                    "voter_id": str(ai_player.player_id),
-                    "voter_name": ai_player.character_name,
-                    "target_id": str(vote_target.player_id),
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                    "is_ai": True
-                }
-                
-                return {
-                    "auto_progressed": True,
-                    "message": f"AI player {ai_player.character_name} voted",
-                    "voter": ai_player.character_name,
-                    "vote_result": vote_result,
-                    "websocket_data": {"type": "new_vote", "data": vote_data}
-                }
-            else:
-                return {"auto_progressed": False, "message": f"Failed to determine vote target for {ai_player.character_name}"}
-                
+            # WebSocket通知用のデータを準備
+            websocket_data = []
+            successful_voters = []
+            
+            if voting_result.get("status") == "completed":
+                for result in voting_result.get("results", []):
+                    if result.get("status") in ["success", "fallback"]:
+                        successful_voters.append(result["player_name"])
+                        websocket_data.append({
+                            "voter_id": result.get("player_id"),
+                            "voter_name": result["player_name"],
+                            "target_id": result.get("target_id"),
+                            "target_name": result.get("target_name"),
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                            "is_ai": True
+                        })
+            
+            return {
+                "auto_progressed": True,
+                "message": f"Parallel AI voting completed: {voting_result['successful_votes']} success, {voting_result['failed_votes']} failed",
+                "voters": successful_voters,
+                "voting_result": voting_result,
+                "websocket_data": {"type": "parallel_votes", "data": websocket_data},
+                "processing_time": total_time
+            }
+            
         except Exception as e:
-            logger.error(f"Error processing AI vote: {e}")
-            return {"auto_progressed": False, "message": f"Error processing AI vote: {str(e)}"}
+            logger.error(f"Error in parallel AI voting: {e}", exc_info=True)
+            return {"auto_progressed": False, "message": f"Error in parallel voting: {str(e)}"}
     
     return {"auto_progressed": False, "message": "No auto-progression needed"}
 
@@ -3485,9 +3792,9 @@ def auto_progress_logic(room_id: uuid.UUID, db: Session):
 async def handle_auto_progress(room_id: uuid.UUID, db: Session = Depends(get_db)):
     """ゲームの自動進行（AIプレイヤーのターン処理）"""
     try:
-        # 同期関数を非同期コンテキストで安全に実行
+        # 非同期関数を実行
         logger.info(f"Starting auto_progress for room {room_id}")
-        result = auto_progress_logic(room_id, db)
+        result = await auto_progress_logic(room_id, db)
         logger.info(f"auto_progress_logic completed: {result}")
         
         # WebSocket通知を送信（auto_progress_logicから移動）
@@ -3500,6 +3807,11 @@ async def handle_auto_progress(room_id: uuid.UUID, db: Session = Depends(get_db)
                 elif ws_data["type"] == "new_vote":
                     await sio.emit("new_vote", ws_data["data"], room=str(room_id))
                     logger.info(f"WebSocket notification sent for AI vote")
+                elif ws_data["type"] == "parallel_votes":
+                    # 並列投票の場合、各投票を個別に通知
+                    for vote_data in ws_data["data"]:
+                        await sio.emit("new_vote", vote_data, room=str(room_id))
+                    logger.info(f"WebSocket notifications sent for {len(ws_data['data'])} parallel AI votes")
             except Exception as ws_error:
                 logger.error(f"WebSocket notification failed: {ws_error}")
             
