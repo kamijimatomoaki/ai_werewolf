@@ -1037,7 +1037,8 @@ def create_room(db: Session, room: RoomCreate, host_name: str) -> Room:
             human_player = Player(
                 room_id=db_room.room_id, 
                 character_name=player_name, 
-                is_human=True
+                is_human=True,
+                is_claimed=(i == 0) # ホストのみclaimed
             )
             db.add(human_player)
             db.flush() # 追加
@@ -1048,7 +1049,8 @@ def create_room(db: Session, room: RoomCreate, host_name: str) -> Room:
                 room_id=db_room.room_id, 
                 character_name=f"AIプレイヤー{i+1}", 
                 is_human=False,
-                character_persona=None  # ペルソナは手動設定を前提
+                character_persona=None,  # ペルソナは手動設定を前提
+                is_claimed=False # AIはclaimedではない
             )
             db.add(ai_player)
             db.flush() # 追加
