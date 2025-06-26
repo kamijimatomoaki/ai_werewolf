@@ -2004,7 +2004,8 @@ def generate_ai_vote_decision(db: Session, room_id: uuid.UUID, ai_player, possib
 
 # --- WebSocket (Socket.IO) Setup ---
 sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
-app.mount("/ws", socketio.ASGIApp(sio))
+# Gunicornが起動できるように、FastAPIアプリとSocket.IOを結合
+app_sio = socketio.ASGIApp(sio, app)
 
 @sio.event
 async def connect(sid, environ):
