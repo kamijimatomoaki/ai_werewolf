@@ -160,13 +160,12 @@ else:
             user=parsed.username,
             password=parsed.password,
             database=parsed.path[1:],  # Remove leading slash
-            connect_timeout=10
+            connect_timeout=5 # 接続タイムアウトを短縮
         )
         conn.close()
         logger.info("PostgreSQL connection test successful")
     except Exception as e:
-        logger.warning(f"PostgreSQL connection failed: {e}")
-        logger.warning("Falling back to SQLite database")
+        logger.error(f"PostgreSQL connection failed: {e}. Falling back to SQLite.", exc_info=True)
         DATABASE_URL = "sqlite:///./werewolf_game.db"
 if not GOOGLE_PROJECT_ID or not GOOGLE_LOCATION:
     logger.warning("WARNING: GOOGLE_PROJECT_ID or GOOGLE_LOCATION environment variable not set. AI persona generation will not work.")
@@ -180,31 +179,33 @@ try:
     # Use SQLite with timeout to avoid hangs
     if DATABASE_URL.startswith("sqlite"):
         engine = create_engine(DATABASE_URL, connect_args={"timeout": 20})
+        logger.info("Using SQLite engine.")
     else:
-        # PostgreSQL CloudSQL用の最適化された接続設定（緊急対応：プール拡張）
+        # PostgreSQL CloudSQL用の最適化された接続設定
         engine = create_engine(
             DATABASE_URL, 
-            pool_timeout=15,           # 接続取得タイムアウト（短縮：フェイルファスト）
-            pool_recycle=1800,         # 30分でリサイクル（CloudSQL推奨）
+            pool_timeout=15,           # 接続取得タイムアウト
+            pool_recycle=1800,         # 30分でリサイクル
             pool_pre_ping=True,        # 接続前にテストpingを送信
-            pool_size=20,              # 基本接続プールサイズ（増加）
-            max_overflow=30,           # 最大追加接続数（合計50接続維持）
-            echo_pool=False,           # プール状況ログ（本番ではFalse）
+            pool_size=20,              # 基本接続プールサイズ
+            max_overflow=30,           # 最大追加接続数
+            echo_pool=False,           # プール状況ログ
             connect_args={
-                "connect_timeout": 15,      # 接続タイムアウト15秒（短縮）
+                "connect_timeout": 15,      # 接続タイムアウト
                 "application_name": "werewolf_game",
-                "keepalives_idle": 300,     # TCP keepalive 5分（短縮）
-                "keepalives_interval": 10,  # keepalive間隔 10秒（短縮）
+                "keepalives_idle": 300,     # TCP keepalive 5分
+                "keepalives_interval": 10,  # keepalive間隔 10秒
                 "keepalives_count": 3       # keepalive試行回数
             }
         )
+        logger.info("Using PostgreSQL engine.")
     
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     Base = declarative_base()
     logger.info("Database engine created successfully.")
 except Exception as e:
-    logger.error(f"Failed to create database engine: {e}")
-    raise
+    logger.critical(f"CRITICAL: Failed to create database engine: {e}. Application cannot start without a working database.", exc_info=True)
+    raise # データベース接続が必須のため、起動を停止
 
 # --- Database Models (`models.py` に相当) ---
 class Room(Base):
