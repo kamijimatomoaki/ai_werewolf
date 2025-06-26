@@ -1031,17 +1031,26 @@ def create_room(db: Session, room: RoomCreate, host_name: str) -> Room:
         db.add(db_room)
         db.flush()
 
-        # 人間プレイヤーを作成（ホスト含む）
-        for i in range(room.human_players):
-            player_name = host_name if i == 0 else f"人間プレイヤー{i+1}"
+        # ホストプレイヤーを最初に追加
+        host_player = Player(
+            room_id=db_room.room_id, 
+            character_name=host_name, 
+            is_human=True,
+            is_claimed=True # ホストはclaimed
+        )
+        db.add(host_player)
+        db.flush()
+
+        # 残りの人間プレイヤーを作成 (ホストを除く)
+        for i in range(1, room.human_players): # 1から開始
             human_player = Player(
                 room_id=db_room.room_id, 
-                character_name=player_name, 
+                character_name=f"人間プレイヤー{i+1}", # 名前を調整
                 is_human=True,
-                is_claimed=(i == 0) # ホストのみclaimed
+                is_claimed=False
             )
             db.add(human_player)
-            db.flush() # 追加
+            db.flush()
             
         # AIプレイヤーを作成
         for i in range(room.ai_players):
