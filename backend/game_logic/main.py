@@ -1182,7 +1182,7 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
                     # Schedule AI progression with a small delay (only if event loop is running)
                     try:
                         loop = asyncio.get_running_loop()
-                        asyncio.create_task(delayed_ai_progression(room_id, 2.0))
+                        asyncio.create_task(delayed_ai_progression(room_id, 5.0))
                     except RuntimeError:
                         # No event loop running, skip scheduling (auto-progression will handle it)
                         logger.info("No event loop running, relying on auto-progression monitor")
@@ -3809,38 +3809,8 @@ async def _auto_progress_logic_impl(room_id: uuid.UUID, db: Session):
         # AIプレイヤーの発言生成
         logger.info(f"Generating speech for AI player: {current_player.character_name}")
         
-        # AI発言間隔制御: 自然な会話のため15秒間隔を設定
-        recent_cutoff = datetime.now(timezone.utc) - timedelta(seconds=15)
-        recent_ai_speeches = db.query(GameLog).filter(
-            GameLog.room_id == room_id,
-            GameLog.event_type == "speech", 
-            GameLog.created_at >= recent_cutoff,
-            GameLog.actor_player_id != current_player.player_id
-        ).count()
-        
-        # 最後のAI発言から十分な時間が経過しているかチェック
-        if recent_ai_speeches > 0:
-            last_ai_speech = db.query(GameLog).filter(
-                GameLog.room_id == room_id,
-                GameLog.event_type == "speech",
-                GameLog.actor_player_id != current_player.player_id
-            ).order_by(GameLog.created_at.desc()).first()
-            
-            if last_ai_speech:
-                try:
-                    created_at = last_ai_speech.created_at
-                    if created_at.tzinfo is None:
-                        created_at = created_at.replace(tzinfo=timezone.utc)
-                    seconds_since_last = (datetime.now(timezone.utc) - created_at).total_seconds()
-                    
-                    if seconds_since_last < 15:  # 15秒未満なら待機
-                        logger.info(f"AI speech pacing: waiting {15 - seconds_since_last:.1f}s for natural conversation flow")
-                        return {"auto_progressed": False, "message": f"AI pacing control ({15 - seconds_since_last:.1f}s remaining)"}
-                except Exception as time_error:
-                    logger.error(f"AI speech timing error: {time_error}")
-            
-            logger.info("Another AI player recently spoke, maintaining conversation pace...")
-            return {"auto_progressed": False, "message": "Maintaining natural conversation pace"}
+        # AI発言生成: 最新のサマリーと会話履歴に基づいて都度生成
+        logger.info(f"Generating AI speech for {current_player.character_name} based on latest context")
         
         try:
             # AI発言を生成（同期関数を非同期コンテキストで安全に実行）
