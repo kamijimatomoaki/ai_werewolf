@@ -3963,90 +3963,13 @@ async def _auto_progress_logic_impl(room_id: uuid.UUID, db: Session):
                 await sio.emit("new_speech", speech_data, room=str(room_id))
                 logger.info(f"WebSocket notification sent for AI speech: {current_player.character_name}")
                 
-                # 発言後、次のプレイヤーがAIの場合は順次処理（1つずつ処理、最大3回まで）
-                chain_count = 0
-                max_chain = 3
-                next_speakers = []
-                
-                # 更新されたroom情報を取得
-                db.refresh(updated_room)
-                current_room = updated_room
-                
-                # 順次処理のため各AIスピーチの間に間隔を設ける
-                await asyncio.sleep(2.0)  # 2秒間隔
-                
-                while chain_count < max_chain:
-                    # 現在のターンプレイヤーを確認
-                    if (current_room.turn_order and 
-                        current_room.current_turn_index < len(current_room.turn_order)):
-                        
-                        next_player_id = current_room.turn_order[current_room.current_turn_index]
-                        try:
-                            next_player = get_player(db, uuid.UUID(next_player_id))
-                            if (next_player and next_player.is_alive and 
-                                not next_player.is_human and next_player.player_id != current_player.player_id):
-                                
-                                logger.info(f"Chaining to next AI player: {next_player.character_name}")
-                                
-                                # 次のAI発言を生成
-                                try:
-                                    next_speech = generate_ai_speech(db, room_id, next_player.player_id, emergency_skip=False)
-                                    if next_speech:
-                                        # 発言を実行
-                                        current_room = speak_logic(
-                                            room_id=room_id,
-                                            player_id=next_player.player_id,
-                                            statement=next_speech,
-                                            db=db
-                                        )
-                                        
-                                        next_speakers.append({
-                                            "player_name": next_player.character_name,
-                                            "statement": next_speech[:100] + "..." if len(next_speech) > 100 else next_speech
-                                        })
-                                        chain_count += 1
-                                        
-                                        # チェーンスピーチの即座WebSocket通知
-                                        await sio.emit("new_speech", {
-                                            "player_id": str(next_player.player_id),
-                                            "player_name": next_player.character_name,
-                                            "statement": next_speech,
-                                            "timestamp": datetime.now(timezone.utc).isoformat(),
-                                            "is_ai": True,
-                                            "is_chain": True,
-                                            "chain_order": chain_count
-                                        }, room=str(room_id))
-                                        
-                                        # 更新されたroom情報を取得
-                                        db.refresh(current_room)
-                                        
-                                        # 次のチェーンスピーチまで間隔を置く
-                                        if chain_count < max_chain - 1:  # 最後のチェーン以外
-                                            await asyncio.sleep(2.0)  # 2秒間隔
-                                    else:
-                                        break  # 発言生成失敗時は連鎖停止
-                                except Exception as chain_error:
-                                    logger.warning(f"Failed to chain AI speech for {next_player.character_name}: {chain_error}")
-                                    break  # エラー時は連鎖停止
-                            else:
-                                break  # 次が人間プレイヤーまたは同一プレイヤーの場合は停止
-                        except Exception as player_error:
-                            logger.warning(f"Error getting next player: {player_error}")
-                            break
-                    else:
-                        break  # ターン順序に問題がある場合は停止
-                
                 response_message = f"AI player {current_player.character_name} spoke"
-                if next_speakers:
-                    chained_names = [speaker["player_name"] for speaker in next_speakers]
-                    response_message += f" (chained: {', '.join(chained_names)})"
                 
                 return {
                     "auto_progressed": True,
                     "message": response_message,
                     "speaker": current_player.character_name,
                     "statement": ai_speech[:100] + "..." if len(ai_speech) > 100 else ai_speech,
-                    "chained_speakers": next_speakers,
                     "sequential": True
                 }
             else:
