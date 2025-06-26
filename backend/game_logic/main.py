@@ -2308,6 +2308,94 @@ async def process_ai_voting_parallel(
         logger.error(f"Error in AI voting PostgreSQL distributed lock for room {room_id}: {e}")
         return {"status": "error", "message": f"AI voting lock error: {str(e)}"}
 
+async def process_ai_voting_sequential(
+    room_id: uuid.UUID, 
+    db: Session,
+    unvoted_ai_players: list,
+    possible_targets: list
+) -> Dict[str, any]:
+    """AI投票を順次処理で実行（一斉表示問題解決）"""
+    
+    if not unvoted_ai_players:
+        return {"status": "no_unvoted_players"}
+    
+    # PostgreSQL分散ロック取得
+    lock_name = f"ai_voting_sequential:{room_id}"
+    metadata = {"room_id": str(room_id), "operation": "ai_voting_sequential", "ai_count": len(unvoted_ai_players)}
+    
+    try:
+        async with PostgreSQLLockContext(lock_name, ttl=300, metadata=metadata):  # 5分TTL（順次処理のため長め）
+            logger.info(f"Sequential AI voting lock acquired for room {room_id}")
+            
+            start_time = time.time()
+            results = []
+            successful_votes = 0
+            failed_votes = 0
+            
+            for i, ai_player in enumerate(unvoted_ai_players):
+                try:
+                    logger.info(f"Processing sequential vote for {ai_player.character_name} ({i+1}/{len(unvoted_ai_players)})")
+                    
+                    # 1. 個別AI投票処理
+                    player_targets = [p for p in possible_targets if p.player_id != ai_player.player_id]
+                    result = await process_single_ai_vote_async(room_id, ai_player, player_targets, db)
+                    
+                    results.append(result)
+                    
+                    # 2. 成功時は即座にWebSocket通知
+                    if result.get("status") == "success":
+                        successful_votes += 1
+                        
+                        # 個別投票通知を即座に送信
+                        await sio.emit("new_vote", {
+                            "voter_id": str(ai_player.player_id),
+                            "voter_name": ai_player.character_name,
+                            "target_id": result.get("target_id"),
+                            "target_name": result.get("target_name"),
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                            "is_ai": True,
+                            "sequential_order": i + 1,
+                            "total_voters": len(unvoted_ai_players)
+                        }, room=str(room_id))
+                        
+                        logger.info(f"Vote notification sent for {ai_player.character_name} -> {result.get('target_name')}")
+                    else:
+                        failed_votes += 1
+                        logger.warning(f"Vote failed for {ai_player.character_name}: {result.get('error', 'Unknown error')}")
+                    
+                    # 3. 次の投票まで間隔を置く（最後以外）
+                    if i < len(unvoted_ai_players) - 1:
+                        await asyncio.sleep(1.5)  # 1.5秒間隔で次の投票
+                        
+                except Exception as e:
+                    logger.error(f"Error in sequential voting for {ai_player.character_name}: {e}")
+                    failed_votes += 1
+                    results.append({
+                        "status": "error",
+                        "player_id": str(ai_player.player_id),
+                        "player_name": ai_player.character_name,
+                        "error": str(e)
+                    })
+            
+            total_time = time.time() - start_time
+            logger.info(f"Sequential AI voting completed: {successful_votes} success, {failed_votes} failed, {total_time:.2f}s total")
+            
+            return {
+                "status": "completed",
+                "results": results,
+                "successful_votes": successful_votes,
+                "failed_votes": failed_votes,
+                "processing_time": total_time,
+                "sequential": True
+            }
+            
+    except LockAcquisitionError as e:
+        logger.warning(f"Failed to acquire sequential AI voting lock for room {room_id}: {e}")
+        return {"status": "lock_failed", "message": "Sequential AI voting locked by another instance"}
+    except Exception as e:
+        logger.error(f"Error in sequential AI voting for room {room_id}: {e}")
+        return {"status": "error", "message": f"Sequential AI voting error: {str(e)}"}
+
 async def force_remaining_votes_async(
     room_id: uuid.UUID, 
     db: Session, 
@@ -3863,7 +3951,7 @@ async def _auto_progress_logic_impl(room_id: uuid.UUID, db: Session):
                     logger.error(f"Error in speak_logic: {speak_error}", exc_info=True)
                     return {"auto_progressed": False, "message": f"Error executing speech: {str(speak_error)}"}
                 
-                # レスポンスにWebSocket送信用データを含める
+                # 最初のAIスピーチの即座WebSocket通知
                 speech_data = {
                     "player_id": str(current_player.player_id),
                     "player_name": current_player.character_name,
@@ -3872,7 +3960,10 @@ async def _auto_progress_logic_impl(room_id: uuid.UUID, db: Session):
                     "is_ai": True
                 }
                 
-                # 発言後、次のプレイヤーがAIの場合は連続で処理する（最大3回まで）
+                await sio.emit("new_speech", speech_data, room=str(room_id))
+                logger.info(f"WebSocket notification sent for AI speech: {current_player.character_name}")
+                
+                # 発言後、次のプレイヤーがAIの場合は順次処理（1つずつ処理、最大3回まで）
                 chain_count = 0
                 max_chain = 3
                 next_speakers = []
@@ -3880,6 +3971,9 @@ async def _auto_progress_logic_impl(room_id: uuid.UUID, db: Session):
                 # 更新されたroom情報を取得
                 db.refresh(updated_room)
                 current_room = updated_room
+                
+                # 順次処理のため各AIスピーチの間に間隔を設ける
+                await asyncio.sleep(2.0)  # 2秒間隔
                 
                 while chain_count < max_chain:
                     # 現在のターンプレイヤーを確認
@@ -3912,8 +4006,23 @@ async def _auto_progress_logic_impl(room_id: uuid.UUID, db: Session):
                                         })
                                         chain_count += 1
                                         
+                                        # チェーンスピーチの即座WebSocket通知
+                                        await sio.emit("new_speech", {
+                                            "player_id": str(next_player.player_id),
+                                            "player_name": next_player.character_name,
+                                            "statement": next_speech,
+                                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                                            "is_ai": True,
+                                            "is_chain": True,
+                                            "chain_order": chain_count
+                                        }, room=str(room_id))
+                                        
                                         # 更新されたroom情報を取得
                                         db.refresh(current_room)
+                                        
+                                        # 次のチェーンスピーチまで間隔を置く
+                                        if chain_count < max_chain - 1:  # 最後のチェーン以外
+                                            await asyncio.sleep(2.0)  # 2秒間隔
                                     else:
                                         break  # 発言生成失敗時は連鎖停止
                                 except Exception as chain_error:
@@ -3938,7 +4047,7 @@ async def _auto_progress_logic_impl(room_id: uuid.UUID, db: Session):
                     "speaker": current_player.character_name,
                     "statement": ai_speech[:100] + "..." if len(ai_speech) > 100 else ai_speech,
                     "chained_speakers": next_speakers,
-                    "websocket_data": {"type": "new_speech", "data": speech_data}
+                    "sequential": True
                 }
             else:
                 logger.warning(f"Failed to generate speech for AI player {current_player.character_name}")
@@ -3992,42 +4101,33 @@ async def _auto_progress_logic_impl(room_id: uuid.UUID, db: Session):
         possible_targets = alive_players  # 各プレイヤーは自分以外に投票可能
         
         try:
-            voting_result = await process_ai_voting_parallel(
+            voting_result = await process_ai_voting_sequential(
                 room_id, db, unvoted_ai_players, possible_targets
             )
             
             total_time = time.time() - start_time
-            logger.info(f"Parallel voting completed in {total_time:.2f}s: {voting_result}")
+            logger.info(f"Sequential voting completed in {total_time:.2f}s: {voting_result}")
             
-            # WebSocket通知用のデータを準備
-            websocket_data = []
+            # 順次処理では各投票が即座に通知されるため、追加のWebSocket通知は不要
             successful_voters = []
             
             if voting_result.get("status") == "completed":
                 for result in voting_result.get("results", []):
                     if result.get("status") in ["success", "fallback"]:
                         successful_voters.append(result["player_name"])
-                        websocket_data.append({
-                            "voter_id": result.get("player_id"),
-                            "voter_name": result["player_name"],
-                            "target_id": result.get("target_id"),
-                            "target_name": result.get("target_name"),
-                            "timestamp": datetime.now(timezone.utc).isoformat(),
-                            "is_ai": True
-                        })
             
             return {
                 "auto_progressed": True,
-                "message": f"Parallel AI voting completed: {voting_result['successful_votes']} success, {voting_result['failed_votes']} failed",
+                "message": f"Sequential AI voting completed: {voting_result['successful_votes']} success, {voting_result['failed_votes']} failed",
                 "voters": successful_voters,
                 "voting_result": voting_result,
-                "websocket_data": {"type": "parallel_votes", "data": websocket_data},
-                "processing_time": total_time
+                "processing_time": total_time,
+                "sequential": True
             }
             
         except Exception as e:
-            logger.error(f"Error in parallel AI voting: {e}", exc_info=True)
-            return {"auto_progressed": False, "message": f"Error in parallel voting: {str(e)}"}
+            logger.error(f"Error in sequential AI voting: {e}", exc_info=True)
+            return {"auto_progressed": False, "message": f"Error in sequential voting: {str(e)}"}
     
     return {"auto_progressed": False, "message": "No auto-progression needed"}
 
@@ -4040,7 +4140,7 @@ async def handle_auto_progress(room_id: uuid.UUID, db: Session = Depends(get_db)
         result = await auto_progress_logic(room_id, db)
         logger.info(f"auto_progress_logic completed: {result}")
         
-        # WebSocket通知を送信（auto_progress_logicから移動）
+        # WebSocket通知を送信（順次処理の場合は各処理で個別に送信済み）
         if result.get("auto_progressed") and "websocket_data" in result:
             try:
                 ws_data = result["websocket_data"]
@@ -4061,7 +4161,8 @@ async def handle_auto_progress(room_id: uuid.UUID, db: Session = Depends(get_db)
                 logger.error(f"WebSocket notification failed: {ws_error}")
             
             # レスポンスからWebSocketデータを削除
-            del result["websocket_data"]
+            if "websocket_data" in result:
+                del result["websocket_data"]
         
         return result
     except Exception as e:
