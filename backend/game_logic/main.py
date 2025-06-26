@@ -1039,6 +1039,7 @@ def create_room(db: Session, room: RoomCreate, host_name: str) -> Room:
                 is_human=True
             )
             db.add(human_player)
+            db.flush() # 追加
             
         # AIプレイヤーを作成
         for i in range(room.ai_players):
@@ -1049,6 +1050,7 @@ def create_room(db: Session, room: RoomCreate, host_name: str) -> Room:
                 character_persona=None  # ペルソナは手動設定を前提
             )
             db.add(ai_player)
+            db.flush() # 追加
             
         db.commit()
         db.refresh(db_room)
