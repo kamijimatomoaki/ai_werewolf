@@ -3832,7 +3832,7 @@ async def _auto_progress_logic_impl(room_id: uuid.UUID, db: Session):
                         if created_at.tzinfo is None:
                             created_at = created_at.replace(tzinfo=timezone.utc)
                         time_since_last_speech = (datetime.now(timezone.utc) - created_at).total_seconds()
-                        if time_since_last_speech > 45:  # 45秒以上待機（短縮）
+                        if time_since_last_speech > 90:  # 90秒以上待機（緩和）
                             emergency_skip = True
                             logger.warning(f"Emergency skip triggered: {current_player.character_name} has been waiting {time_since_last_speech:.1f}s")
                     except Exception as timezone_error:
@@ -4051,10 +4051,12 @@ async def handle_auto_progress(room_id: uuid.UUID, db: Session = Depends(get_db)
                     await sio.emit("new_vote", ws_data["data"], room=str(room_id))
                     logger.info(f"WebSocket notification sent for AI vote")
                 elif ws_data["type"] == "parallel_votes":
-                    # 並列投票の場合、各投票を個別に通知
-                    for vote_data in ws_data["data"]:
+                    # 並列投票の場合、各投票を間隔制御付きで個別に通知
+                    for i, vote_data in enumerate(ws_data["data"]):
+                        if i > 0:  # 最初の送信以外は間隔を置く
+                            await asyncio.sleep(0.5)  # 500ms間隔で送信
                         await sio.emit("new_vote", vote_data, room=str(room_id))
-                    logger.info(f"WebSocket notifications sent for {len(ws_data['data'])} parallel AI votes")
+                    logger.info(f"WebSocket notifications sent for {len(ws_data['data'])} parallel AI votes with 500ms intervals")
             except Exception as ws_error:
                 logger.error(f"WebSocket notification failed: {ws_error}")
             
