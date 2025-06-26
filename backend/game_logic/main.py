@@ -1029,11 +1029,17 @@ def create_room(db: Session, room: RoomCreate, host_name: str) -> Room:
         db.add(db_room)
         db.flush()
 
-        # ホストプレイヤーのみを作成（他の人間プレイヤーは後から参加）
-        host_player = Player(room_id=db_room.room_id, character_name=host_name, is_human=True)
-        db.add(host_player)
-        
-        # AIプレイヤーを作成（ペルソナなし、高速作成）
+        # 人間プレイヤーを作成（ホスト含む）
+        for i in range(room.human_players):
+            is_host = (i == 0) # 最初のプレイヤーをホストとする
+            human_player = Player(
+                room_id=db_room.room_id, 
+                character_name=host_name if is_host else f"人間プレイヤー{i+1}", 
+                is_human=True
+            )
+            db.add(human_player)
+            
+        # AIプレイヤーを作成
         for i in range(room.ai_players):
             ai_player = Player(
                 room_id=db_room.room_id, 
@@ -2010,8 +2016,32 @@ app_sio = socketio.ASGIApp(sio, app)
 @sio.event
 async def connect(sid, environ):
     logger.info(f"Socket.IO client connected: {sid}")
-    # 接続時にセッション情報を要求
-    await sio.emit('request_session', to=sid)
+    # クライアントからセッション情報を取得
+    query_string = environ.get('QUERY_STRING', '')
+    query_params = dict(qc.split('=') for qc in query_string.split('&') if qc)
+    session_token = query_params.get('session_token')
+
+    if session_token:
+        db = SessionLocal()
+        try:
+            player_session = db.query(PlayerSession).filter(
+                PlayerSession.session_token == session_token,
+                PlayerSession.expires_at > datetime.now(timezone.utc)
+            ).first()
+            if player_session:
+                sio.save_session(sid, {'player_id': str(player_session.player_id)})
+                logger.info(f"Client {sid} authenticated as player {player_session.player_id}")
+                await sio.emit('authenticated', {'player_id': str(player_session.player_id)}, to=sid)
+            else:
+                logger.warning(f"Client {sid} provided invalid or expired session token.")
+                await sio.emit('authentication_failed', {'message': 'Invalid or expired session token.'}, to=sid)
+                await sio.disconnect(sid)
+        finally:
+            db.close()
+    else:
+        logger.warning(f"Client {sid} connected without session token.")
+        await sio.emit('authentication_required', {'message': 'Session token required.'}, to=sid)
+        await sio.disconnect(sid)
 
 @sio.event
 async def disconnect(sid):
@@ -2063,13 +2093,24 @@ async def join_room_api(room_id: uuid.UUID, player_name: str, db: Session = Depe
     
     new_player = Player(room_id=room_id, character_name=player_name, is_human=True)
     db.add(new_player)
+    db.flush() # player_idを確定させるため
+
+    # プレイヤーセッションを作成
+    session_token = secrets.token_urlsafe(32)
+    expires_at = datetime.now(timezone.utc) + timedelta(days=1) # 24時間有効
+    player_session = PlayerSession(
+        player_id=new_player.player_id,
+        session_token=session_token,
+        expires_at=expires_at
+    )
+    db.add(player_session)
     db.commit()
     db.refresh(new_player)
     
     # 他のプレイヤーに通知
     await sio.emit('player_joined', {'room_id': str(room_id), 'player_name': player_name}, room=str(room_id))
     
-    return JoinRoomResponse(player_id=new_player.player_id, player_name=new_player.character_name, room_id=room_id, session_token="dummy_token") # session_tokenは仮
+    return JoinRoomResponse(player_id=new_player.player_id, player_name=new_player.character_name, room_id=room_id, session_token=session_token)
 
 @app.post("/api/rooms/{room_id}/start", response_model=RoomInfo, summary="ゲームを開始")
 async def start_game(room_id: uuid.UUID, db: Session = Depends(get_db)):
