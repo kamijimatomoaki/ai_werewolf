@@ -1018,8 +1018,16 @@ def get_role_config(player_count: int) -> List[str]:
 
 def create_room(db: Session, room: RoomCreate, host_name: str) -> Room:
     try:
+        # ai_playersの値を無視し、total_playersとhuman_playersから計算し直す
+        # フロントエンドから誤った値が送られてきても、ここで上書きする
+        room.ai_players = room.total_players - room.human_players
+        if room.ai_players < 0:
+            raise HTTPException(status_code=400, detail="AI players count cannot be negative.")
+        logger.info(f"Adjusted ai_players for room {room.room_name}. Calculated AI players: {room.ai_players}")
+
         if room.total_players != room.human_players + room.ai_players:
-            raise HTTPException(status_code=400, detail="Total players must equal human + AI players.")
+            # このチェックは、ai_playersを計算し直した後も整合性が取れているかを確認するために残す
+            raise HTTPException(status_code=400, detail="Total players must equal human + AI players after adjustment.")
 
         db_room = Room(
             room_name=room.room_name,
