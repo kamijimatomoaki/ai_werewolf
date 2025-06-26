@@ -1948,7 +1948,7 @@ def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid.UUID,
         logger.info(f"Using emergency ultra-safe fallback speech for {player_name}: '{fallback_speech}'")
         return fallback_speech
 
-def generate_ai_vote_decision(db: Session, room_id: uuid.UUID, ai_player, possible_targets) -> Player:
+async def generate_ai_vote_decision(db: Session, room_id: uuid.UUID, ai_player, possible_targets) -> Player:
     """
     LLMベースのAI投票先決定
     """
@@ -1967,22 +1967,12 @@ def generate_ai_vote_decision(db: Session, room_id: uuid.UUID, ai_player, possib
             
             model = GenerativeModel("gemini-1.5-flash")
             
-            # タイムアウト付きでVertex AI APIを呼び出し
-            import asyncio
-            from functools import partial
-            
-            async def generate_with_timeout():
-                loop = asyncio.get_event_loop()
-                # 30秒のタイムアウトでVertex AI APIを呼び出し
-                return await asyncio.wait_for(
-                    loop.run_in_executor(None, partial(model.generate_content, prompt)),
-                    timeout=30.0
-                )
-            
             try:
                 # 非同期でタイムアウト付き実行
-                import asyncio
-                response = asyncio.get_event_loop().run_until_complete(generate_with_timeout())
+                response = await asyncio.wait_for(
+                    asyncio.to_thread(model.generate_content, prompt),
+                    timeout=30.0
+                )
             except asyncio.TimeoutError:
                 logger.warning(f"AI vote decision timeout for {ai_player.character_name}, using random selection")
                 return random.choice(possible_targets)
@@ -2269,7 +2259,7 @@ def auto_progress_logic(room_id: uuid.UUID, db: Session) -> dict:
             if not possible_targets:
                 return {"auto_progressed": False, "message": "No one to vote for."}
             
-            target_player = generate_ai_vote_decision(db, room_id, ai_to_vote, possible_targets)
+            target_player = await generate_ai_vote_decision(db, room_id, ai_to_vote, possible_targets)
             
             # 投票処理
             process_vote(db, room_id, ai_to_vote.player_id, target_player.player_id)
