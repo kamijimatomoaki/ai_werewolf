@@ -2052,8 +2052,8 @@ def read_room(room_id: uuid.UUID, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Room not found")
     return db_room
 
-@app.post("/api/rooms/{room_id}/join", summary="ゲームルームに参加")
-def join_room_api(room_id: uuid.UUID, player_name: str, db: Session = Depends(get_db)):
+@app.post("/api/rooms/{room_id}/join", response_model=JoinRoomResponse, summary="ゲームルームに参加")
+async def join_room_api(room_id: uuid.UUID, player_name: str, db: Session = Depends(get_db)):
     """既存のゲームルームに新しいプレイヤーとして参加する"""
     db_room = get_room(db, room_id)
     if not db_room:
@@ -2067,9 +2067,9 @@ def join_room_api(room_id: uuid.UUID, player_name: str, db: Session = Depends(ge
     db.refresh(new_player)
     
     # 他のプレイヤーに通知
-    asyncio.run(sio.emit('player_joined', {'room_id': str(room_id), 'player_name': player_name}, room=str(room_id)))
+    await sio.emit('player_joined', {'room_id': str(room_id), 'player_name': player_name}, room=str(room_id))
     
-    return {"player_id": str(new_player.player_id), "message": "Successfully joined room"}
+    return JoinRoomResponse(player_id=new_player.player_id, player_name=new_player.character_name, room_id=room_id, session_token="dummy_token") # session_tokenは仮
 
 @app.post("/api/rooms/{room_id}/start", response_model=RoomInfo, summary="ゲームを開始")
 async def start_game(room_id: uuid.UUID, db: Session = Depends(get_db)):
