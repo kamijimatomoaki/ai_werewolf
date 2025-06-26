@@ -24,8 +24,6 @@ import socketio
 import vertexai
 from vertexai.generative_models import GenerativeModel
 from dotenv import load_dotenv
-import redis
-import hashlib
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -296,6 +294,29 @@ class GameSummary(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     room = relationship("Room")
+
+class DistributedLock(Base):
+    __tablename__ = "distributed_locks"
+    lock_id = Column(String, primary_key=True)  # ロック名（例: "auto_progress:room_uuid"）
+    owner_id = Column(String, nullable=False)  # ロック所有者ID（プロセス識別子）
+    owner_info = Column(JSON, nullable=True)  # 所有者情報（IP、プロセスID等）
+    acquired_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    expires_at = Column(DateTime, nullable=False)  # ロック有効期限
+    lock_value = Column(String, nullable=False)  # ロック値（一意な識別子）
+    metadata_info = Column(JSON, nullable=True)  # 追加メタデータ（room_id等）
+    
+    def is_expired(self) -> bool:
+        """ロックが期限切れかどうかを確認"""
+        current_time = datetime.now(timezone.utc)
+        # expires_atがnaiveな場合はUTCタイムゾーンを付与
+        expires_at = self.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        return current_time >= expires_at
+    
+    def is_owned_by(self, owner_id: str, lock_value: str) -> bool:
+        """指定された所有者とロック値でロックが所有されているかを確認"""
+        return self.owner_id == owner_id and self.lock_value == lock_value
 
 # 起動時にテーブルを自動作成
 try:
@@ -2184,11 +2205,12 @@ async def process_ai_voting_parallel(
     if not unvoted_ai_players:
         return {"status": "no_unvoted_players"}
     
-    # 分散ロック取得（AI投票処理の重複実行防止）
+    # PostgreSQL分散ロック取得（AI投票処理の重複実行防止）
     lock_name = f"ai_voting:{room_id}"
+    metadata = {"room_id": str(room_id), "operation": "ai_voting", "ai_count": len(unvoted_ai_players)}
     try:
-        async with DistributedLockContext(lock_name, ttl=120):  # 2分TTL
-            logger.info(f"AI voting distributed lock acquired for room {room_id}")
+        async with PostgreSQLLockContext(lock_name, ttl=120, metadata=metadata):  # 2分TTL
+            logger.info(f"AI voting PostgreSQL distributed lock acquired for room {room_id}")
             
             start_time = time.time()
             VotingMetrics.log_voting_start(room_id, len(unvoted_ai_players) + len([p for p in possible_targets if p.is_human]), len(unvoted_ai_players))
@@ -2280,10 +2302,10 @@ async def process_ai_voting_parallel(
             }
             
     except RuntimeError as e:
-        logger.warning(f"Failed to acquire AI voting distributed lock for room {room_id}: {e}")
+        logger.warning(f"Failed to acquire AI voting PostgreSQL distributed lock for room {room_id}: {e}")
         return {"status": "lock_failed", "message": "AI voting locked by another instance"}
     except Exception as e:
-        logger.error(f"Error in AI voting distributed lock for room {room_id}: {e}")
+        logger.error(f"Error in AI voting PostgreSQL distributed lock for room {room_id}: {e}")
         return {"status": "error", "message": f"AI voting lock error: {str(e)}"}
 
 async def force_remaining_votes_async(
@@ -2305,132 +2327,106 @@ async def force_remaining_votes_async(
             except Exception as e:
                 logger.error(f"Failed to force vote for {ai_player.character_name}: {e}")
 
+
 # =================================================================
-# Redis分散ロック機構（RedLockアルゴリズム）
+# PostgreSQL分散ロック機構
 # =================================================================
 
-class RedisDistributedLock:
-    """Redis-based distributed locking using RedLock algorithm"""
+class PostgreSQLDistributedLock:
+    """PostgreSQL-based distributed locking system"""
     
-    def __init__(self, redis_urls: List[str] = None, default_ttl: int = 30):
+    def __init__(self, db_session_factory=None):
         """
-        Initialize distributed lock with multiple Redis instances
+        Initialize PostgreSQL distributed lock
         
         Args:
-            redis_urls: List of Redis connection URLs
-            default_ttl: Default lock TTL in seconds
+            db_session_factory: Database session factory (defaults to SessionLocal)
         """
-        if not redis_urls:
-            # デフォルトのRedis接続（CloudSQLとの分離）
-            redis_urls = [
-                os.getenv('REDIS_URL', 'redis://localhost:6379/1'),  # データベース1を使用
-            ]
-        
-        self.redis_clients = []
-        self.default_ttl = default_ttl
-        
-        for url in redis_urls:
-            try:
-                client = redis.from_url(url, decode_responses=True, socket_timeout=5)
-                # 接続テスト
-                client.ping()
-                self.redis_clients.append(client)
-                logger.info(f"Redis client connected: {url}")
-            except Exception as e:
-                logger.warning(f"Failed to connect to Redis {url}: {e}")
-        
-        if not self.redis_clients:
-            logger.warning("No Redis connections available - distributed locking disabled")
+        self.db_session_factory = db_session_factory or SessionLocal
+        self.instance_id = f"{os.getpid()}:{secrets.token_hex(8)}"
+        logger.info(f"PostgreSQL distributed lock initialized with instance_id: {self.instance_id}")
     
     def _generate_lock_value(self) -> str:
-        """Generate unique lock value for this process"""
-        return f"{os.getpid()}:{secrets.token_hex(16)}"
+        """Generate unique lock value for this instance"""
+        return f"{self.instance_id}:{secrets.token_hex(16)}"
     
-    def _acquire_single_lock(self, client: redis.Redis, key: str, value: str, ttl: int) -> bool:
-        """Acquire lock on single Redis instance"""
-        try:
-            # SET key value NX EX ttl (atomic operation)
-            result = client.set(key, value, nx=True, ex=ttl)
-            return result is True
-        except Exception as e:
-            logger.error(f"Failed to acquire lock on Redis: {e}")
-            return False
+    def _get_owner_info(self) -> dict:
+        """Get owner information for debugging"""
+        return {
+            "instance_id": self.instance_id,
+            "process_id": os.getpid(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "hostname": os.getenv("HOSTNAME", "unknown")
+        }
     
-    def _release_single_lock(self, client: redis.Redis, key: str, value: str) -> bool:
-        """Release lock on single Redis instance using Lua script"""
-        lua_script = """
-        if redis.call("GET", KEYS[1]) == ARGV[1] then
-            return redis.call("DEL", KEYS[1])
-        else
-            return 0
-        end
+    async def acquire_lock(self, lock_name: str, ttl: int = 30, metadata: dict = None) -> Optional[str]:
         """
-        try:
-            result = client.eval(lua_script, 1, key, value)
-            return result == 1
-        except Exception as e:
-            logger.error(f"Failed to release lock on Redis: {e}")
-            return False
-    
-    async def acquire_lock(self, lock_name: str, ttl: int = None) -> Optional[str]:
-        """
-        Acquire distributed lock using RedLock algorithm
+        Acquire distributed lock using PostgreSQL
         
         Args:
             lock_name: Name of the lock
             ttl: Time-to-live in seconds
+            metadata: Additional metadata to store with the lock
             
         Returns:
             Lock value if acquired, None otherwise
         """
-        if not self.redis_clients:
-            logger.warning("No Redis clients available for locking")
-            return None
-        
-        ttl = ttl or self.default_ttl
-        lock_key = f"werewolf:lock:{lock_name}"
-        lock_value = self._generate_lock_value()
-        
-        start_time = time.time()
-        acquired_count = 0
-        quorum = len(self.redis_clients) // 2 + 1  # 過半数
-        
-        # 並列で全Redisインスタンスにロック取得を試行
-        acquire_tasks = []
-        for client in self.redis_clients:
-            task = asyncio.create_task(
-                asyncio.get_event_loop().run_in_executor(
-                    None, self._acquire_single_lock, client, lock_key, lock_value, ttl
-                )
-            )
-            acquire_tasks.append(task)
-        
+        db = self.db_session_factory()
         try:
-            results = await asyncio.wait_for(
-                asyncio.gather(*acquire_tasks, return_exceptions=True),
-                timeout=5.0
-            )
+            lock_value = self._generate_lock_value()
+            expires_at = datetime.now(timezone.utc) + timedelta(seconds=ttl)
+            owner_info = self._get_owner_info()
             
-            for result in results:
-                if result is True:
-                    acquired_count += 1
+            # 期限切れロックのクリーンアップ
+            await self._cleanup_expired_locks(db)
             
-            elapsed_time = time.time() - start_time
-            validity_time = ttl - elapsed_time - 0.1  # ドリフト調整
-            
-            if acquired_count >= quorum and validity_time > 0:
-                logger.info(f"Distributed lock acquired: {lock_name} ({acquired_count}/{len(self.redis_clients)} nodes)")
+            # ロック取得を試行（UPSERT操作）
+            try:
+                # 既存ロックを確認
+                existing_lock = db.query(DistributedLock).filter(
+                    DistributedLock.lock_id == lock_name
+                ).with_for_update(skip_locked=True).first()
+                
+                if existing_lock:
+                    if existing_lock.is_expired():
+                        # 期限切れロックを更新
+                        existing_lock.owner_id = self.instance_id
+                        existing_lock.owner_info = owner_info
+                        existing_lock.acquired_at = datetime.now(timezone.utc)
+                        existing_lock.expires_at = expires_at
+                        existing_lock.lock_value = lock_value
+                        existing_lock.metadata_info = metadata
+                    else:
+                        # 有効なロックが存在
+                        logger.debug(f"Lock {lock_name} is already held by {existing_lock.owner_id}")
+                        return None
+                else:
+                    # 新しいロックを作成
+                    new_lock = DistributedLock(
+                        lock_id=lock_name,
+                        owner_id=self.instance_id,
+                        owner_info=owner_info,
+                        acquired_at=datetime.now(timezone.utc),
+                        expires_at=expires_at,
+                        lock_value=lock_value,
+                        metadata_info=metadata
+                    )
+                    db.add(new_lock)
+                
+                db.commit()
+                logger.info(f"PostgreSQL distributed lock acquired: {lock_name} (TTL: {ttl}s)")
                 return lock_value
-            else:
-                # ロック取得失敗 - 部分的に取得したロックを解放
-                await self.release_lock(lock_name, lock_value)
-                logger.warning(f"Failed to acquire distributed lock: {lock_name} ({acquired_count}/{len(self.redis_clients)} nodes)")
+                
+            except Exception as e:
+                db.rollback()
+                logger.warning(f"Failed to acquire PostgreSQL lock {lock_name}: {e}")
                 return None
                 
-        except asyncio.TimeoutError:
-            logger.error(f"Timeout acquiring distributed lock: {lock_name}")
-            await self.release_lock(lock_name, lock_value)
+        except Exception as e:
+            logger.error(f"Error in PostgreSQL lock acquisition: {e}")
             return None
+        finally:
+            db.close()
     
     async def release_lock(self, lock_name: str, lock_value: str) -> bool:
         """
@@ -2443,55 +2439,95 @@ class RedisDistributedLock:
         Returns:
             True if successfully released
         """
-        if not self.redis_clients or not lock_value:
+        if not lock_value:
             return False
-        
-        lock_key = f"werewolf:lock:{lock_name}"
-        
-        # 並列で全Redisインスタンスからロック解放
-        release_tasks = []
-        for client in self.redis_clients:
-            task = asyncio.create_task(
-                asyncio.get_event_loop().run_in_executor(
-                    None, self._release_single_lock, client, lock_key, lock_value
-                )
-            )
-            release_tasks.append(task)
-        
+            
+        db = self.db_session_factory()
         try:
-            results = await asyncio.wait_for(
-                asyncio.gather(*release_tasks, return_exceptions=True),
-                timeout=3.0
-            )
+            # ロックを取得して所有者を確認
+            lock = db.query(DistributedLock).filter(
+                DistributedLock.lock_id == lock_name
+            ).with_for_update().first()
             
-            released_count = sum(1 for result in results if result is True)
-            logger.info(f"Distributed lock released: {lock_name} ({released_count}/{len(self.redis_clients)} nodes)")
-            return released_count > 0
-            
-        except asyncio.TimeoutError:
-            logger.error(f"Timeout releasing distributed lock: {lock_name}")
+            if lock and lock.is_owned_by(self.instance_id, lock_value):
+                db.delete(lock)
+                db.commit()
+                logger.info(f"PostgreSQL distributed lock released: {lock_name}")
+                return True
+            else:
+                logger.warning(f"Cannot release lock {lock_name}: not owned by this instance")
+                return False
+                
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Error releasing PostgreSQL lock {lock_name}: {e}")
             return False
-
-# グローバル分散ロックマネージャー
-_distributed_lock_manager = RedisDistributedLock()
-
-class DistributedLockContext:
-    """Async context manager for distributed locks"""
+        finally:
+            db.close()
     
-    def __init__(self, lock_name: str, ttl: int = 30):
+    async def _cleanup_expired_locks(self, db):
+        """期限切れロックのクリーンアップ"""
+        try:
+            current_time = datetime.now(timezone.utc)
+            expired_count = db.query(DistributedLock).filter(
+                DistributedLock.expires_at <= current_time
+            ).delete()
+            
+            if expired_count > 0:
+                db.commit()
+                logger.debug(f"Cleaned up {expired_count} expired locks")
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Error cleaning up expired locks: {e}")
+    
+    async def get_lock_status(self, lock_name: str) -> Optional[dict]:
+        """ロックの状態を取得（デバッグ用）"""
+        db = self.db_session_factory()
+        try:
+            lock = db.query(DistributedLock).filter(
+                DistributedLock.lock_id == lock_name
+            ).first()
+            
+            if lock:
+                return {
+                    "lock_id": lock.lock_id,
+                    "owner_id": lock.owner_id,
+                    "owner_info": lock.owner_info,
+                    "acquired_at": lock.acquired_at.isoformat(),
+                    "expires_at": lock.expires_at.isoformat(),
+                    "is_expired": lock.is_expired(),
+                    "metadata": lock.metadata_info
+                }
+            return None
+        except Exception as e:
+            logger.error(f"Error getting lock status: {e}")
+            return None
+        finally:
+            db.close()
+
+# グローバルPostgreSQL分散ロックマネージャー
+_postgresql_lock_manager = PostgreSQLDistributedLock()
+
+class PostgreSQLLockContext:
+    """Async context manager for PostgreSQL distributed locks"""
+    
+    def __init__(self, lock_name: str, ttl: int = 90, metadata: dict = None):
         self.lock_name = lock_name
         self.ttl = ttl
+        self.metadata = metadata
         self.lock_value = None
     
     async def __aenter__(self):
-        self.lock_value = await _distributed_lock_manager.acquire_lock(self.lock_name, self.ttl)
+        self.lock_value = await _postgresql_lock_manager.acquire_lock(
+            self.lock_name, self.ttl, self.metadata
+        )
         if not self.lock_value:
-            raise RuntimeError(f"Failed to acquire distributed lock: {self.lock_name}")
+            raise RuntimeError(f"Failed to acquire PostgreSQL distributed lock: {self.lock_name}")
         return self
     
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         if self.lock_value:
-            await _distributed_lock_manager.release_lock(self.lock_name, self.lock_value)
+            await _postgresql_lock_manager.release_lock(self.lock_name, self.lock_value)
 
 def build_ai_vote_prompt(ai_player, room, possible_targets, recent_logs) -> str:
     """
@@ -3679,11 +3715,12 @@ async def auto_progress_logic(room_id: uuid.UUID, db: Session):
         logger.info(f"Auto progress already running locally for room {room_id}")
         return {"auto_progressed": False, "message": "Auto progress already running locally"}
     
-    # 分散ロック取得（30秒TTL）
+    # PostgreSQL分散ロック取得（90秒TTL）
     lock_name = f"auto_progress:{room_id}"
+    metadata = {"room_id": str(room_id), "operation": "auto_progress"}
     try:
-        async with DistributedLockContext(lock_name, ttl=30):
-            logger.info(f"Distributed lock acquired for room {room_id}")
+        async with PostgreSQLLockContext(lock_name, ttl=90, metadata=metadata):
+            logger.info(f"PostgreSQL distributed lock acquired for room {room_id}")
             
             _active_auto_progress.add(room_id)
             try:
@@ -3692,10 +3729,10 @@ async def auto_progress_logic(room_id: uuid.UUID, db: Session):
                 _active_auto_progress.discard(room_id)
                 
     except RuntimeError as e:
-        logger.warning(f"Failed to acquire distributed lock for room {room_id}: {e}")
+        logger.warning(f"Failed to acquire PostgreSQL distributed lock for room {room_id}: {e}")
         return {"auto_progressed": False, "message": "Auto progress locked by another instance"}
     except Exception as e:
-        logger.error(f"Error in distributed lock handling for room {room_id}: {e}")
+        logger.error(f"Error in PostgreSQL distributed lock handling for room {room_id}: {e}")
         return {"auto_progressed": False, "message": f"Lock error: {str(e)}"}
 
 async def _auto_progress_logic_impl(room_id: uuid.UUID, db: Session):
