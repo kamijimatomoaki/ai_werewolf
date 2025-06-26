@@ -310,10 +310,15 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
     fetchRoomData(); // プレイヤーリストを更新
   }, []);
 
-  const handleRoomUpdated = useCallback((data: { room_id: string; room_data: any }) => {
+  const handleRoomUpdated = useCallback((data: { room_id: string; room_data: RoomInfo }) => {
     if (data.room_id === roomId) {
-      console.log('Room updated:', data);
-      fetchRoomData();
+      console.log('Room updated via WebSocket:', data);
+      // 差分データで部屋情報を更新
+      setRoom(data.room_data);
+      // ログも更新（必要に応じて）
+      if (data.room_data.logs) {
+        setLogs(data.room_data.logs);
+      }
     }
   }, [roomId]);
 

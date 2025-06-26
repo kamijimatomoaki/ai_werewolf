@@ -534,26 +534,13 @@ class RootAgent:
             return f"活発な議論（最近{len(recent_contents)}件の発言）"
 
     def generate_speech(self, player_info: Dict, game_context: Dict, recent_messages: List[Dict]) -> str:
-        """ツール使用対応の発言生成"""
-        # デバッグログ追加
-        print(f"[DEBUG] RootAgent.generate_speech called for {player_info.get('name', 'unknown')}")
-        print(f"[DEBUG] Fallback mode: {getattr(self, 'fallback_mode', False)}")
-        print(f"[DEBUG] Tools available: {getattr(self, 'tools_available', False)}")
-        print(f"[DEBUG] Model available: {self.model is not None}")
-        print(f"[DEBUG] Player info keys: {list(player_info.keys())}")
-        print(f"[DEBUG] Persona data: {player_info.get('persona', 'No persona')}")
-        print(f"[DEBUG] Game context: {game_context}")
-        print(f"[DEBUG] Recent messages count: {len(recent_messages)}")
+        """【高速化版】Function Callingを全面的に採用した発言生成"""
+        print(f"[DEBUG] RootAgent.generate_speech (v2) called for {player_info.get('name', 'unknown')}")
         
         # 緊急フォールバックモードかチェック
         if getattr(self, 'fallback_mode', False) or self.model is None:
-            print("[DEBUG] AI model not available")
+            print("[ERROR] AI model not available, using emergency fallback.")
             return self._handle_speech_generation_failure(player_info, Exception("AI model not available"))
-        
-        # ツール使用が利用可能かチェック
-        if not self.tools_available:
-            print("[DEBUG] Tools not available, using traditional speech generation")
-            return self._generate_traditional_speech(player_info, game_context, recent_messages)
         
         try:
             # コンテキストを構築
@@ -562,10 +549,9 @@ class RootAgent:
             # ツール使用を促すプロンプトを構築
             tool_prompt = self._build_tool_enhanced_prompt(player_info, game_context, context, recent_messages)
             
-            print("[DEBUG] Attempting tool-enhanced speech generation")
-            # AIモデルにツール使用を含めて発言生成を依頼（第1段階: 30秒タイムアウト）
-            # Function Callingツールの複雑な処理に対応するため、十分な時間を確保
-            response = generate_content_with_timeout(self.model, tool_prompt, timeout_seconds=30)
+            print("[DEBUG] Attempting tool-enhanced speech generation (Function Calling)")
+            # AIモデルにツール使用を含めて発言生成を依頼（タイムアウトを25秒に短縮）
+            response = generate_content_with_timeout(self.model, tool_prompt, timeout_seconds=25)
             
             # レスポンスを処理（ツール呼び出しを含む）
             final_speech = self._process_response_with_tools(response, player_info, game_context)
@@ -574,21 +560,15 @@ class RootAgent:
             return final_speech
             
         except (TimeoutError, Exception) as e:
-            # タイムアウトやその他のエラー時のフォールバック - 従来の方法を使用
+            # タイムアウトやその他のエラー時のフォールバック
             if isinstance(e, TimeoutError):
-                print(f"[WARNING] Tool-enhanced speech generation timed out after 30 seconds: {e}")
+                print(f"[WARNING] Tool-enhanced speech generation timed out after 25 seconds: {e}")
             else:
                 print(f"[ERROR] Tool-enhanced speech generation failed: {e}")
-            print(f"[DEBUG] Falling back to traditional agent system")
-            try:
-                return self._generate_traditional_speech(player_info, game_context, recent_messages)
-            except (TimeoutError, Exception) as fallback_error:
-                if isinstance(fallback_error, TimeoutError):
-                    print(f"[WARNING] Traditional speech generation timed out after 25 seconds: {fallback_error}")
-                else:
-                    print(f"[ERROR] Traditional speech generation also failed: {fallback_error}")
-                print(f"[CRITICAL] All speech generation methods failed for {player_info.get('name', 'unknown player')}")
-                return self._handle_speech_generation_failure(player_info, fallback_error)
+            
+            # 失敗した場合は、よりシンプルなフォールバック発言を生成
+            print(f"[DEBUG] Falling back to simple speech generation for {player_info.get('name', 'unknown player')}")
+            return self._generate_simple_fallback_speech(player_info, game_context)
 
     def _handle_speech_generation_failure(self, player_info: Dict, error: Exception) -> str:
         """発言生成失敗時の適切な処理"""
@@ -829,82 +809,7 @@ class RootAgent:
 最終発言:
 """
 
-    def _generate_traditional_speech(self, player_info: Dict, game_context: Dict, recent_messages: List[Dict]) -> str:
-        """従来のエージェントシステムによる発言生成（改良版）"""
-        try:
-            # コンテキストを構築
-            context = self._build_context(player_info, game_context, recent_messages)
-            
-            # カミングアウト判定を最優先でチェック
-            co_context = self._build_coming_out_context(player_info, game_context, recent_messages)
-            coming_out_output = self.coming_out_tool.execute(co_context)
-            
-            # カミングアウトが必要と判断された場合は即座に実行
-            if self._should_come_out(coming_out_output, player_info, game_context):
-                return self._format_coming_out_speech(coming_out_output, player_info)
-            
-            # 通常のエージェント選択ロジック
-            agent_outputs = []
-            day_number = game_context.get('day_number', 1)
-            
-            # ゲーム序盤（1-2日目）: 情報収集重視
-            if day_number <= 2:
-                question_output = self.question_tool.execute(context)
-                agent_outputs.append(f"質問案: {question_output}")
-                
-                # 序盤でも適度なサポートを追加
-                support_output = self.support_tool.execute(context)
-                agent_outputs.append(f"支援案: {support_output}")
-            
-            # 中盤（3-4日目）: 積極的推理と立場明確化
-            elif day_number <= 4:
-                question_output = self.question_tool.execute(context)
-                accuse_output = self.accuse_tool.execute(context)
-                support_output = self.support_tool.execute(context)
-                agent_outputs.extend([
-                    question_output,
-                    accuse_output,
-                    support_output
-                ])
-            
-            # 終盤（5日目以降）: 決定的行動重視
-            else:
-                accuse_output = self.accuse_tool.execute(context)
-                support_output = self.support_tool.execute(context)
-                agent_outputs.extend([
-                    accuse_output,
-                    support_output
-                ])
-                
-                # 終盤でのカミングアウトも検討
-                agent_outputs.append(coming_out_output)
-            
-            # ルートエージェントが最終判断（ツールなしモデル使用）
-            final_prompt = self._build_final_prompt(player_info, game_context, context, agent_outputs)
-            
-            # ツールなしの従来モデルを使用（第2段階: 25秒タイムアウト）
-            # 複数エージェント協調システムに対応するため、適切な処理時間を確保
-            simple_model = GenerativeModel("gemini-1.5-flash")
-            response = generate_content_with_timeout(simple_model, final_prompt, timeout_seconds=25)
-            speech = self._clean_speech_content(response.text.strip())
-            
-            # 発言の長さを制限（500文字に設定）
-            if len(speech) > 500:
-                cutoff_point = speech.rfind('。', 0, 497)
-                if cutoff_point > 100:
-                    speech = speech[:cutoff_point + 1]
-                else:
-                    speech = speech[:497] + "..."
-                
-            return speech
-            
-        except (TimeoutError, Exception) as e:
-            if isinstance(e, TimeoutError):
-                print(f"[WARNING] Traditional speech generation timed out after 25 seconds: {e}")
-            else:
-                print(f"[ERROR] Traditional speech generation failed: {e}")
-            # エラーハンドリング
-            raise e
+    
     
     def _generate_simple_fallback_speech(self, player_info: Dict, game_context: Dict) -> str:
         """最終フォールバック発言生成（ペルソナ対応）"""
