@@ -141,10 +141,22 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
             const currentRoomData = await apiService.getRoom(roomId);
             const stillCurrentPlayer = currentRoomData.turn_order[currentRoomData.current_turn_index] === currentPlayerId;
             
+            let fallbackTriggered = false;
             if (stillCurrentPlayer && currentRoomData.status === roomData.status) {
               console.log('Backend auto-progression might have failed, triggering frontend fallback');
               const result = await apiService.autoProgress(roomId);
               console.log('Fallback auto progress result:', result);
+              fallbackTriggered = true;
+              
+              // 連鎖発言の確認
+              if (result.chained_speakers && result.chained_speakers.length > 0) {
+                console.log(`AI chained speeches detected: ${result.chained_speakers.length} additional speakers`);
+                // 連鎖発言があった場合は短い間隔で更新
+                setTimeout(() => {
+                  fetchRoomData();
+                }, 1000);
+                return; // 早期リターンで通常の更新処理をスキップ
+              }
             } else {
               console.log('Backend auto-progression already processed, no fallback needed');
             }
@@ -153,11 +165,11 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
             await fetchRoomData(true);
             
             // 結果に応じて次のアクションを判断
-            if (result.auto_progressed) {
+            if (fallbackTriggered) {
               // 少し待ってから再度チェック（ただし頻度を抑制）
               setTimeout(() => {
                 fetchRoomData();
-              }, 3000); // 3秒に延長
+              }, 2000); // 2秒に短縮
             }
           } catch (error) {
             console.error('AI auto progress failed:', error);

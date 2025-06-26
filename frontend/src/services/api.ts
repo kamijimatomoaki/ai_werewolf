@@ -200,7 +200,13 @@ class ApiService {
   }
 
   // AI自動進行
-  async autoProgress(roomId: string): Promise<{ message: string }> {
+  async autoProgress(roomId: string): Promise<{ 
+    message: string;
+    chained_speakers?: Array<{
+      player_name: string;
+      statement: string;
+    }>;
+  }> {
     const response = await fetch(`${API_BASE_URL}/rooms/${roomId}/auto_progress`, {
       method: 'POST',
       headers: {

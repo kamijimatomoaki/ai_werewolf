@@ -601,7 +601,7 @@ async def game_loop_monitor():
                     logger.error(f"Error closing database session: {close_error}")
         
         # Wait 2 seconds before next check (faster for vote processing)
-        await asyncio.sleep(2)
+        await asyncio.sleep(1)  # 2秒から1秒に短縮
 
 async def delayed_ai_progression(room_id: uuid.UUID, delay_seconds: float):
     """Schedule AI progression after a delay"""
@@ -3230,8 +3230,8 @@ def auto_progress_logic(room_id: uuid.UUID, db: Session):
         # AIプレイヤーの発言生成
         logger.info(f"Generating speech for AI player: {current_player.character_name}")
         
-        # 同時実行制御: 他のAIプレイヤーが最近発言したかチェック（保護時間を5秒に短縮）
-        recent_cutoff = datetime.now(timezone.utc) - timedelta(seconds=5)
+        # 同時実行制御: 他のAIプレイヤーが最近発言したかチェック（保護時間を2秒に短縮）
+        recent_cutoff = datetime.now(timezone.utc) - timedelta(seconds=2)
         recent_ai_speeches = db.query(GameLog).filter(
             GameLog.room_id == room_id,
             GameLog.event_type == "speech", 
@@ -3263,7 +3263,7 @@ def auto_progress_logic(room_id: uuid.UUID, db: Session):
                         if created_at.tzinfo is None:
                             created_at = created_at.replace(tzinfo=timezone.utc)
                         time_since_last_speech = (datetime.now(timezone.utc) - created_at).total_seconds()
-                        if time_since_last_speech > 60:  # 60秒以上待機（調整済み）
+                        if time_since_last_speech > 45:  # 45秒以上待機（短縮）
                             emergency_skip = True
                             logger.warning(f"Emergency skip triggered: {current_player.character_name} has been waiting {time_since_last_speech:.1f}s")
                     except Exception as timezone_error:
@@ -3303,11 +3303,72 @@ def auto_progress_logic(room_id: uuid.UUID, db: Session):
                     "is_ai": True
                 }
                 
+                # 発言後、次のプレイヤーがAIの場合は連続で処理する（最大3回まで）
+                chain_count = 0
+                max_chain = 3
+                next_speakers = []
+                
+                # 更新されたroom情報を取得
+                db.refresh(updated_room)
+                current_room = updated_room
+                
+                while chain_count < max_chain:
+                    # 現在のターンプレイヤーを確認
+                    if (current_room.turn_order and 
+                        current_room.current_turn_index < len(current_room.turn_order)):
+                        
+                        next_player_id = current_room.turn_order[current_room.current_turn_index]
+                        try:
+                            next_player = get_player(db, uuid.UUID(next_player_id))
+                            if (next_player and next_player.is_alive and 
+                                not next_player.is_human and next_player.player_id != current_player.player_id):
+                                
+                                logger.info(f"Chaining to next AI player: {next_player.character_name}")
+                                
+                                # 次のAI発言を生成
+                                try:
+                                    next_speech = generate_ai_speech(db, room_id, next_player.player_id, emergency_skip=False)
+                                    if next_speech:
+                                        # 発言を実行
+                                        current_room = speak_logic(
+                                            room_id=room_id,
+                                            player_id=next_player.player_id,
+                                            statement=next_speech,
+                                            db=db
+                                        )
+                                        
+                                        next_speakers.append({
+                                            "player_name": next_player.character_name,
+                                            "statement": next_speech[:100] + "..." if len(next_speech) > 100 else next_speech
+                                        })
+                                        chain_count += 1
+                                        
+                                        # 更新されたroom情報を取得
+                                        db.refresh(current_room)
+                                    else:
+                                        break  # 発言生成失敗時は連鎖停止
+                                except Exception as chain_error:
+                                    logger.warning(f"Failed to chain AI speech for {next_player.character_name}: {chain_error}")
+                                    break  # エラー時は連鎖停止
+                            else:
+                                break  # 次が人間プレイヤーまたは同一プレイヤーの場合は停止
+                        except Exception as player_error:
+                            logger.warning(f"Error getting next player: {player_error}")
+                            break
+                    else:
+                        break  # ターン順序に問題がある場合は停止
+                
+                response_message = f"AI player {current_player.character_name} spoke"
+                if next_speakers:
+                    chained_names = [speaker["player_name"] for speaker in next_speakers]
+                    response_message += f" (chained: {', '.join(chained_names)})"
+                
                 return {
                     "auto_progressed": True,
-                    "message": f"AI player {current_player.character_name} spoke",
+                    "message": response_message,
                     "speaker": current_player.character_name,
                     "statement": ai_speech[:100] + "..." if len(ai_speech) > 100 else ai_speech,
+                    "chained_speakers": next_speakers,
                     "websocket_data": {"type": "new_speech", "data": speech_data}
                 }
             else:
@@ -4730,3 +4791,15 @@ def update_room_activity(db: Session, room_id: uuid.UUID):
     except Exception as e:
         logger.error(f"Failed to update room activity: {e}")
         db.rollback()
+
+# アプリケーション起動時の処理
+if __name__ == "__main__":
+    # ローカル開発用
+    import uvicorn
+    port = int(os.environ.get("PORT", 8080))
+    uvicorn.run(app_sio, host="0.0.0.0", port=port)
+else:
+    # 本番環境用（gunicorn経由）
+    import uvicorn
+    port = int(os.environ.get("PORT", 8080))
+    logger.info(f"Application ready to serve on port {port}")
