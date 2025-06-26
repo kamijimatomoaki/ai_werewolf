@@ -2210,7 +2210,7 @@ async def auto_progress(room_id: uuid.UUID, db: Session = Depends(get_db)):
         logger.error(f"Auto-progress failed for room {room_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Auto-progress failed: {str(e)}")
 
-def auto_progress_logic(room_id: uuid.UUID, db: Session) -> dict:
+async def auto_progress_logic(room_id: uuid.UUID, db: Session) -> dict:
     """自動進行のコアロジック"""
     room = get_room(db, room_id)
     if not room:
