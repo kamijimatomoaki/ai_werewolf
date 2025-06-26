@@ -32,38 +32,30 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({ children }) => {
   const [roomId, setRoomId] = useState<string | null>(null);
   const [sessionToken, setSessionToken] = useState<string | null>(null);
 
-  // ローカルストレージからセッション情報を復元
+  // セッション情報をローカルストレージから復元
   useEffect(() => {
-    const savedSession = localStorage.getItem('werewolf_session');
-    if (savedSession) {
-      const session = JSON.parse(savedSession);
-      setPlayerId(session.playerId);
-      setPlayerName(session.playerName);
-      setRoomId(session.roomId);
-      setSessionToken(session.sessionToken);
+    const storedPlayerId = localStorage.getItem('player_id');
+    const storedPlayerName = localStorage.getItem('player_name');
+    const storedRoomId = localStorage.getItem('room_id');
+    const storedSessionToken = localStorage.getItem('session_token');
+
+    if (storedPlayerId && storedPlayerName && storedRoomId && storedSessionToken) {
+      setPlayerId(storedPlayerId);
+      setPlayerName(storedPlayerName);
+      setRoomId(storedRoomId);
+      setSessionToken(storedSessionToken);
     }
   }, []);
-
-  // セッション情報をローカルストレージに保存
-  const saveSession = (session: JoinRoomResponse) => {
-    setPlayerId(session.player_id);
-    setPlayerName(session.player_name);
-    setRoomId(session.room_id);
-    setSessionToken(session.session_token);
-    
-    localStorage.setItem('werewolf_session', JSON.stringify({
-      playerId: session.player_id,
-      playerName: session.player_name,
-      roomId: session.room_id,
-      sessionToken: session.session_token,
-    }));
-  };
 
   // 部屋に参加
   const joinRoom = async (roomId: string, playerName: string) => {
     try {
       const response = await apiService.joinRoom(roomId, playerName);
-      saveSession(response);
+      // apiService.joinRoomが既にローカルストレージに保存しているので、ここではstateを更新するだけ
+      setPlayerId(response.player_id);
+      setPlayerName(response.player_name);
+      setRoomId(response.room_id);
+      setSessionToken(response.session_token);
     } catch (error) {
       console.error('Failed to join room:', error);
       throw error;
@@ -76,7 +68,10 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({ children }) => {
     setPlayerName(null);
     setRoomId(null);
     setSessionToken(null);
-    localStorage.removeItem('werewolf_session');
+    localStorage.removeItem('player_id');
+    localStorage.removeItem('player_name');
+    localStorage.removeItem('room_id');
+    localStorage.removeItem('session_token');
   };
 
   // セッション検証
