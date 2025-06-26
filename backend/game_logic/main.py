@@ -395,7 +395,7 @@ class RoomBase(BaseModel):
     room_name: Optional[str] = None
     total_players: int = Field(5, ge=5, le=12)
     human_players: int = Field(1, ge=1)
-    ai_players: int = Field(4, ge=0)
+    ai_players: int # デフォルト値を削除
     # 【追加】部屋作成時に公開・非公開を指定
     is_private: bool = False
 
