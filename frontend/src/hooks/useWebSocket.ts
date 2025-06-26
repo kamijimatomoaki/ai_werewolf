@@ -33,7 +33,8 @@ export function useWebSocket(autoConnect: boolean = true, serverUrl?: string): U
 
     // 自動接続
     if (autoConnect && !websocketService.isConnected()) {
-      websocketService.connect(serverUrl).catch(error => {
+      const storedSessionToken = localStorage.getItem('session_token');
+      websocketService.connect(serverUrl, storedSessionToken || undefined).catch(error => {
         console.error('Auto-connect failed:', error);
       });
     }

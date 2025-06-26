@@ -125,7 +125,11 @@ class ApiService {
       method: 'POST',
     });
     if (!response.ok) throw new Error('Failed to join room');
-    return response.json();
+    const data: JoinRoomResponse = await response.json();
+    localStorage.setItem('session_token', data.session_token);
+    localStorage.setItem('player_id', data.player_id);
+    localStorage.setItem('room_id', data.room_id);
+    return data;
   }
 
   // セッション検証

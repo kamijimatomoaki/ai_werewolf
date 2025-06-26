@@ -50,7 +50,7 @@ class WebSocketService {
     }
   }
 
-  connect(serverUrl?: string): Promise<void> {
+  connect(serverUrl?: string, sessionToken?: string): Promise<void> {
     return new Promise((resolve, reject) => {
       try {
         // serverUrlが指定されていない場合は自動生成されたURLを使用
@@ -63,6 +63,9 @@ class WebSocketService {
           this.socket.disconnect();
         }
 
+        // ローカルストレージからsession_tokenを取得
+        const storedSessionToken = sessionToken || localStorage.getItem('session_token');
+
         this.socket = io(this.serverUrl, {
           transports: ['websocket', 'polling'],
           autoConnect: true,
@@ -70,6 +73,9 @@ class WebSocketService {
           timeout: 20000, // 接続タイムアウト（20秒に延長）
           forceNew: true, // 強制的に新しい接続を作成
           withCredentials: false,
+          query: { // session_tokenをクエリパラメータとして送信
+            session_token: storedSessionToken || '',
+          },
         });
 
         this.socket.on('connect', () => {
