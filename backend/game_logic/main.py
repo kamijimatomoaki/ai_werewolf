@@ -1076,8 +1076,27 @@ def create_room(db: Session, room: RoomCreate, host_name: str) -> Room:
             
         db.commit()
         db.refresh(db_room)
+
+        # ホストプレイヤーのセッショントークンを生成し、PlayerSessionに保存
+        session_token = secrets.token_urlsafe(32)
+        expires_at = datetime.now(timezone.utc) + timedelta(days=7) # 例: 7日間有効
+        player_session = PlayerSession(
+            player_id=host_player.player_id,
+            session_token=session_token,
+            expires_at=expires_at
+        )
+        db.add(player_session)
+        db.commit() # PlayerSessionのコミット
+
         logger.info(f"Room created successfully: {db_room.room_id} with {room.ai_players} AI players")
-        return db_room
+        # RoomInfoにsession_tokenを含めるために、RoomInfoを拡張するか、別のレスポンスモデルを定義する必要がある
+        # ここでは、RoomInfoの代わりにJoinRoomResponseを返すように変更する
+        return JoinRoomResponse(
+            player_id=str(host_player.player_id),
+            player_name=host_name,
+            room_id=str(db_room.room_id),
+            session_token=session_token
+        )
         
     except Exception as e:
         db.rollback()
@@ -2079,7 +2098,7 @@ async def leave_room(sid, data):
         logger.info(f"Client {sid} left room {room_id}")
 
 # --- API Endpoints ---
-@app.post("/api/rooms", response_model=RoomInfo, summary="新しいゲームルームを作成")
+@app.post("/api/rooms", response_model=JoinRoomResponse, summary="新しいゲームルームを作成")
 def create_new_room(room: RoomCreate, host_name: str, db: Session = Depends(get_db)):
     """新しいゲームルームを作成し、ホストプレイヤーを追加する"""
     return create_room(db=db, room=room, host_name=host_name)
@@ -2105,14 +2124,20 @@ async def join_room_api(room_id: uuid.UUID, player_name: str, db: Session = Depe
         raise HTTPException(status_code=404, detail="Room not found")
     if len(db_room.players) >= db_room.total_players:
         raise HTTPException(status_code=400, detail="Room is full")
-    
-    new_player = Player(room_id=room_id, character_name=player_name, is_human=True)
-    db.add(new_player)
-    db.flush() # player_idを確定させるため
 
-    # プレイヤーセッションを作成
+    # プレイヤーを作成
+    new_player = Player(
+        room_id=room_id,
+        character_name=player_name,
+        is_human=True,
+        is_claimed=False
+    )
+    db.add(new_player)
+    db.flush()
+
+    # セッショントークンを生成し、PlayerSessionに保存
     session_token = secrets.token_urlsafe(32)
-    expires_at = datetime.now(timezone.utc) + timedelta(days=1) # 24時間有効
+    expires_at = datetime.now(timezone.utc) + timedelta(days=7)
     player_session = PlayerSession(
         player_id=new_player.player_id,
         session_token=session_token,
@@ -2120,12 +2145,14 @@ async def join_room_api(room_id: uuid.UUID, player_name: str, db: Session = Depe
     )
     db.add(player_session)
     db.commit()
-    db.refresh(new_player)
-    
-    # 他のプレイヤーに通知
-    await sio.emit('player_joined', {'room_id': str(room_id), 'player_name': player_name}, room=str(room_id))
-    
-    return JoinRoomResponse(player_id=new_player.player_id, player_name=new_player.character_name, room_id=room_id, session_token=session_token)
+    db.refresh(new_player) # new_playerをリフレッシュしてplayer_idを取得
+
+    return JoinRoomResponse(
+        player_id=str(new_player.player_id),
+        player_name=player_name,
+        room_id=str(room_id),
+        session_token=session_token
+    )
 
 @app.post("/api/rooms/{room_id}/start", response_model=RoomInfo, summary="ゲームを開始")
 async def start_game(room_id: uuid.UUID, db: Session = Depends(get_db)):

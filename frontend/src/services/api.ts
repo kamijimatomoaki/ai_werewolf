@@ -55,7 +55,7 @@ class ApiService {
     return response.json();
   }
 
-  async createRoom(roomData: RoomCreate, hostName: string = 'ホスト'): Promise<RoomInfo> {
+  async createRoom(roomData: RoomCreate, hostName: string = 'ホスト'): Promise<JoinRoomResponse> { // 戻り値をJoinRoomResponseに変更
     const response = await fetch(`${API_BASE_URL}/rooms?host_name=${encodeURIComponent(hostName)}`, {
       method: 'POST',
       headers: {
@@ -64,7 +64,11 @@ class ApiService {
       body: JSON.stringify(roomData),
     });
     if (!response.ok) throw new Error('Failed to create room');
-    return response.json();
+    const data: JoinRoomResponse = await response.json(); // JoinRoomResponseとしてパース
+    localStorage.setItem('session_token', data.session_token); // session_tokenを保存
+    localStorage.setItem('player_id', data.player_id); // player_idを保存
+    localStorage.setItem('room_id', data.room_id); // room_idを保存
+    return data;
   }
 
   async getRoom(roomId: string): Promise<RoomInfo> {
