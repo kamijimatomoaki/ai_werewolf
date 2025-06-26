@@ -1032,10 +1032,10 @@ def create_room(db: Session, room: RoomCreate, host_name: str) -> Room:
 
         # 人間プレイヤーを作成（ホスト含む）
         for i in range(room.human_players):
-            is_host = (i == 0) # 最初のプレイヤーをホストとする
+            player_name = host_name if i == 0 else f"人間プレイヤー{i+1}"
             human_player = Player(
                 room_id=db_room.room_id, 
-                character_name=host_name if is_host else f"人間プレイヤー{i+1}", 
+                character_name=player_name, 
                 is_human=True
             )
             db.add(human_player)
