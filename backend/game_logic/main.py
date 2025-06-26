@@ -24,6 +24,8 @@ import socketio
 import vertexai
 from vertexai.generative_models import GenerativeModel
 from dotenv import load_dotenv
+import redis
+import hashlib
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -2177,99 +2179,112 @@ async def process_ai_voting_parallel(
     unvoted_ai_players: list,
     possible_targets: list
 ) -> Dict[str, any]:
-    """AI投票を並列処理で高速化"""
+    """AI投票を並列処理で高速化（分散ロック付き）"""
     
     if not unvoted_ai_players:
         return {"status": "no_unvoted_players"}
     
-    start_time = time.time()
-    VotingMetrics.log_voting_start(room_id, len(unvoted_ai_players) + len([p for p in possible_targets if p.is_human]), len(unvoted_ai_players))
-    logger.info(f"Starting parallel AI voting for {len(unvoted_ai_players)} players")
-    
-    # 並列投票タスクを作成
-    voting_tasks = []
-    for ai_player in unvoted_ai_players:
-        # 各AIプレイヤー用の投票可能ターゲットを作成
-        player_targets = [p for p in possible_targets if p.player_id != ai_player.player_id]
-        task = asyncio.create_task(
-            process_single_ai_vote_async(
-                room_id, ai_player, player_targets, db
-            )
-        )
-        voting_tasks.append(task)
-    
-    # 並列実行（最大90秒タイムアウト）
-    results = []
-    successful_votes = 0
-    failed_votes = 0
-    
+    # 分散ロック取得（AI投票処理の重複実行防止）
+    lock_name = f"ai_voting:{room_id}"
     try:
-        completed_results = await asyncio.wait_for(
-            asyncio.gather(*voting_tasks, return_exceptions=True),
-            timeout=90.0
-        )
-        
-        for i, result in enumerate(completed_results):
-            if isinstance(result, Exception):
-                logger.error(f"AI voting task failed: {result}")
-                # 緊急フォールバック: ランダム投票
-                ai_player = unvoted_ai_players[i]
+        async with DistributedLockContext(lock_name, ttl=120):  # 2分TTL
+            logger.info(f"AI voting distributed lock acquired for room {room_id}")
+            
+            start_time = time.time()
+            VotingMetrics.log_voting_start(room_id, len(unvoted_ai_players) + len([p for p in possible_targets if p.is_human]), len(unvoted_ai_players))
+            logger.info(f"Starting parallel AI voting for {len(unvoted_ai_players)} players")
+            
+            # 並列投票タスクを作成
+            voting_tasks = []
+            for ai_player in unvoted_ai_players:
+                # 各AIプレイヤー用の投票可能ターゲットを作成
                 player_targets = [p for p in possible_targets if p.player_id != ai_player.player_id]
-                if player_targets:
-                    fallback_target = random.choice(player_targets)
-                    try:
-                        process_vote(db, room_id, ai_player.player_id, fallback_target.player_id)
-                        VotingMetrics.log_ai_vote_success(
-                            room_id, ai_player.character_name, fallback_target.character_name, 
-                            0.0, "fallback"
-                        )
-                        results.append({
-                            "status": "fallback",
-                            "player_name": ai_player.character_name,
-                            "target_name": fallback_target.character_name
-                        })
-                        successful_votes += 1
-                    except Exception as fallback_error:
-                        VotingMetrics.log_ai_vote_failure(room_id, ai_player.character_name, str(fallback_error), 0.0)
-                        logger.error(f"Fallback vote failed for {ai_player.character_name}: {fallback_error}")
-                        failed_votes += 1
-                else:
-                    failed_votes += 1
-            else:
-                results.append(result)
-                if result.get("status") == "success":
-                    successful_votes += 1
-                else:
-                    failed_votes += 1
-        
-    except asyncio.TimeoutError:
-        timeout_duration = time.time() - start_time
-        completed_count = len([task for task in voting_tasks if task.done()])
-        remaining_count = len(voting_tasks) - completed_count
-        
-        VotingMetrics.log_voting_timeout(room_id, timeout_duration, completed_count, remaining_count)
-        logger.error(f"AI voting timeout for room {room_id}")
-        
-        # 未完了タスクをキャンセル
-        for task in voting_tasks:
-            if not task.done():
-                task.cancel()
-        
-        # 強制ランダム投票
-        await force_remaining_votes_async(room_id, db, unvoted_ai_players, possible_targets)
-        return {"status": "timeout_fallback", "processing_time": timeout_duration}
-    
-    total_time = time.time() - start_time
-    VotingMetrics.log_parallel_voting_complete(room_id, total_time, successful_votes, failed_votes)
-    logger.info(f"Parallel AI voting completed: {successful_votes} success, {failed_votes} failed, {total_time:.2f}s total")
-    
-    return {
-        "status": "completed",
-        "results": results,
-        "successful_votes": successful_votes,
-        "failed_votes": failed_votes,
-        "processing_time": total_time
-    }
+                task = asyncio.create_task(
+                    process_single_ai_vote_async(
+                        room_id, ai_player, player_targets, db
+                    )
+                )
+                voting_tasks.append(task)
+            
+            # 並列実行（最大90秒タイムアウト）
+            results = []
+            successful_votes = 0
+            failed_votes = 0
+            
+            try:
+                completed_results = await asyncio.wait_for(
+                    asyncio.gather(*voting_tasks, return_exceptions=True),
+                    timeout=90.0
+                )
+                
+                for i, result in enumerate(completed_results):
+                    if isinstance(result, Exception):
+                        logger.error(f"AI voting task failed: {result}")
+                        # 緊急フォールバック: ランダム投票
+                        ai_player = unvoted_ai_players[i]
+                        player_targets = [p for p in possible_targets if p.player_id != ai_player.player_id]
+                        if player_targets:
+                            fallback_target = random.choice(player_targets)
+                            try:
+                                process_vote(db, room_id, ai_player.player_id, fallback_target.player_id)
+                                VotingMetrics.log_ai_vote_success(
+                                    room_id, ai_player.character_name, fallback_target.character_name, 
+                                    0.0, "fallback"
+                                )
+                                results.append({
+                                    "status": "fallback",
+                                    "player_name": ai_player.character_name,
+                                    "target_name": fallback_target.character_name
+                                })
+                                successful_votes += 1
+                            except Exception as fallback_error:
+                                VotingMetrics.log_ai_vote_failure(room_id, ai_player.character_name, str(fallback_error), 0.0)
+                                logger.error(f"Fallback vote failed for {ai_player.character_name}: {fallback_error}")
+                                failed_votes += 1
+                        else:
+                            failed_votes += 1
+                    else:
+                        results.append(result)
+                        if result.get("status") == "success":
+                            successful_votes += 1
+                        else:
+                            failed_votes += 1
+                
+            except asyncio.TimeoutError:
+                timeout_duration = time.time() - start_time
+                completed_count = len([task for task in voting_tasks if task.done()])
+                remaining_count = len(voting_tasks) - completed_count
+                
+                VotingMetrics.log_voting_timeout(room_id, timeout_duration, completed_count, remaining_count)
+                logger.error(f"AI voting timeout for room {room_id}")
+                
+                # 未完了タスクをキャンセル
+                for task in voting_tasks:
+                    if not task.done():
+                        task.cancel()
+                
+                # 強制ランダム投票
+                await force_remaining_votes_async(room_id, db, unvoted_ai_players, possible_targets)
+                return {"status": "timeout_fallback", "processing_time": timeout_duration}
+            
+            total_time = time.time() - start_time
+            VotingMetrics.log_parallel_voting_complete(room_id, total_time, successful_votes, failed_votes)
+            logger.info(f"Parallel AI voting completed: {successful_votes} success, {failed_votes} failed, {total_time:.2f}s total")
+            
+            return {
+                "status": "completed",
+                "results": results,
+                "successful_votes": successful_votes,
+                "failed_votes": failed_votes,
+                "processing_time": total_time
+            }
+            
+    except RuntimeError as e:
+        logger.warning(f"Failed to acquire AI voting distributed lock for room {room_id}: {e}")
+        return {"status": "lock_failed", "message": "AI voting locked by another instance"}
+    except Exception as e:
+        logger.error(f"Error in AI voting distributed lock for room {room_id}: {e}")
+        return {"status": "error", "message": f"AI voting lock error: {str(e)}"}
 
 async def force_remaining_votes_async(
     room_id: uuid.UUID, 
@@ -2289,6 +2304,194 @@ async def force_remaining_votes_async(
                 logger.info(f"Forced random vote: {ai_player.character_name} -> {target.character_name}")
             except Exception as e:
                 logger.error(f"Failed to force vote for {ai_player.character_name}: {e}")
+
+# =================================================================
+# Redis分散ロック機構（RedLockアルゴリズム）
+# =================================================================
+
+class RedisDistributedLock:
+    """Redis-based distributed locking using RedLock algorithm"""
+    
+    def __init__(self, redis_urls: List[str] = None, default_ttl: int = 30):
+        """
+        Initialize distributed lock with multiple Redis instances
+        
+        Args:
+            redis_urls: List of Redis connection URLs
+            default_ttl: Default lock TTL in seconds
+        """
+        if not redis_urls:
+            # デフォルトのRedis接続（CloudSQLとの分離）
+            redis_urls = [
+                os.getenv('REDIS_URL', 'redis://localhost:6379/1'),  # データベース1を使用
+            ]
+        
+        self.redis_clients = []
+        self.default_ttl = default_ttl
+        
+        for url in redis_urls:
+            try:
+                client = redis.from_url(url, decode_responses=True, socket_timeout=5)
+                # 接続テスト
+                client.ping()
+                self.redis_clients.append(client)
+                logger.info(f"Redis client connected: {url}")
+            except Exception as e:
+                logger.warning(f"Failed to connect to Redis {url}: {e}")
+        
+        if not self.redis_clients:
+            logger.warning("No Redis connections available - distributed locking disabled")
+    
+    def _generate_lock_value(self) -> str:
+        """Generate unique lock value for this process"""
+        return f"{os.getpid()}:{secrets.token_hex(16)}"
+    
+    def _acquire_single_lock(self, client: redis.Redis, key: str, value: str, ttl: int) -> bool:
+        """Acquire lock on single Redis instance"""
+        try:
+            # SET key value NX EX ttl (atomic operation)
+            result = client.set(key, value, nx=True, ex=ttl)
+            return result is True
+        except Exception as e:
+            logger.error(f"Failed to acquire lock on Redis: {e}")
+            return False
+    
+    def _release_single_lock(self, client: redis.Redis, key: str, value: str) -> bool:
+        """Release lock on single Redis instance using Lua script"""
+        lua_script = """
+        if redis.call("GET", KEYS[1]) == ARGV[1] then
+            return redis.call("DEL", KEYS[1])
+        else
+            return 0
+        end
+        """
+        try:
+            result = client.eval(lua_script, 1, key, value)
+            return result == 1
+        except Exception as e:
+            logger.error(f"Failed to release lock on Redis: {e}")
+            return False
+    
+    async def acquire_lock(self, lock_name: str, ttl: int = None) -> Optional[str]:
+        """
+        Acquire distributed lock using RedLock algorithm
+        
+        Args:
+            lock_name: Name of the lock
+            ttl: Time-to-live in seconds
+            
+        Returns:
+            Lock value if acquired, None otherwise
+        """
+        if not self.redis_clients:
+            logger.warning("No Redis clients available for locking")
+            return None
+        
+        ttl = ttl or self.default_ttl
+        lock_key = f"werewolf:lock:{lock_name}"
+        lock_value = self._generate_lock_value()
+        
+        start_time = time.time()
+        acquired_count = 0
+        quorum = len(self.redis_clients) // 2 + 1  # 過半数
+        
+        # 並列で全Redisインスタンスにロック取得を試行
+        acquire_tasks = []
+        for client in self.redis_clients:
+            task = asyncio.create_task(
+                asyncio.get_event_loop().run_in_executor(
+                    None, self._acquire_single_lock, client, lock_key, lock_value, ttl
+                )
+            )
+            acquire_tasks.append(task)
+        
+        try:
+            results = await asyncio.wait_for(
+                asyncio.gather(*acquire_tasks, return_exceptions=True),
+                timeout=5.0
+            )
+            
+            for result in results:
+                if result is True:
+                    acquired_count += 1
+            
+            elapsed_time = time.time() - start_time
+            validity_time = ttl - elapsed_time - 0.1  # ドリフト調整
+            
+            if acquired_count >= quorum and validity_time > 0:
+                logger.info(f"Distributed lock acquired: {lock_name} ({acquired_count}/{len(self.redis_clients)} nodes)")
+                return lock_value
+            else:
+                # ロック取得失敗 - 部分的に取得したロックを解放
+                await self.release_lock(lock_name, lock_value)
+                logger.warning(f"Failed to acquire distributed lock: {lock_name} ({acquired_count}/{len(self.redis_clients)} nodes)")
+                return None
+                
+        except asyncio.TimeoutError:
+            logger.error(f"Timeout acquiring distributed lock: {lock_name}")
+            await self.release_lock(lock_name, lock_value)
+            return None
+    
+    async def release_lock(self, lock_name: str, lock_value: str) -> bool:
+        """
+        Release distributed lock
+        
+        Args:
+            lock_name: Name of the lock
+            lock_value: Value returned by acquire_lock
+            
+        Returns:
+            True if successfully released
+        """
+        if not self.redis_clients or not lock_value:
+            return False
+        
+        lock_key = f"werewolf:lock:{lock_name}"
+        
+        # 並列で全Redisインスタンスからロック解放
+        release_tasks = []
+        for client in self.redis_clients:
+            task = asyncio.create_task(
+                asyncio.get_event_loop().run_in_executor(
+                    None, self._release_single_lock, client, lock_key, lock_value
+                )
+            )
+            release_tasks.append(task)
+        
+        try:
+            results = await asyncio.wait_for(
+                asyncio.gather(*release_tasks, return_exceptions=True),
+                timeout=3.0
+            )
+            
+            released_count = sum(1 for result in results if result is True)
+            logger.info(f"Distributed lock released: {lock_name} ({released_count}/{len(self.redis_clients)} nodes)")
+            return released_count > 0
+            
+        except asyncio.TimeoutError:
+            logger.error(f"Timeout releasing distributed lock: {lock_name}")
+            return False
+
+# グローバル分散ロックマネージャー
+_distributed_lock_manager = RedisDistributedLock()
+
+class DistributedLockContext:
+    """Async context manager for distributed locks"""
+    
+    def __init__(self, lock_name: str, ttl: int = 30):
+        self.lock_name = lock_name
+        self.ttl = ttl
+        self.lock_value = None
+    
+    async def __aenter__(self):
+        self.lock_value = await _distributed_lock_manager.acquire_lock(self.lock_name, self.ttl)
+        if not self.lock_value:
+            raise RuntimeError(f"Failed to acquire distributed lock: {self.lock_name}")
+        return self
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        if self.lock_value:
+            await _distributed_lock_manager.release_lock(self.lock_name, self.lock_value)
 
 def build_ai_vote_prompt(ai_player, room, possible_targets, recent_logs) -> str:
     """
@@ -3469,18 +3672,31 @@ async def handle_ai_speak(room_id: uuid.UUID, ai_player_id: uuid.UUID, db: Sessi
         raise HTTPException(status_code=500, detail="Failed to generate AI speech")
 
 async def auto_progress_logic(room_id: uuid.UUID, db: Session):
-    """Core auto-progression logic with parallel AI voting (IMPROVED)"""
+    """Core auto-progression logic with distributed locking and parallel AI voting"""
     
-    # 重複実行防止チェック
+    # ローカル重複実行防止チェック
     if room_id in _active_auto_progress:
-        logger.info(f"Auto progress already running for room {room_id}")
-        return {"auto_progressed": False, "message": "Auto progress already running"}
+        logger.info(f"Auto progress already running locally for room {room_id}")
+        return {"auto_progressed": False, "message": "Auto progress already running locally"}
     
-    _active_auto_progress.add(room_id)
+    # 分散ロック取得（30秒TTL）
+    lock_name = f"auto_progress:{room_id}"
     try:
-        return await _auto_progress_logic_impl(room_id, db)
-    finally:
-        _active_auto_progress.discard(room_id)
+        async with DistributedLockContext(lock_name, ttl=30):
+            logger.info(f"Distributed lock acquired for room {room_id}")
+            
+            _active_auto_progress.add(room_id)
+            try:
+                return await _auto_progress_logic_impl(room_id, db)
+            finally:
+                _active_auto_progress.discard(room_id)
+                
+    except RuntimeError as e:
+        logger.warning(f"Failed to acquire distributed lock for room {room_id}: {e}")
+        return {"auto_progressed": False, "message": "Auto progress locked by another instance"}
+    except Exception as e:
+        logger.error(f"Error in distributed lock handling for room {room_id}: {e}")
+        return {"auto_progressed": False, "message": f"Lock error: {str(e)}"}
 
 async def _auto_progress_logic_impl(room_id: uuid.UUID, db: Session):
     """実際の自動進行処理実装"""

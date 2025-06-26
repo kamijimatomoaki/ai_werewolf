@@ -7,3 +7,4 @@ pydantic
 python-dotenv
 python-socketio
 google-cloud-aiplatform
+redis
