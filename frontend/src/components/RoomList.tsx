@@ -68,8 +68,7 @@ export default function RoomList({ onRoomJoin, onSpectatorJoin }: RoomListProps)
       
       const createdRoom = await apiService.createRoom(newRoom, hostName || 'ホスト');
       
-      // 作成成功後、認証してから部屋に参加
-      await joinRoomAuth(createdRoom.room_id, hostName || 'ホスト');
+      // 作成成功後、部屋に参加（ホストプレイヤーはcreateRoomで既に追加されているため、joinRoomAuthは不要）
       onRoomJoin(createdRoom.room_id);
       
     } catch (err: any) {
