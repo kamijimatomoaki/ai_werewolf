@@ -240,6 +240,7 @@ class Player(Base):
     character_name = Column(String, nullable=False, default="名無しの村人")
     character_persona = Column(JSON, nullable=True)
     role = Column(String, nullable=True)
+    is_claimed = Column(Boolean, default=False) # 新しいフィールド
     room = relationship("Room", back_populates="players")
 
 class GameLog(Base):
