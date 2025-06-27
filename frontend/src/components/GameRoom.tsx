@@ -513,7 +513,12 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
     });
     
     return result;
-  }, [room?.turn_order, room?.current_turn_index, currentPlayerId, room?.status]);
+  }, [
+    room?.turn_order?.join(','), // 配列を文字列化して依存関係を安定化
+    room?.current_turn_index, 
+    currentPlayerId, 
+    room?.status
+  ]);
   
   // 現在のプレイヤー情報を取得
   const currentPlayer = room?.players.find(p => p.player_id === currentPlayerId);
