@@ -11,6 +11,7 @@ interface GameControlsProps {
   onStartGame?: () => Promise<void>;
   isLoading?: boolean;
   currentPlayerId?: string | null;
+  allPlayers?: PlayerInfo[];
 }
 
 export default function GameControls({
@@ -21,10 +22,15 @@ export default function GameControls({
   onSpeak,
   onStartGame,
   isLoading = false,
-  currentPlayerId
+  currentPlayerId,
+  allPlayers = []
 }: GameControlsProps) {
   const [statement, setStatement] = useState('');
   const [isSpeaking, setIsSpeaking] = useState(false);
+
+  // 現在のプレイヤーが人間かどうかを判定
+  const myPlayerInfo = allPlayers.find(p => p.player_id === currentPlayerId);
+  const isHumanPlayer = myPlayerInfo?.is_human ?? false;
 
   const handleSpeak = async () => {
     if (!statement.trim()) return;
@@ -64,7 +70,7 @@ export default function GameControls({
         </div>
 
         {/* 発言入力（自分のターンの時） */}
-        {isMyTurn && currentPlayerId && (
+        {isMyTurn && currentPlayerId && isHumanPlayer && (
           <div className="p-4 bg-gray-800/70 border border-gray-600/50 rounded-lg backdrop-blur-sm">
             <h3 className="font-semibold mb-3 text-white">あなたの発言</h3>
             <textarea
@@ -140,19 +146,20 @@ export default function GameControls({
           </div>
         )}
 
-        {/* 人間プレイヤーでない場合のメッセージ */}
-        {isMyTurn && currentPlayerId && currentPlayer && !currentPlayer.is_human && (
+        {/* AIプレイヤーの場合のメッセージ */}
+        {isMyTurn && currentPlayerId && !isHumanPlayer && (
           <div className="p-4 bg-blue-900/70 border border-blue-600/50 rounded-lg backdrop-blur-sm">
             <div className="text-center">
-              <p className="text-blue-200 mb-2">
+              <p className="text-blue-200 mb-2 font-semibold">
                 🤖 AIプレイヤーのターン
               </p>
               <p className="text-blue-300 text-sm">
-                {currentPlayer.character_name} が自動的に発言します
+                AI発言を自動生成中です...
               </p>
             </div>
           </div>
         )}
+
 
         {/* 待機中のメッセージ */}
         {!isMyTurn && (

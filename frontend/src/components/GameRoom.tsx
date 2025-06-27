@@ -637,6 +637,7 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
             onSpeak={handleSpeak}
             isLoading={loading}
             currentPlayerId={currentPlayerId}
+            allPlayers={room.players}
           />
 
           {/* 投票フェーズUI */}

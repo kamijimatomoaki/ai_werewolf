@@ -1201,6 +1201,21 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
             current_name = current_player.character_name if current_player else "不明"
             raise HTTPException(status_code=403, detail=f"It's not your turn. Current turn: {current_name}")
 
+        # 🚫 AI連続発言防止チェック
+        player = get_player(db, player_id)
+        if player and not player.is_human:
+            # 同じAIプレイヤーが同じ日に既に発言していないかチェック
+            existing_speech_count = db.query(GameLog).filter(
+                GameLog.room_id == room_id,
+                GameLog.day_number == db_room.day_number,
+                GameLog.event_type == "speech",
+                GameLog.actor_player_id == player_id
+            ).count()
+            
+            if existing_speech_count > 0:
+                logger.warning(f"🚫 AI連続発言防止: {player.character_name} は今日既に{existing_speech_count}回発言済み")
+                raise HTTPException(status_code=400, detail=f"AI player {player.character_name} has already spoken today")
+
         # 発言を記録
         create_game_log(db, room_id, "day_discussion", "speech", actor_player_id=player_id, content=statement)
         
