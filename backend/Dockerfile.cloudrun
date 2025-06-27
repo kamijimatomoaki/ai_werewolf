@@ -39,7 +39,7 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
 # Gunicornでアプリケーション（Socket.IO付き）を起動
-CMD PORT=${PORT:-8080} && exec gunicorn game_logic.main:app \
+CMD PORT=${PORT:-8080} && exec gunicorn game_logic.main:app_sio \
     --bind 0.0.0.0:$PORT \
     --worker-class uvicorn.workers.UvicornWorker \
     --workers 1 \

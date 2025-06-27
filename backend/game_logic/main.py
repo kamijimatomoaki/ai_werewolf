@@ -2341,4 +2341,4 @@ def get_players_in_room(db: Session, room_id: uuid.UUID) -> List[Player]:
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app_sio, host="0.0.0.0", port=8000)
