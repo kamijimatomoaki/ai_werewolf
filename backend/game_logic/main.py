@@ -2043,45 +2043,23 @@ async def generate_ai_vote_decision(db: Session, room_id: uuid.UUID, ai_player, 
 
 
 # --- WebSocket (Socket.IO) Setup ---
-sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
+sio = socketio.AsyncServer(
+    async_mode="asgi", 
+    cors_allowed_origins="*",
+    logger=True,
+    engineio_logger=True
+)
 # Gunicornが起動できるように、FastAPIアプリとSocket.IOを結合
 app_sio = socketio.ASGIApp(sio, app)
 
 @sio.event
 async def connect(sid, environ):
     logger.info(f"Socket.IO client connected: {sid}")
-    # クライアントからセッション情報を取得
-    query_string = environ.get('QUERY_STRING', '')
-    logger.info(f"Query string: {query_string}")
-    query_params = dict(qc.split('=') for qc in query_string.split('&') if qc)
-    session_token = query_params.get('session_token')
-    logger.info(f"Session token: {session_token}")
-
-    if session_token:
-        db = SessionLocal()
-        try:
-            player_session = db.query(PlayerSession).filter(
-                PlayerSession.session_token == session_token,
-                PlayerSession.expires_at > datetime.now(timezone.utc)
-            ).first()
-            if player_session:
-                sio.save_session(sid, {'player_id': str(player_session.player_id)})
-                logger.info(f"Client {sid} authenticated as player {player_session.player_id}")
-                await sio.emit('authenticated', {'player_id': str(player_session.player_id)}, to=sid)
-            else:
-                logger.warning(f"Client {sid} provided invalid or expired session token: {session_token}")
-                # 一時的に認証を緩めて接続を許可
-                logger.info(f"Temporarily allowing unauthenticated connection for debugging")
-                sio.save_session(sid, {'player_id': 'debug'})
-                await sio.emit('authenticated', {'player_id': 'debug'}, to=sid)
-        finally:
-            db.close()
-    else:
-        logger.warning(f"Client {sid} connected without session token.")
-        # 一時的に認証を緩めて接続を許可
-        logger.info(f"Temporarily allowing unauthenticated connection for debugging")
-        sio.save_session(sid, {'player_id': 'debug'})
-        await sio.emit('authenticated', {'player_id': 'debug'}, to=sid)
+    # デバッグ用：認証を完全に無効化
+    logger.info(f"DEBUG: Allowing all WebSocket connections for debugging")
+    await sio.save_session(sid, {'player_id': 'debug_user'})
+    await sio.emit('authenticated', {'player_id': 'debug_user'}, to=sid)
+    logger.info(f"Client {sid} connected successfully (debug mode)")
 
 @sio.event
 async def disconnect(sid):
@@ -2092,7 +2070,7 @@ async def disconnect(sid):
 async def join_room(sid, data):
     room_id = data.get('room_id')
     if room_id:
-        sio.enter_room(sid, room_id)
+        await sio.enter_room(sid, room_id)
         logger.info(f"Client {sid} joined room {room_id}")
         await sio.emit('message', {'data': f'Successfully joined room {room_id}'}, to=sid)
 
@@ -2100,7 +2078,7 @@ async def join_room(sid, data):
 async def leave_room(sid, data):
     room_id = data.get('room_id')
     if room_id:
-        sio.leave_room(sid, room_id)
+        await sio.leave_room(sid, room_id)
         logger.info(f"Client {sid} left room {room_id}")
 
 # --- API Endpoints ---
