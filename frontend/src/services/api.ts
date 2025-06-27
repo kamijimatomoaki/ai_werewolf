@@ -67,6 +67,7 @@ class ApiService {
     const data: JoinRoomResponse = await response.json(); // JoinRoomResponseとしてパース
     localStorage.setItem('session_token', data.session_token); // session_tokenを保存
     localStorage.setItem('player_id', data.player_id); // player_idを保存
+    localStorage.setItem('player_name', data.player_name); // player_nameを保存
     localStorage.setItem('room_id', data.room_id); // room_idを保存
     return data;
   }
@@ -132,6 +133,7 @@ class ApiService {
     const data: JoinRoomResponse = await response.json();
     localStorage.setItem('session_token', data.session_token);
     localStorage.setItem('player_id', data.player_id);
+    localStorage.setItem('player_name', data.player_name);
     localStorage.setItem('room_id', data.room_id);
     return data;
   }
