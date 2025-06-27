@@ -300,10 +300,11 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
 
   const handleNewSpeech = useCallback((data: { room_id: string; speaker_id: string; statement: string }) => {
     if (data.room_id === roomId) {
-      console.log('New speech:', data);
-      fetchRoomData(); // 部屋データとログを更新
+      console.log('New speech received:', data);
+      // 即座にデータを更新（WebSocket通知への依存度を上げる）
+      setTimeout(() => fetchRoomData(), 100); // 短いディレイで確実に更新
     }
-  }, [roomId]);
+  }, [roomId, fetchRoomData]);
 
   const handlePlayerJoined = useCallback((data: { player_name: string; sid: string }) => {
     console.log('Player joined:', data);
@@ -367,10 +368,10 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
         };
       });
       
-      // 必要に応じてログも更新
-      fetchRoomData();
+      // 確実にログも更新（AI発言後の自動更新を保証）
+      setTimeout(() => fetchRoomData(), 200);
     }
-  }, [roomId]);
+  }, [roomId, fetchRoomData]);
 
   // WebSocketイベントリスナーの設定
   useEffect(() => {
@@ -635,6 +636,7 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
             currentRound={room.current_round}
             onSpeak={handleSpeak}
             isLoading={loading}
+            currentPlayerId={currentPlayerId}
           />
 
           {/* 投票フェーズUI */}

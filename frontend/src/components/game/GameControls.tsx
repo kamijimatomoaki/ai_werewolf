@@ -10,6 +10,7 @@ interface GameControlsProps {
   onSpeak: (statement: string) => Promise<void>;
   onStartGame?: () => Promise<void>;
   isLoading?: boolean;
+  currentPlayerId?: string | null;
 }
 
 export default function GameControls({
@@ -19,7 +20,8 @@ export default function GameControls({
   currentRound,
   onSpeak,
   onStartGame,
-  isLoading = false
+  isLoading = false,
+  currentPlayerId
 }: GameControlsProps) {
   const [statement, setStatement] = useState('');
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -62,7 +64,7 @@ export default function GameControls({
         </div>
 
         {/* 発言入力（自分のターンの時） */}
-        {isMyTurn && (
+        {isMyTurn && currentPlayer?.is_human && (
           <div className="p-4 bg-gray-800/70 border border-gray-600/50 rounded-lg backdrop-blur-sm">
             <h3 className="font-semibold mb-3 text-white">あなたの発言</h3>
             <textarea
@@ -113,6 +115,40 @@ export default function GameControls({
                 💡 他のプレイヤーの発言をよく聞いて、疑問点があれば質問してみましょう。
                 相手の反応から何かが見えてくるかもしれません。
                 3ラウンド終了後、自動的に投票フェーズに移行します。
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* 認証エラーメッセージ */}
+        {isMyTurn && !currentPlayerId && (
+          <div className="p-4 bg-red-900/70 border border-red-600/50 rounded-lg backdrop-blur-sm">
+            <div className="text-center">
+              <p className="text-red-200 mb-2 font-semibold">
+                ⚠️ 認証エラー
+              </p>
+              <p className="text-red-300 text-sm mb-3">
+                プレイヤー認証が正しく行われていません。ページを再読み込みして、部屋に再参加してください。
+              </p>
+              <button
+                onClick={() => window.location.reload()}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded transition-colors"
+              >
+                ページ再読み込み
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* 人間プレイヤーでない場合のメッセージ */}
+        {isMyTurn && currentPlayerId && currentPlayer && !currentPlayer.is_human && (
+          <div className="p-4 bg-blue-900/70 border border-blue-600/50 rounded-lg backdrop-blur-sm">
+            <div className="text-center">
+              <p className="text-blue-200 mb-2">
+                🤖 AIプレイヤーのターン
+              </p>
+              <p className="text-blue-300 text-sm">
+                {currentPlayer.character_name} が自動的に発言します
               </p>
             </div>
           </div>

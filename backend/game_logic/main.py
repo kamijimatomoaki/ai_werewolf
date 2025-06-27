@@ -1980,6 +1980,8 @@ async def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid
             logger.info(f"=== AI SPEECH GENERATION START ===")
             logger.info(f"Player: {ai_player.character_name}")
             logger.info(f"Day: {room.day_number}, First speech: {len(recent_messages) == 0}")
+            logger.info(f"Persona from DB: '{ai_player.character_persona[:100] if ai_player.character_persona else 'None'}...'")
+            logger.info(f"Player info persona: '{player_info.get('persona', 'None')[:100]}...'")
             logger.info(f"Player info: {player_info}")
             logger.info(f"Game context: {game_context}")
             logger.info(f"Recent messages count: {len(recent_messages)}")
