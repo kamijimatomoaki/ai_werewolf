@@ -2047,19 +2047,37 @@ sio = socketio.AsyncServer(
     async_mode="asgi", 
     cors_allowed_origins="*",
     logger=True,
-    engineio_logger=True
+    engineio_logger=True,
+    ping_timeout=60,
+    ping_interval=25,
+    allow_upgrades=True,
+    transports=['websocket', 'polling']
 )
-# Gunicornが起動できるように、FastAPIアプリとSocket.IOを結合
-app_sio = socketio.ASGIApp(sio, app)
+
+# Socket.IOアプリケーションを作成（デバッグ用設定付き）
+app_sio = socketio.ASGIApp(
+    sio, 
+    app, 
+    socketio_path='socket.io'
+)
 
 @sio.event
 async def connect(sid, environ):
-    logger.info(f"Socket.IO client connected: {sid}")
-    # デバッグ用：認証を完全に無効化
-    logger.info(f"DEBUG: Allowing all WebSocket connections for debugging")
-    await sio.save_session(sid, {'player_id': 'debug_user'})
-    await sio.emit('authenticated', {'player_id': 'debug_user'}, to=sid)
-    logger.info(f"Client {sid} connected successfully (debug mode)")
+    try:
+        logger.info(f"Socket.IO client attempting to connect: {sid}")
+        logger.info(f"Environment: {environ.get('REQUEST_METHOD', 'N/A')}")
+        logger.info(f"Path: {environ.get('PATH_INFO', 'N/A')}")
+        logger.info(f"Query: {environ.get('QUERY_STRING', 'N/A')}")
+        
+        # 認証を完全にスキップして接続を許可
+        logger.info(f"BYPASS: Allowing connection without authentication")
+        await sio.save_session(sid, {'player_id': 'anonymous', 'authenticated': True})
+        await sio.emit('authenticated', {'player_id': 'anonymous', 'status': 'connected'}, to=sid)
+        logger.info(f"Client {sid} connected and authenticated successfully")
+        return True
+    except Exception as e:
+        logger.error(f"Connection error for {sid}: {str(e)}")
+        return False
 
 @sio.event
 async def disconnect(sid):
