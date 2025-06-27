@@ -413,7 +413,12 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
 
   // 現在の発言者を取得
   const getCurrentSpeaker = (): PlayerInfo | null => {
-    if (!room?.turn_order || room.current_turn_index === undefined) return null;
+    if (!room?.turn_order || 
+        room.current_turn_index === undefined || 
+        room.current_turn_index < 0 || 
+        room.current_turn_index >= room.turn_order.length) {
+      return null;
+    }
     const currentPlayerId = room.turn_order[room.current_turn_index];
     return room.players.find(p => p.player_id === currentPlayerId) || null;
   };

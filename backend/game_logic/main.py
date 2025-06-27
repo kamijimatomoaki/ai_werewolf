@@ -864,8 +864,8 @@ async def check_and_progress_ai_turns(room_id: uuid.UUID, db: Session):
         if not current_player or current_player.is_human:
             return  # Human player or no current player, skip
             
-        # Check if AI player hasn't acted recently (more than 5 seconds ago)
-        if room.last_activity and (datetime.now(timezone.utc) - room.last_activity).total_seconds() < 5:
+        # Check if AI player hasn't acted recently (more than 10 seconds ago)
+        if room.last_activity and (datetime.now(timezone.utc) - room.last_activity).total_seconds() < 10:
             return  # Recent activity, wait a bit more
             
         logger.info(f"Auto-progressing AI player {current_player.character_name} in room {room_id}")
@@ -1874,21 +1874,33 @@ def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid.UUID,
                 } for p in room.players]
             }
             
-            # 全てのチャットログを取得（現在の日）
-            recent_logs = db.query(GameLog).filter(
+            # 初回発言チェック：このAIプレイヤーが今日発言したことがあるか確認
+            ai_speech_count = db.query(GameLog).filter(
                 GameLog.room_id == room_id,
                 GameLog.day_number == room.day_number,
-                GameLog.event_type == "speech"
-            ).order_by(GameLog.created_at.asc()).all()  # 時系列順で全取得
+                GameLog.event_type == "speech",
+                GameLog.actor_player_id == ai_player.player_id
+            ).count()
             
             recent_messages = []
-            for log in recent_logs:
-                if log.actor:
-                    recent_messages.append({
-                        'speaker': log.actor.character_name,
-                        'content': log.content or '',
-                        'timestamp': log.created_at
-                    })
+            if ai_speech_count > 0:
+                # 初回発言でない場合のみ発言履歴を取得
+                recent_logs = db.query(GameLog).filter(
+                    GameLog.room_id == room_id,
+                    GameLog.day_number == room.day_number,
+                    GameLog.event_type == "speech"
+                ).order_by(GameLog.created_at.asc()).all()
+                
+                for log in recent_logs:
+                    if log.actor:
+                        recent_messages.append({
+                            'speaker': log.actor.character_name,
+                            'content': log.content or '',
+                            'timestamp': log.created_at
+                        })
+            else:
+                # 初回発言の場合は発言履歴を空にする
+                logger.info(f"First speech for {ai_player.character_name} on day {room.day_number}, starting with empty conversation history")
             
             # 高度なAIエージェントで発言を生成
             logger.info(f"Calling root_agent.generate_speech() for {ai_player.character_name}")
