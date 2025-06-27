@@ -22,7 +22,7 @@ interface GameRoomProps {
 }
 
 export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
-  const { playerId: currentPlayerId, roomId: storedRoomId, logout } = usePlayer();
+  const { playerId: currentPlayerId, roomId: storedRoomId, clearRoomSession } = usePlayer();
   const { isConnected, connectionStatus } = useWebSocket();
   const [room, setRoom] = useState<RoomInfo | null>(null);
   const [logs, setLogs] = useState<GameLogInfo[]>([]);
@@ -435,14 +435,14 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
         action: 'clearing_session_and_redirecting'
       });
       // 古いセッションをクリアして、正しい部屋に再参加させる
-      logout();
+      clearRoomSession();
       // ロビーに戻してユーザーに再参加を促す
       onBackToLobby();
       return;
     }
     
     fetchRoomData();
-  }, [roomId, storedRoomId, logout, onBackToLobby]);
+  }, [roomId, storedRoomId, clearRoomSession, onBackToLobby]);
 
   // ステータス表示
   const getStatusColor = (status: string) => {

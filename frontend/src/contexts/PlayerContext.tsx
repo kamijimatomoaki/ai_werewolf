@@ -9,6 +9,7 @@ interface PlayerContextType {
   isAuthenticated: boolean;
   joinRoom: (roomId: string, playerName: string) => Promise<void>;
   logout: () => void;
+  clearRoomSession: () => void;
   verifySession: () => Promise<boolean>;
 }
 
@@ -85,6 +86,18 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({ children }) => {
     localStorage.removeItem('session_token');
   };
 
+  // 部屋セッションのみクリア（プレイヤー名は保持）
+  const clearRoomSession = () => {
+    setPlayerId(null);
+    setRoomId(null);
+    setSessionToken(null);
+    localStorage.removeItem('player_id');
+    localStorage.removeItem('room_id');
+    localStorage.removeItem('session_token');
+    // player_name は保持して再利用可能にする
+    console.log('🔄 Room session cleared, player name preserved for re-joining');
+  };
+
   // セッション検証
   const verifySession = async (): Promise<boolean> => {
     if (!sessionToken) {
@@ -115,6 +128,7 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({ children }) => {
     isAuthenticated,
     joinRoom,
     logout,
+    clearRoomSession,
     verifySession,
   };
 
