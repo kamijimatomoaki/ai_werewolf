@@ -658,15 +658,25 @@ async def handle_voting_phase_auto_progress(room_id: uuid.UUID, room, db: Sessio
         # 投票フェーズ開始から10分経過した場合、強制進行
         vote_timeout_minutes = 10
         if vote_phase_logs:
-            time_since_vote_start = (datetime.now(timezone.utc) - vote_phase_logs.created_at).total_seconds() / 60
+            # created_atがnaive datetimeの場合はUTCとして扱う
+            created_at_utc = vote_phase_logs.created_at
+            if created_at_utc.tzinfo is None:
+                created_at_utc = created_at_utc.replace(tzinfo=timezone.utc)
+            
+            time_since_vote_start = (datetime.now(timezone.utc) - created_at_utc).total_seconds() / 60
             if time_since_vote_start > vote_timeout_minutes:
                 logger.warning(f"Vote timeout reached for room {room_id}, forcing progression")
                 await force_vote_progression(room_id, room, db)
                 return
         
         # 最近の投票活動をチェック（3秒以内の活動は待機）
-        if room.last_activity and (datetime.now(timezone.utc) - room.last_activity).total_seconds() < 3:
-            return
+        if room.last_activity:
+            last_activity_utc = room.last_activity
+            if last_activity_utc.tzinfo is None:
+                last_activity_utc = last_activity_utc.replace(tzinfo=timezone.utc)
+            
+            if (datetime.now(timezone.utc) - last_activity_utc).total_seconds() < 3:
+                return
         
         # 未投票のAIプレイヤーをチェック
         players = get_players_in_room(db, room_id)
