@@ -1834,49 +1834,16 @@ def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid.UUID,
         logger.info(f"GOOGLE_LOCATION: {GOOGLE_LOCATION} (actual value)")
         logger.info(f"Room status: {room.status}, Day: {room.day_number}")
         
-        # AIエージェントが利用可能な場合
-        logger.info(f"Checking AI agent availability: root_agent={root_agent is not None}, GOOGLE_PROJECT_ID='{GOOGLE_PROJECT_ID}', GOOGLE_LOCATION='{GOOGLE_LOCATION}'")
-        
-        # Debug: root_agent の詳細をログ出力
-        if root_agent is None:
-            logger.error("❌ CRITICAL: root_agent is None - AI agent not properly initialized")
-            logger.error("This indicates a problem with the npc_agent import or initialization")
-            logger.info("Using ultra-safe fallback due to missing root_agent")
-            return random.choice(ULTRA_SAFE_FALLBACK_SPEECHES)
-        
-        # root_agentの型とメソッドを確認
-        logger.info(f"✅ root_agent type: {type(root_agent)}")
-        logger.info(f"✅ root_agent methods: {dir(root_agent)}")
-        logger.info(f"✅ Has generate_speech method: {hasattr(root_agent, 'generate_speech')}")
+        # Vertex AI直接呼び出しで発言生成
+        logger.info(f"Using direct Vertex AI for speech generation: GOOGLE_PROJECT_ID='{GOOGLE_PROJECT_ID}', GOOGLE_LOCATION='{GOOGLE_LOCATION}'")
         
         # Google AI設定の確認
-        if root_agent and GOOGLE_PROJECT_ID and GOOGLE_LOCATION:
-            logger.info("Using root_agent with Google AI credentials")
+        if GOOGLE_PROJECT_ID and GOOGLE_LOCATION:
+            logger.info("Using direct Vertex AI for speech generation")
             # プレイヤー情報を準備（ペルソナ未設定の場合はデフォルト）
             persona = ai_player.character_persona
             if not persona:
                 persona = f"私は{ai_player.character_name}です。冷静に分析して判断します。"
-                
-            player_info = {
-                'name': ai_player.character_name,
-                'role': ai_player.role,
-                'is_alive': ai_player.is_alive,
-                'persona': persona
-            }
-            
-            # ゲーム情報を準備
-            game_context = {
-                'day_number': room.day_number,
-                'phase': room.status,
-                'alive_count': len([p for p in room.players if p.is_alive]),
-                'total_players': len(room.players),
-                'all_players': [{
-                    'name': p.character_name,
-                    'is_alive': p.is_alive,
-                    'is_human': p.is_human,
-                    'role': p.role if p.player_id == ai_player.player_id else 'unknown'  # 自分の役職のみ公開
-                } for p in room.players]
-            }
             
             # 全てのチャットログを取得（現在の日）
             recent_logs = db.query(GameLog).filter(
@@ -1894,22 +1861,56 @@ def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid.UUID,
                         'timestamp': log.created_at
                     })
             
-            # AIエージェントで発言を生成
-            logger.info(f"About to call root_agent.generate_speech() for {ai_player.character_name}")
-            logger.info(f"Player info: {player_info}")
-            logger.info(f"Game context: {game_context}")
-            logger.info(f"Recent messages count: {len(recent_messages)}")
+            # 他のプレイヤー情報を準備
+            alive_players = [p for p in room.players if p.is_alive]
+            other_players = [p.character_name for p in alive_players if p.player_id != ai_player.player_id]
+            
+            # プロンプトを作成
+            conversation_context = ""
+            if recent_messages:
+                conversation_context = "\n過去の会話:\n"
+                for msg in recent_messages[-5:]:  # 最新5件の発言
+                    conversation_context += f"- {msg['speaker']}: {msg['content']}\n"
+            
+            prompt = f"""あなたは人狼ゲームのプレイヤーです。
+
+キャラクター情報:
+名前: {ai_player.character_name}
+役職: {ai_player.role}
+ペルソナ: {persona}
+
+ゲーム状況:
+- フェーズ: {room.status}
+- {room.day_number}日目
+- 生存者数: {len(alive_players)}人
+- 他の生存プレイヤー: {', '.join(other_players)}
+
+{conversation_context}
+
+あなたのキャラクターの性格と役職に基づいて、自然で一貫性のある発言をしてください。
+発言は1-3文程度の適切な長さで、ゲームの状況に応じた内容にしてください。
+
+発言:"""
+
+            # Vertex AI直接呼び出し
+            logger.info(f"Generating speech for {ai_player.character_name} using direct Vertex AI")
             
             try:
-                logger.info("🚀 Calling root_agent.generate_speech()...")
-                speech = root_agent.generate_speech(player_info, game_context, recent_messages)
-                logger.info(f"✅ Successfully called root_agent.generate_speech()")
-                logger.info(f"📝 Generated speech: {speech}")
-                logger.info(f"📏 Speech length: {len(speech) if speech else 0} characters")
-            except Exception as agent_error:
-                logger.error(f"❌ CRITICAL ERROR in root_agent.generate_speech(): {agent_error}", exc_info=True)
-                logger.error(f"Error type: {type(agent_error)}")
-                logger.error(f"Error args: {agent_error.args}")
+                vertexai.init(project=GOOGLE_PROJECT_ID, location=GOOGLE_LOCATION)
+                model = GenerativeModel("gemini-1.5-flash")
+                response = model.generate_content(prompt)
+                
+                if response.text and len(response.text.strip()) > 5:
+                    speech = response.text.strip()
+                    logger.info(f"✅ Direct Vertex AI speech generation successful: {speech}")
+                else:
+                    logger.warning(f"Empty or too short response from Vertex AI: {response.text}")
+                    speech = None
+                    
+            except Exception as ai_error:
+                logger.error(f"❌ Error in direct Vertex AI speech generation: {ai_error}", exc_info=True)
+                logger.error(f"Error type: {type(ai_error)}")
+                logger.error(f"Error args: {ai_error.args}")
                 
                 # より詳細なエラー情報をログ出力
                 logger.error(f"Room ID: {room_id}, Player ID: {ai_player_id}")
@@ -1917,39 +1918,38 @@ def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid.UUID,
                 logger.error(f"Game phase: {room.status if room else 'None'}")
                 
                 # エラータイプに応じた詳細処理
-                if "timeout" in str(agent_error).lower():
+                if "timeout" in str(ai_error).lower():
                     logger.error("⏰ AI speech generation timed out")
-                elif "quota" in str(agent_error).lower() or "rate" in str(agent_error).lower():
+                elif "quota" in str(ai_error).lower() or "rate" in str(ai_error).lower():
                     logger.error("🚫 AI service quota/rate limit exceeded")
-                elif "connection" in str(agent_error).lower():
+                elif "connection" in str(ai_error).lower():
                     logger.error("🌐 AI service connection error")
                 else:
                     logger.error("🔧 Other AI service error")
                 
-                # フォールバック前に最後の試行：Function Calling無しでの基本発言生成
+                # フォールバック：より簡単なプロンプトで再試行
                 try:
-                    logger.info("🔄 Attempting fallback speech generation without function calling...")
+                    logger.info("🔄 Attempting fallback speech generation with simpler prompt...")
                     basic_prompt = f"""あなたは{ai_player.character_name}です。
-ペルソナ: {ai_player.character_persona}
+ペルソナ: {persona}
 現在の状況: {room.status}、{room.day_number}日目
 簡潔に1-2文で発言してください。"""
                     
-                    # 基本的なVertex AI呼び出し（Function Calling無し）
-                    import vertexai
-                    from vertexai.generative_models import GenerativeModel
-                    
-                    if GOOGLE_PROJECT_ID and GOOGLE_LOCATION:
-                        vertexai.init(project=GOOGLE_PROJECT_ID, location=GOOGLE_LOCATION)
-                        model = GenerativeModel("gemini-1.5-flash")
-                        response = model.generate_content(basic_prompt)
-                        if response.text and len(response.text.strip()) > 10:
-                            logger.info(f"✅ Fallback speech generation successful: {response.text.strip()}")
-                            return response.text.strip()
+                    vertexai.init(project=GOOGLE_PROJECT_ID, location=GOOGLE_LOCATION)
+                    model = GenerativeModel("gemini-1.5-flash")
+                    response = model.generate_content(basic_prompt)
+                    if response.text and len(response.text.strip()) > 10:
+                        speech = response.text.strip()
+                        logger.info(f"✅ Fallback speech generation successful: {speech}")
+                    else:
+                        speech = None
                 except Exception as fallback_error:
                     logger.error(f"🚨 Fallback speech generation also failed: {fallback_error}")
+                    speech = None
                 
-                logger.info("Using ultra-safe fallback due to all AI generation failures")
-                return random.choice(ULTRA_SAFE_FALLBACK_SPEECHES)
+                if not speech:
+                    logger.info("Using ultra-safe fallback due to all AI generation failures")
+                    return random.choice(ULTRA_SAFE_FALLBACK_SPEECHES)
             
             # レスポンスの検証と整形
             if speech and isinstance(speech, str) and speech.strip():
@@ -1966,7 +1966,7 @@ def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid.UUID,
             
         else:
             # フォールバック: 環境変数が不足している場合
-            logger.info(f"Missing AI credentials - using ultra-safe fallback. Root agent: {root_agent is not None}, PROJECT_ID: {bool(GOOGLE_PROJECT_ID)}, LOCATION: {bool(GOOGLE_LOCATION)}")
+            logger.info(f"Missing AI credentials - using ultra-safe fallback. PROJECT_ID: {bool(GOOGLE_PROJECT_ID)}, LOCATION: {bool(GOOGLE_LOCATION)}")
             return random.choice(ULTRA_SAFE_FALLBACK_SPEECHES)
             
     except Exception as e:
