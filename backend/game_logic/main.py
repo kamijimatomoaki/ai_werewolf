@@ -699,7 +699,7 @@ async def handle_voting_phase_auto_progress(room_id: uuid.UUID, room, db: Sessio
         logger.info(f"Auto-voting for AI player: {ai_player.character_name} in room {room_id}")
         
         # AI投票処理を実行
-        result = auto_progress_logic(room_id, db)
+        result = await auto_progress_logic(room_id, db)
         if result.get("auto_progressed"):
             logger.info(f"AI vote successful: {result.get('message', 'No message')}")
             
@@ -872,7 +872,7 @@ async def check_and_progress_ai_turns(room_id: uuid.UUID, db: Session):
         
         # Call auto_progress logic (reuse existing function)
         try:
-            result = auto_progress_logic(room_id, db)
+            result = await auto_progress_logic(room_id, db)
             if result.get("auto_progressed"):
                 logger.info(f"Successfully auto-progressed room {room_id}: {result.get('message', 'No message')}")
         except Exception as e:
@@ -2351,7 +2351,7 @@ async def generate_persona(player_id: uuid.UUID, persona_input: PersonaInput, db
 async def auto_progress(room_id: uuid.UUID, db: Session = Depends(get_db)):
     """AIプレイヤーのターンを自動で進行させる"""
     try:
-        result = auto_progress_logic(room_id, db)
+        result = await auto_progress_logic(room_id, db)
         if result.get("auto_progressed"):
             # WebSocket通知
             if "websocket_data" in result:
