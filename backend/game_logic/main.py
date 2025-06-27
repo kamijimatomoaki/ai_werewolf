@@ -1222,22 +1222,13 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
         
         logger.info(f"Turn advanced: {current_index} -> {next_index}, status: {db_room.status}")
         
-        # Trigger AI progression if next player is AI
-        try:
-            if db_room.status == 'day_discussion' and next_index < len(turn_order):
-                next_player_id = turn_order[next_index]
-                next_player = get_player(db, uuid.UUID(next_player_id))
-                if next_player and not next_player.is_human and next_player.is_alive:
-                    logger.info(f"Scheduling AI progression for player {next_player.character_name}")
-                    # Schedule AI progression with a small delay (only if event loop is running)
-                    try:
-                        loop = asyncio.get_running_loop()
-                        asyncio.create_task(delayed_ai_progression(room_id, 5.0))
-                    except RuntimeError:
-                        # No event loop running, skip scheduling (auto-progression will handle it)
-                        logger.info("No event loop running, relying on auto-progression monitor")
-        except Exception as e:
-            logger.error(f"Error scheduling AI progression: {e}")
+        # AI progression is now handled exclusively by auto-progression monitor
+        # to prevent duplicate scheduling and maintain consistent turn management
+        if db_room.status == 'day_discussion' and next_index < len(turn_order):
+            next_player_id = turn_order[next_index]
+            next_player = get_player(db, uuid.UUID(next_player_id))
+            if next_player and not next_player.is_human and next_player.is_alive:
+                logger.info(f"Next player is AI ({next_player.character_name}), auto-progression monitor will handle")
         
         return db_room
         
@@ -1473,16 +1464,33 @@ def get_spectator_room_view(db: Session, room_id: uuid.UUID) -> Optional[Spectat
     )
 
 def process_vote(db: Session, room_id: uuid.UUID, voter_id: uuid.UUID, target_id: uuid.UUID) -> VoteResult:
-    """【修正版】シンプルで堅牢な投票処理ロジック"""
+    """【修正版】レースコンディション対応投票処理ロジック"""
     try:
-        # 1. 投票を記録
-        db_room = get_room(db, room_id)
-        if not db_room or db_room.status != 'day_vote':
-            raise HTTPException(status_code=400, detail="Not in voting phase")
+        # 🔒 データベースロックでレースコンディション防止
+        db_room = db.query(Room).filter(Room.room_id == room_id).with_for_update().first()
+        if not db_room:
+            raise HTTPException(status_code=404, detail="Room not found")
+        
+        if db_room.status != 'day_vote':
+            # 議論フェーズの場合は自動的に投票フェーズに移行
+            if db_room.status == 'day_discussion':
+                logger.info(f"Auto-transitioning room {room_id} from day_discussion to day_vote")
+                db_room.status = 'day_vote'
+                create_game_log(db, room_id, "phase_transition", "day_vote", content="投票フェーズに移行します。")
+                db.commit()
+            else:
+                raise HTTPException(status_code=400, detail=f"Not in voting phase (current: {db_room.status})")
 
         target_player = get_player(db, target_id)
         if not target_player:
             raise HTTPException(status_code=404, detail="Target player not found")
+        
+        # 投票者と対象者が生存していることを確認
+        voter_player = get_player(db, voter_id)
+        if not voter_player or not voter_player.is_alive:
+            raise HTTPException(status_code=400, detail="Voter is not alive")
+        if not target_player.is_alive:
+            raise HTTPException(status_code=400, detail="Target player is not alive")
 
         # 既に投票済みかチェック（重複投票防止）
         existing_vote = db.query(GameLog).filter(
@@ -2224,13 +2232,15 @@ async def speak(room_id: uuid.UUID, player_id: uuid.UUID, speak_input: SpeakInpu
     """プレイヤーが議論中に発言する"""
     updated_room = speak_logic(db, room_id, player_id, speak_input.statement)
     
-    # WebSocketで発言をブロードキャスト
+    # WebSocketで発言をブロードキャスト（ターン情報を含める）
     player = get_player(db, player_id)
     await sio.emit('new_speech', {
         'room_id': str(room_id),
         'speaker_id': str(player_id),
         'speaker_name': player.character_name if player else 'Unknown',
-        'statement': speak_input.statement
+        'statement': speak_input.statement,
+        'current_turn_index': updated_room.current_turn_index,
+        'turn_order': updated_room.turn_order
     }, room=str(room_id))
     
     return updated_room
@@ -2266,6 +2276,41 @@ async def night_action(room_id: uuid.UUID, db: Session = Depends(get_db)):
     results = process_night_actions(db, room_id)
     await sio.emit('night_action_result', {'room_id': str(room_id), 'results': results}, room=str(room_id))
     return results
+
+@app.post("/api/rooms/{room_id}/transition_to_vote", summary="投票フェーズに移行")
+async def transition_to_vote(room_id: uuid.UUID, db: Session = Depends(get_db)):
+    """議論フェーズから投票フェーズに手動で移行する"""
+    try:
+        db_room = db.query(Room).filter(Room.room_id == room_id).with_for_update().first()
+        if not db_room:
+            raise HTTPException(status_code=404, detail="Room not found")
+        
+        if db_room.status != 'day_discussion':
+            raise HTTPException(status_code=400, detail=f"Cannot transition to vote from current phase: {db_room.status}")
+        
+        # 投票フェーズに移行
+        db_room.status = 'day_vote'
+        create_game_log(db, room_id, "phase_transition", "day_vote", content="手動で投票フェーズに移行しました。")
+        db.commit()
+        
+        # 部屋の最新状態を取得
+        updated_room = get_room(db, room_id)
+        
+        # WebSocket通知
+        await sio.emit('room_updated', {'room_id': str(room_id)}, room=str(room_id))
+        
+        return {
+            "room_id": str(room_id),
+            "status": updated_room.status,
+            "message": "投票フェーズに移行しました"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in transition_to_vote: {e}", exc_info=True)
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to transition to vote phase")
 
 @app.get("/api/rooms/{room_id}/logs", response_model=List[GameLogInfo], summary="ゲームログを取得")
 def read_game_logs(room_id: uuid.UUID, db: Session = Depends(get_db)):
@@ -2379,22 +2424,32 @@ async def auto_progress_logic(room_id: uuid.UUID, db: Session) -> dict:
 
         if current_player and not current_player.is_human and current_player.is_alive:
             # AIの発言を生成
-            statement = generate_ai_speech(db, room_id, current_player_id)
-            
-            # 発言処理
-            updated_room = speak_logic(db, room_id, current_player_id, statement)
-            
-            # WebSocket通知データ
-            websocket_data = {
-                "type": "new_speech",
-                "data": {
-                    'room_id': str(room_id),
-                    'speaker_id': str(current_player_id),
-                    'speaker_name': current_player.character_name,
-                    'statement': statement
+            try:
+                statement = generate_ai_speech(db, room_id, current_player_id)
+                
+                # 発言処理 - これによってターンが自動的に進む
+                updated_room = speak_logic(db, room_id, current_player_id, statement)
+                
+                # WebSocket通知データ
+                websocket_data = {
+                    "type": "new_speech",
+                    "data": {
+                        'room_id': str(room_id),
+                        'speaker_id': str(current_player_id),
+                        'speaker_name': current_player.character_name,
+                        'statement': statement,
+                        'current_phase': updated_room.status,
+                        'current_turn_index': updated_room.current_turn_index
+                    }
                 }
-            }
-            return {"auto_progressed": True, "message": f"{current_player.character_name} spoke.", "websocket_data": websocket_data}
+                return {"auto_progressed": True, "message": f"{current_player.character_name} spoke.", "websocket_data": websocket_data}
+            except Exception as e:
+                logger.error(f"Error in AI speech generation for {current_player.character_name}: {e}", exc_info=True)
+                # フォールバック: ターンをスキップして次のプレイヤーに進む
+                next_index = find_next_alive_player_safe(db, room_id, room.current_turn_index)
+                room.current_turn_index = next_index
+                db.commit()
+                return {"auto_progressed": True, "message": f"{current_player.character_name} skipped due to error.", "error": str(e)}
 
     elif room.status == 'day_vote':
         # 未投票のAIプレイヤーを探す
@@ -2409,28 +2464,40 @@ async def auto_progress_logic(room_id: uuid.UUID, db: Session) -> dict:
         ai_to_vote = next((p for p in alive_players if not p.is_human and p.player_id not in voted_player_ids), None)
 
         if ai_to_vote:
-            # AIの投票先を決定
-            possible_targets = [p for p in alive_players if p.player_id != ai_to_vote.player_id]
-            if not possible_targets:
-                return {"auto_progressed": False, "message": "No one to vote for."}
-            
-            target_player = await generate_ai_vote_decision(db, room_id, ai_to_vote, possible_targets)
-            
-            # 投票処理
-            process_vote(db, room_id, ai_to_vote.player_id, target_player.player_id)
-            
-            # WebSocket通知データ
-            websocket_data = {
-                "type": "new_vote",
-                "data": {
-                    'room_id': str(room_id),
-                    'voter_id': str(ai_to_vote.player_id),
-                    'voter_name': ai_to_vote.character_name,
-                    'target_id': str(target_player.player_id),
-                    'target_name': target_player.character_name
+            try:
+                # AIの投票先を決定
+                possible_targets = [p for p in alive_players if p.player_id != ai_to_vote.player_id]
+                if not possible_targets:
+                    return {"auto_progressed": False, "message": "No one to vote for."}
+                
+                target_player = await generate_ai_vote_decision(db, room_id, ai_to_vote, possible_targets)
+                
+                # 投票処理
+                vote_result = process_vote(db, room_id, ai_to_vote.player_id, target_player.player_id)
+                
+                # WebSocket通知データ
+                websocket_data = {
+                    "type": "new_vote",
+                    "data": {
+                        'room_id': str(room_id),
+                        'voter_id': str(ai_to_vote.player_id),
+                        'voter_name': ai_to_vote.character_name,
+                        'target_id': str(target_player.player_id),
+                        'target_name': target_player.character_name,
+                        'vote_result': vote_result.message if vote_result else None
+                    }
                 }
-            }
-            return {"auto_progressed": True, "message": f"{ai_to_vote.character_name} voted for {target_player.character_name}.", "websocket_data": websocket_data}
+                return {"auto_progressed": True, "message": f"{ai_to_vote.character_name} voted for {target_player.character_name}.", "websocket_data": websocket_data}
+            except Exception as e:
+                logger.error(f"Error in AI voting for {ai_to_vote.character_name}: {e}", exc_info=True)
+                # フォールバック: ランダム投票
+                try:
+                    target_player = random.choice(possible_targets)
+                    vote_result = process_vote(db, room_id, ai_to_vote.player_id, target_player.player_id)
+                    return {"auto_progressed": True, "message": f"{ai_to_vote.character_name} voted randomly for {target_player.character_name} (fallback).", "error": str(e)}
+                except Exception as fallback_error:
+                    logger.error(f"Fallback voting also failed: {fallback_error}", exc_info=True)
+                    return {"auto_progressed": False, "message": f"Failed to process AI vote: {str(e)}"}
 
     return {"auto_progressed": False, "message": "Not in a phase for auto-progression."}
 
