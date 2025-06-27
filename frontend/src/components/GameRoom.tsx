@@ -300,9 +300,15 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
 
   const handleNewSpeech = useCallback((data: { room_id: string; speaker_id: string; statement: string }) => {
     if (data.room_id === roomId) {
-      console.log('New speech received:', data);
+      console.log('🗣️ New speech WebSocket event received:', data);
+      console.log('🔄 Triggering fetchRoomData in 100ms...');
       // 即座にデータを更新（WebSocket通知への依存度を上げる）
-      setTimeout(() => fetchRoomData(), 100); // 短いディレイで確実に更新
+      setTimeout(() => {
+        console.log('🔄 Executing fetchRoomData now...');
+        fetchRoomData();
+      }, 100); // 短いディレイで確実に更新
+    } else {
+      console.log('🚫 New speech event for different room:', data.room_id, 'vs', roomId);
     }
   }, [roomId, fetchRoomData]);
 

@@ -1972,7 +1972,10 @@ async def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid
         
         # 高度なAIエージェントシステムが利用可能な場合
         if root_agent and GOOGLE_PROJECT_ID and GOOGLE_LOCATION:
-            logger.info("Using advanced AI agent system with Function Calling")
+            logger.info("✅ Using advanced AI agent system with Function Calling")
+            logger.info(f"✅ Root agent type: {type(root_agent)}")
+            logger.info(f"✅ Root agent fallback mode: {getattr(root_agent, 'fallback_mode', 'Unknown')}")
+            logger.info(f"✅ Root agent tools available: {getattr(root_agent, 'tools_available', 'Unknown')}")
             # プレイヤー情報を準備（ペルソナ未設定の場合はデフォルト）
             persona = ai_player.character_persona
             if not persona:
@@ -2015,9 +2018,13 @@ async def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid
             
             try:
                 logger.info("🚀 Calling advanced AI agent system...")
+                logger.info(f"🚀 Player info being passed: {player_info}")
+                logger.info(f"🚀 Game context being passed: {game_context}")
+                logger.info(f"🚀 Recent messages count: {len(recent_messages)}")
                 speech = root_agent.generate_speech(player_info, game_context, recent_messages)
                 logger.info(f"✅ AI agent system response: {speech}")
                 logger.info(f"📏 Speech length: {len(speech) if speech else 0} characters")
+                logger.info(f"✅ AI agent system SUCCESS - using Function Calling tools")
                     
             except Exception as agent_error:
                 logger.error(f"❌ Error in AI agent system: {agent_error}", exc_info=True)

@@ -32,6 +32,20 @@ export default function GameControls({
   const myPlayerInfo = allPlayers.find(p => p.player_id === currentPlayerId);
   const isHumanPlayer = myPlayerInfo?.is_human ?? false;
 
+  // デバッグログ（開発環境でのみ）
+  if (process.env.NODE_ENV === 'development' || true) { // 一時的に本番でも有効
+    console.log('🎮 GameControls Debug:', {
+      gameStatus,
+      isMyTurn,
+      currentPlayerId,
+      currentPlayerName: currentPlayer?.character_name,
+      myPlayerInfo: myPlayerInfo,
+      isHumanPlayer,
+      allPlayersCount: allPlayers.length,
+      showInputCondition: isMyTurn && currentPlayerId && isHumanPlayer
+    });
+  }
+
   const handleSpeak = async () => {
     if (!statement.trim()) return;
 
