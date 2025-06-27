@@ -1880,7 +1880,7 @@ async def broadcast_complete_game_state(room_id: uuid.UUID, db: Session):
     except Exception as e:
         logger.error(f"Error broadcasting complete game state: {e}", exc_info=True)
 
-def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid.UUID, emergency_skip: bool = False) -> str:
+async def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid.UUID, emergency_skip: bool = False) -> str:
     """AIプレイヤーの発言を生成（AIエージェント使用・緊急スキップ対応）"""
     # 超堅牢なフォールバック用の発言リスト
     ULTRA_SAFE_FALLBACK_SPEECHES = [
@@ -2503,7 +2503,7 @@ async def auto_progress_logic(room_id: uuid.UUID, db: Session) -> dict:
         if current_player and not current_player.is_human and current_player.is_alive:
             # AIの発言を生成
             try:
-                statement = generate_ai_speech(db, room_id, current_player_id)
+                statement = await generate_ai_speech(db, room_id, current_player_id)
                 
                 # 発言処理 - これによってターンが自動的に進む
                 updated_room = speak_logic(db, room_id, current_player_id, statement)
