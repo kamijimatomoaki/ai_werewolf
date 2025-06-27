@@ -302,11 +302,21 @@ class RootAgent:
         
         # Vertex AI初期化状態をチェック
         if not vertex_ai_initialized:
-            print("[ERROR] Vertex AI not initialized, using emergency fallback mode")
-            self.model = None
-            self.tools_available = False
-            self.fallback_mode = True
-            return
+            print("[ERROR] Vertex AI not initialized, attempting re-initialization...")
+            # 緊急時の再初期化を試行
+            try:
+                import vertexai
+                vertexai.init(project=GOOGLE_PROJECT_ID, location=GOOGLE_LOCATION)
+                print(f"✅ [SUCCESS] Emergency Vertex AI re-initialization: {GOOGLE_PROJECT_ID} @ {GOOGLE_LOCATION}")
+                global vertex_ai_initialized
+                vertex_ai_initialized = True
+            except Exception as reinit_error:
+                print(f"❌ [ERROR] Emergency re-initialization also failed: {reinit_error}")
+                print("[ERROR] Using emergency fallback mode")
+                self.model = None
+                self.tools_available = False
+                self.fallback_mode = True
+                return
         
         # ツール対応モデルを初期化
         try:

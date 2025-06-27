@@ -64,7 +64,7 @@ export default function GameControls({
         </div>
 
         {/* 発言入力（自分のターンの時） */}
-        {isMyTurn && currentPlayer?.is_human && (
+        {isMyTurn && currentPlayerId && (
           <div className="p-4 bg-gray-800/70 border border-gray-600/50 rounded-lg backdrop-blur-sm">
             <h3 className="font-semibold mb-3 text-white">あなたの発言</h3>
             <textarea

@@ -131,6 +131,12 @@ try:
     from npc_agent.agent import root_agent
     logger.info("AI NPC agent enabled successfully")
     logger.info(f"Agent import path: {backend_dir}")
+    logger.info(f"Root agent status: {root_agent is not None}")
+    logger.info(f"Root agent type: {type(root_agent) if root_agent else 'None'}")
+    
+    # root_agentがNoneの場合は警告
+    if root_agent is None:
+        logger.error("❌ root_agent is None after import! Check npc_agent/agent.py initialization")
 except ImportError as e:
     root_agent = None
     logger.error(f"AI NPC agent could not be imported: {e}")
@@ -138,6 +144,12 @@ except ImportError as e:
     logger.error(f"Script location: {os.path.abspath(__file__)}")
     logger.error(f"Backend directory: {os.path.dirname(os.path.dirname(os.path.abspath(__file__)))}")
     logger.error(f"Current sys.path: {sys.path}")
+except Exception as e:
+    root_agent = None
+    logger.error(f"Unexpected error during AI agent import: {e}")
+    logger.error(f"Error type: {type(e)}")
+    import traceback
+    logger.error(f"Full traceback: {traceback.format_exc()}")
 
 # --- Configuration ---
 load_dotenv()
@@ -1980,8 +1992,6 @@ async def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid
             logger.info(f"=== AI SPEECH GENERATION START ===")
             logger.info(f"Player: {ai_player.character_name}")
             logger.info(f"Day: {room.day_number}, First speech: {len(recent_messages) == 0}")
-            logger.info(f"Persona from DB: '{ai_player.character_persona[:100] if ai_player.character_persona else 'None'}...'")
-            logger.info(f"Player info persona: '{player_info.get('persona', 'None')[:100]}...'")
             logger.info(f"Player info: {player_info}")
             logger.info(f"Game context: {game_context}")
             logger.info(f"Recent messages count: {len(recent_messages)}")
