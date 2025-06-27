@@ -134,9 +134,7 @@ steps:
         echo "API Docs: $(gcloud run services describe werewolf-backend --region=asia-northeast1 --format='value(status.url)')/docs"
     waitFor: ['deploy-frontend']
 
-# 代替変数の設定
-substitutions:
-  _BACKEND_HASH: 'unknown'
+# 代替変数の設定は削除
 
 # ビルド設定
 options:
