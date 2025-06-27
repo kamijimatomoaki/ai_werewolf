@@ -343,13 +343,42 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
     }
   }, [roomId]);
 
+  // 完全ゲーム状態通知ハンドラー
+  const handleCompleteGameState = useCallback((data: any) => {
+    if (data.room_id === roomId) {
+      console.log('Complete game state received:', {
+        turnIndex: data.current_turn_index,
+        turnOrder: data.turn_order,
+        status: data.status,
+        playersCount: data.players?.length
+      });
+      
+      // 状態を直接更新
+      setRoom(prevRoom => {
+        if (!prevRoom) return prevRoom;
+        
+        return {
+          ...prevRoom,
+          current_turn_index: data.current_turn_index,
+          turn_order: data.turn_order,
+          status: data.status,
+          day_number: data.day_number,
+          players: data.players || prevRoom.players
+        };
+      });
+      
+      // 必要に応じてログも更新
+      fetchRoomData();
+    }
+  }, [roomId]);
+
   // WebSocketイベントリスナーの設定
   useEffect(() => {
     if (isConnected) {
       // 部屋に参加
       websocketService.joinRoom(roomId);
       
-      // イベントリスナーを登録
+      // 強化されたイベントリスナーを登録
       websocketService.on('game_started', handleGameStarted);
       websocketService.on('new_speech', handleNewSpeech);
       websocketService.on('player_joined', handlePlayerJoined);
@@ -357,9 +386,12 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
       websocketService.on('vote_phase_started', handleVotePhaseStarted);
       websocketService.on('vote_cast', handleVoteCast);
       websocketService.on('night_phase_started', handleNightPhaseStarted);
+      
+      // 新しい完全ゲーム状態リスナー
+      websocketService.on('complete_game_state', handleCompleteGameState);
     }
 
-    // クリーンアップ
+    // 強化されたクリーンアップ
     return () => {
       websocketService.off('game_started', handleGameStarted);
       websocketService.off('new_speech', handleNewSpeech);
@@ -368,8 +400,9 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
       websocketService.off('vote_phase_started', handleVotePhaseStarted);
       websocketService.off('vote_cast', handleVoteCast);
       websocketService.off('night_phase_started', handleNightPhaseStarted);
+      websocketService.off('complete_game_state', handleCompleteGameState);
     };
-  }, [isConnected, roomId, handleGameStarted, handleNewSpeech, handlePlayerJoined, handleRoomUpdated, handleVotePhaseStarted, handleVoteCast, handleNightPhaseStarted]);
+  }, [isConnected, roomId, handleGameStarted, handleNewSpeech, handlePlayerJoined, handleRoomUpdated, handleVotePhaseStarted, handleVoteCast, handleNightPhaseStarted, handleCompleteGameState]);
 
   // 接続状態の監視と警告表示
   useEffect(() => {
@@ -411,16 +444,25 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
     }
   };
 
-  // 現在の発言者を取得
+  // 強化された現在の発言者取得
   const getCurrentSpeaker = (): PlayerInfo | null => {
     if (!room?.turn_order || 
         room.current_turn_index === undefined || 
         room.current_turn_index < 0 || 
         room.current_turn_index >= room.turn_order.length) {
+      console.log('getCurrentSpeaker: Invalid turn state');
       return null;
     }
     const currentPlayerId = room.turn_order[room.current_turn_index];
-    return room.players.find(p => p.player_id === currentPlayerId) || null;
+    const speaker = room.players.find(p => p.player_id === currentPlayerId) || null;
+    
+    if (speaker) {
+      console.log('Current speaker:', speaker.character_name, speaker.player_id);
+    } else {
+      console.log('No speaker found for player ID:', currentPlayerId);
+    }
+    
+    return speaker;
   };
 
   if (!room) {
@@ -440,8 +482,38 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
     );
   }
 
+  // 完全なisMyTurn判定システム（useMemoの外でログ処理）
   const currentSpeaker = getCurrentSpeaker();
-  const isMyTurn = currentSpeaker?.player_id === currentPlayerId;
+  
+  const isMyTurn = useMemo(() => {
+    // フォルバックチェック
+    if (!room?.turn_order || 
+        room.current_turn_index === undefined ||
+        room.current_turn_index < 0 ||
+        room.current_turn_index >= room.turn_order.length ||
+        !currentPlayerId) {
+      console.log('isMyTurn: Invalid state', {
+        hasTurnOrder: !!room?.turn_order,
+        turnIndex: room?.current_turn_index,
+        turnOrderLength: room?.turn_order?.length,
+        hasCurrentPlayerId: !!currentPlayerId
+      });
+      return false;
+    }
+    
+    const currentTurnPlayerId = room.turn_order[room.current_turn_index];
+    const result = currentTurnPlayerId === currentPlayerId;
+    
+    console.log('isMyTurn calculation:', {
+      currentTurnIndex: room.current_turn_index,
+      currentTurnPlayerId,
+      myPlayerId: currentPlayerId,
+      isMyTurn: result,
+      gameStatus: room.status
+    });
+    
+    return result;
+  }, [room?.turn_order, room?.current_turn_index, currentPlayerId, room?.status]);
   
   // 現在のプレイヤー情報を取得
   const currentPlayer = room?.players.find(p => p.player_id === currentPlayerId);
@@ -539,7 +611,20 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
 
         {/* ゲーム進行エリア - 独立スクロール */}
         <div className="lg:col-span-2 h-full overflow-y-auto scrollbar-thin scrollbar-thumb-gray-600 scrollbar-track-gray-800 flex flex-col space-y-4">
-          {/* ゲーム制御コンポーネント */}
+          {/* 強化されたゲーム制御コンポーネント */}
+          {process.env.NODE_ENV === 'development' && (
+            <div className="bg-gray-800 p-3 rounded border text-xs">
+              <div className="text-yellow-400 font-bold mb-2">デバッグ情報:</div>
+              <div>Game Status: <span className="text-green-400">{room.status}</span></div>
+              <div>Turn Index: <span className="text-green-400">{room.current_turn_index}</span></div>
+              <div>Turn Order Length: <span className="text-green-400">{room.turn_order?.length || 0}</span></div>
+              <div>Current Speaker: <span className="text-green-400">{currentSpeaker?.character_name || 'None'}</span></div>
+              <div>Is My Turn: <span className={isMyTurn ? 'text-green-400' : 'text-red-400'}>{isMyTurn ? 'YES' : 'NO'}</span></div>
+              <div>My Player ID: <span className="text-blue-400">{currentPlayerId}</span></div>
+              <div>Current Turn Player ID: <span className="text-blue-400">{room.turn_order?.[room.current_turn_index || 0] || 'None'}</span></div>
+            </div>
+          )}
+          
           <GameControls
             gameStatus={room.status}
             isMyTurn={isMyTurn}

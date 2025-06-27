@@ -1798,6 +1798,88 @@ def get_detailed_game_result(db: Session, room_id: uuid.UUID) -> GameResult:
         game_duration=game_duration
     )
 
+async def get_ai_speech_context(room_id: uuid.UUID, ai_player_id: uuid.UUID, day_number: int, db: Session) -> list:
+    """　AI発言コンテキストを安全に取得　"""
+    try:
+        # このAIプレイヤーの今日の発言回数をチェック
+        ai_speech_count = db.query(GameLog).filter(
+            GameLog.room_id == room_id,
+            GameLog.day_number == day_number,
+            GameLog.event_type == "speech",
+            GameLog.actor_player_id == ai_player_id
+        ).count()
+        
+        logger.info(f"AI speech count check: player={ai_player_id}, day={day_number}, count={ai_speech_count}")
+        
+        # 初回発言の場合は空のコンテキストを返す
+        if ai_speech_count == 0:
+            logger.info(f"First speech detected for AI {ai_player_id} - returning empty context")
+            return []
+        
+        # 既に発言済みの場合は既存の発言履歴を取得
+        recent_logs = db.query(GameLog).filter(
+            GameLog.room_id == room_id,
+            GameLog.day_number == day_number,
+            GameLog.event_type == "speech"
+        ).order_by(GameLog.created_at.asc()).all()
+        
+        recent_messages = []
+        for log in recent_logs:
+            if log.actor:
+                recent_messages.append({
+                    'speaker': log.actor.character_name,
+                    'content': log.content or '',
+                    'timestamp': log.created_at
+                })
+        
+        logger.info(f"Speech context prepared: {len(recent_messages)} messages for AI {ai_player_id}")
+        return recent_messages
+        
+    except Exception as e:
+        logger.error(f"Error getting AI speech context: {e}")
+        # エラー時は安全に空のコンテキストを返す
+        return []
+
+async def broadcast_complete_game_state(room_id: uuid.UUID, db: Session):
+    """　完全なゲーム状態を全プレイヤーに通知　"""
+    try:
+        room = get_room(db, room_id)
+        if not room:
+            logger.error(f"Room not found for broadcast: {room_id}")
+            return
+            
+        # 完全なゲーム状態を構築
+        complete_state = {
+            'event_type': 'complete_game_state',
+            'room_id': str(room_id),
+            'current_turn_index': room.current_turn_index,
+            'turn_order': room.turn_order or [],
+            'status': room.status,
+            'day_number': room.day_number,
+            'players': [{
+                'player_id': str(p.player_id),
+                'character_name': p.character_name,
+                'is_alive': p.is_alive,
+                'is_human': p.is_human
+            } for p in room.players],
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        # ターン情報の検証とログ
+        if room.turn_order and room.current_turn_index is not None:
+            if 0 <= room.current_turn_index < len(room.turn_order):
+                current_player_id = room.turn_order[room.current_turn_index]
+                logger.info(f"Broadcasting turn state: index={room.current_turn_index}, player={current_player_id}")
+            else:
+                logger.warning(f"Invalid turn index: {room.current_turn_index} for turn_order length {len(room.turn_order)}")
+        
+        # 全プレイヤーに状態を通知
+        await sio.emit('complete_game_state', complete_state, room=str(room_id))
+        logger.debug(f"Complete game state broadcasted for room {room_id}")
+        
+    except Exception as e:
+        logger.error(f"Error broadcasting complete game state: {e}", exc_info=True)
+
 def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid.UUID, emergency_skip: bool = False) -> str:
     """AIプレイヤーの発言を生成（AIエージェント使用・緊急スキップ対応）"""
     # 超堅牢なフォールバック用の発言リスト
@@ -1874,39 +1956,19 @@ def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid.UUID,
                 } for p in room.players]
             }
             
-            # 初回発言チェック：このAIプレイヤーが今日発言したことがあるか確認
-            ai_speech_count = db.query(GameLog).filter(
-                GameLog.room_id == room_id,
-                GameLog.day_number == room.day_number,
-                GameLog.event_type == "speech",
-                GameLog.actor_player_id == ai_player.player_id
-            ).count()
+            # AI発言コンテキストの完全管理
+            recent_messages = await get_ai_speech_context(room_id, ai_player.player_id, room.day_number, db)
+            logger.info(f"AI speech context prepared for {ai_player.character_name}: {len(recent_messages)} messages")
             
-            recent_messages = []
-            if ai_speech_count > 0:
-                # 初回発言でない場合のみ発言履歴を取得
-                recent_logs = db.query(GameLog).filter(
-                    GameLog.room_id == room_id,
-                    GameLog.day_number == room.day_number,
-                    GameLog.event_type == "speech"
-                ).order_by(GameLog.created_at.asc()).all()
-                
-                for log in recent_logs:
-                    if log.actor:
-                        recent_messages.append({
-                            'speaker': log.actor.character_name,
-                            'content': log.content or '',
-                            'timestamp': log.created_at
-                        })
-            else:
-                # 初回発言の場合は発言履歴を空にする
-                logger.info(f"First speech for {ai_player.character_name} on day {room.day_number}, starting with empty conversation history")
-            
-            # 高度なAIエージェントで発言を生成
-            logger.info(f"Calling root_agent.generate_speech() for {ai_player.character_name}")
+            # AI発言生成前のデバッグ情報
+            logger.info(f"=== AI SPEECH GENERATION START ===")
+            logger.info(f"Player: {ai_player.character_name}")
+            logger.info(f"Day: {room.day_number}, First speech: {len(recent_messages) == 0}")
             logger.info(f"Player info: {player_info}")
             logger.info(f"Game context: {game_context}")
             logger.info(f"Recent messages count: {len(recent_messages)}")
+            
+            # 高度なAIエージェントで発言を生成
             
             try:
                 logger.info("🚀 Calling advanced AI agent system...")
@@ -2244,7 +2306,10 @@ async def speak(room_id: uuid.UUID, player_id: uuid.UUID, speak_input: SpeakInpu
     """プレイヤーが議論中に発言する"""
     updated_room = speak_logic(db, room_id, player_id, speak_input.statement)
     
-    # WebSocketで発言をブロードキャスト（ターン情報を含める）
+    # 完全なゲーム状態をWebSocketで通知
+    await broadcast_complete_game_state(room_id, db)
+    
+    # 発言イベントも別途通知
     player = get_player(db, player_id)
     await sio.emit('new_speech', {
         'room_id': str(room_id),
@@ -2252,7 +2317,8 @@ async def speak(room_id: uuid.UUID, player_id: uuid.UUID, speak_input: SpeakInpu
         'speaker_name': player.character_name if player else 'Unknown',
         'statement': speak_input.statement,
         'current_turn_index': updated_room.current_turn_index,
-        'turn_order': updated_room.turn_order
+        'turn_order': updated_room.turn_order,
+        'timestamp': datetime.now().isoformat()
     }, room=str(room_id))
     
     return updated_room
