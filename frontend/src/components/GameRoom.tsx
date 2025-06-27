@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 
 import { apiService, VoteResult } from '@/services/api';
 import { websocketService } from '@/services/websocket';
