@@ -2223,17 +2223,62 @@ async def generate_persona(player_id: uuid.UUID, persona_input: PersonaInput, db
     if not player or player.is_human:
         raise HTTPException(status_code=400, detail="Invalid player for persona generation")
 
-    if not root_agent:
-        raise HTTPException(status_code=503, detail="AI agent is not available")
-
     try:
-        # Vertex AI を使用してペルソナを生成
-        model = GenerativeModel("gemini-1.5-flash")
-        response = model.generate_content(
-            f"以下のキーワードを元に、人狼ゲームのキャラクターのペルソナをJSON形式で生成してください: {persona_input.keywords}" +
-            "\n\n{\n  \"gender\": \"(性別)\",\n  \"age\": (年齢),\n  \"personality\": \"(性格)\",\n  \"speech_style\": \"(話し方、口調)\",\n  \"background\": \"(背景設定)\"\n}"
-        )
-        persona_data = json.loads(response.text)
+        # Vertex AI の初期化を確認
+        if not GOOGLE_PROJECT_ID:
+            logger.warning("Google Cloud project not configured, using mock persona")
+            # モックペルソナを生成
+            persona_data = {
+                "gender": "不明",
+                "age": 25,
+                "personality": "ミステリアスで慎重な性格",
+                "speech_style": "丁寧語を使い、慎重に発言する",
+                "background": "詳細は秘密に包まれている"
+            }
+        else:
+            # Vertex AI を使用してペルソナを生成
+            try:
+                vertexai.init(project=GOOGLE_PROJECT_ID, location=GOOGLE_LOCATION)
+                model = GenerativeModel("gemini-1.5-flash")
+                prompt = f"""以下のキーワードを元に、人狼ゲームのキャラクターのペルソナをJSON形式で生成してください: {persona_input.keywords}
+
+返答は必ず以下のJSON形式のみで回答してください：
+{{
+  "gender": "男性/女性/その他",
+  "age": 数値,
+  "personality": "性格の説明",
+  "speech_style": "話し方や口調の説明",
+  "background": "背景設定の説明"
+}}"""
+                
+                response = model.generate_content(prompt)
+                response_text = response.text.strip()
+                
+                # JSONの抽出（```json から ```までを除去）
+                if "```json" in response_text:
+                    json_start = response_text.find("```json") + 7
+                    json_end = response_text.find("```", json_start)
+                    if json_end != -1:
+                        response_text = response_text[json_start:json_end]
+                elif "```" in response_text:
+                    json_start = response_text.find("```") + 3
+                    json_end = response_text.find("```", json_start)
+                    if json_end != -1:
+                        response_text = response_text[json_start:json_end]
+                
+                persona_data = json.loads(response_text.strip())
+                logger.info(f"Generated persona for player {player_id}: {persona_data}")
+                
+            except Exception as ai_error:
+                logger.error(f"Vertex AI persona generation failed: {ai_error}", exc_info=True)
+                # フォールバック用のペルソナ
+                persona_data = {
+                    "gender": "不明",
+                    "age": 25,
+                    "personality": f"キーワード「{persona_input.keywords}」に基づく個性的なキャラクター",
+                    "speech_style": "独特な話し方をする",
+                    "background": f"「{persona_input.keywords}」という特徴を持つ謎めいた人物"
+                }
         
         # データベースを更新
         update_player_persona(db, player_id, persona_data)
@@ -2243,8 +2288,8 @@ async def generate_persona(player_id: uuid.UUID, persona_input: PersonaInput, db
         
         return {"message": "Persona generated successfully", "persona": persona_data}
     except Exception as e:
-        logger.error(f"Persona generation failed: {e}")
-        raise HTTPException(status_code=500, detail="Failed to generate persona")
+        logger.error(f"Persona generation failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to generate persona: {str(e)}")
 
 @app.post("/api/rooms/{room_id}/auto_progress", summary="ゲームの自動進行")
 async def auto_progress(room_id: uuid.UUID, db: Session = Depends(get_db)):
