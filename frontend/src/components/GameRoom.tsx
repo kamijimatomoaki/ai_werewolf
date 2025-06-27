@@ -482,10 +482,11 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
     );
   }
 
-  // 完全なisMyTurn判定システム（useMemoの外でログ処理）
+  // 安全なisMyTurn判定システム（useMemoを使わない）
   const currentSpeaker = getCurrentSpeaker();
   
-  const isMyTurn = useMemo(() => {
+  // useMemoを使わずに直接計算（React Error #310を回避）
+  const getIsMyTurn = () => {
     // フォルバックチェック
     if (!room?.turn_order || 
         room.current_turn_index === undefined ||
@@ -513,12 +514,9 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
     });
     
     return result;
-  }, [
-    room?.turn_order?.join(','), // 配列を文字列化して依存関係を安定化
-    room?.current_turn_index, 
-    currentPlayerId, 
-    room?.status
-  ]);
+  };
+  
+  const isMyTurn = getIsMyTurn();
   
   // 現在のプレイヤー情報を取得
   const currentPlayer = room?.players.find(p => p.player_id === currentPlayerId);
