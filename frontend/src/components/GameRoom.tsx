@@ -320,11 +320,13 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
   const handleRoomUpdated = useCallback((data: { room_id: string; room_data: RoomInfo }) => {
     if (data.room_id === roomId) {
       console.log('Room updated via WebSocket:', data);
-      // 差分データで部屋情報を更新
-      setRoom(data.room_data);
-      // ログも更新（必要に応じて）
-      if (data.room_data.logs) {
-        setLogs(data.room_data.logs);
+      // 安全な差分データ更新
+      if (data.room_data) {
+        setRoom(data.room_data);
+        // ログも更新（安全にチェック）
+        if (data.room_data.logs && Array.isArray(data.room_data.logs)) {
+          setLogs(data.room_data.logs);
+        }
       }
     }
   }, [roomId]);

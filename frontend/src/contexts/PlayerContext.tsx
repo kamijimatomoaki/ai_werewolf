@@ -39,11 +39,22 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({ children }) => {
     const storedRoomId = localStorage.getItem('room_id');
     const storedSessionToken = localStorage.getItem('session_token');
 
+    console.log('🔑 PlayerContext session restoration:', {
+      storedPlayerId,
+      storedPlayerName,
+      storedRoomId,
+      storedSessionToken: storedSessionToken ? '***' : null,
+      allConditionsMet: !!(storedPlayerId && storedPlayerName && storedRoomId && storedSessionToken)
+    });
+
     if (storedPlayerId && storedPlayerName && storedRoomId && storedSessionToken) {
+      console.log('✅ Restoring player session...');
       setPlayerId(storedPlayerId);
       setPlayerName(storedPlayerName);
       setRoomId(storedRoomId);
       setSessionToken(storedSessionToken);
+    } else {
+      console.log('❌ Cannot restore player session - missing data');
     }
   }, []);
 
