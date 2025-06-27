@@ -1203,6 +1203,12 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
         # 次のプレイヤーを探す（簡素化）
         next_index = find_next_alive_player_safe(db, room_id, current_index)
         
+        # 🔍 ターン進行デバッグログ
+        logger.info(f"🎯 TURN PROGRESSION: room_id={room_id}, from_index={current_index} to_index={next_index}")
+        if next_index < len(turn_order):
+            next_player = get_player(db, uuid.UUID(turn_order[next_index]))
+            logger.info(f"🎯 NEXT PLAYER: {next_player.character_name if next_player else 'Unknown'} (is_human={next_player.is_human if next_player else 'Unknown'})")
+        
         # ターン進行
         db_room.current_turn_index = next_index
         
@@ -2511,12 +2517,20 @@ async def auto_progress_logic(room_id: uuid.UUID, db: Session) -> dict:
         current_player = get_player(db, current_player_id)
 
         if current_player and not current_player.is_human and current_player.is_alive:
+            # 🔍 AI発言デバッグ：開始
+            logger.info(f"🤖 AUTO-PROGRESS: AI speech generation started for {current_player.character_name}")
+            logger.info(f"🤖 TURN STATE: room_id={room_id}, current_turn_index={room.current_turn_index}, player_id={current_player_id}")
+            
             # AIの発言を生成
             try:
                 statement = await generate_ai_speech(db, room_id, current_player_id)
+                logger.info(f"🤖 AI SPEECH GENERATED: {current_player.character_name} said: '{statement[:100]}...'")  # 最初の100文字のみログ
                 
                 # 発言処理 - これによってターンが自動的に進む
+                logger.info(f"🤖 BEFORE SPEAK_LOGIC: current_turn_index={room.current_turn_index}")
                 updated_room = speak_logic(db, room_id, current_player_id, statement)
+                logger.info(f"🤖 AFTER SPEAK_LOGIC: current_turn_index={updated_room.current_turn_index}")
+                logger.info(f"🤖 TURN ADVANCED: from {room.current_turn_index} to {updated_room.current_turn_index}")
                 
                 # WebSocket通知データ
                 websocket_data = {
