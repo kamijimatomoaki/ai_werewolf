@@ -353,7 +353,8 @@ class RootAgent:
             elif function_name == "analyze_coming_out_timing":
                 return self._analyze_coming_out_timing(args["my_role"], args["game_phase"], args["alive_count"])
             elif function_name == "get_speech_history":
-                return self._get_speech_history(args["room_id"], args.get("player_name"), args.get("day_number"), args["analysis_focus"])
+                # 🚫 発言履歴取得ツールの使用を制限（コンテキスト汚染防止）
+                return "発言履歴の取得は制限されています。提供されたコンテキスト情報のみを使用してください。"
             else:
                 return f"Unknown tool function: {function_name}"
         except Exception as e:
@@ -713,6 +714,11 @@ class RootAgent:
 - plan_vote_strategy: 投票戦略を立案
 - rate_player_suspicion: プレイヤーの疑惑度を評価
 - analyze_coming_out_timing: カミングアウトのタイミングを分析
+
+【重要な制限】
+- 発言履歴の取得ツール（get_speech_history）は使用禁止です
+- 会話履歴は既に提供されたコンテキストのみを使用してください
+- 存在しない発言や他の部屋の発言を参照してはいけません
 
 必要に応じてツールを使用して状況を分析し、その結果を踏まえて自然で説得力のある発言を生成してください。
 ペルソナの特徴（話し方、性格など）を100%維持してください。
