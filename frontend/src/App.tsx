@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { usePlayer } from '@/contexts/PlayerContext';
 import RoomList from '@/components/RoomList';
 import GameRoom from '@/components/GameRoom';
 import SpectatorLayout from '@/components/layout/SpectatorLayout';
@@ -8,9 +9,19 @@ import backgroundImage from '@/assets/background.jpg';
 type AppView = 'lobby' | 'room' | 'spectator';
 
 function App() {
+  const { playerId, roomId } = usePlayer();
   const [currentView, setCurrentView] = useState<AppView>('lobby');
   const [currentRoomId, setCurrentRoomId] = useState<string | null>(null);
   const [currentSpectatorId, setCurrentSpectatorId] = useState<string | null>(null);
+
+  // セッション復元時の自動リダイレクト
+  useEffect(() => {
+    if (playerId && roomId) {
+      console.log('🔄 Auto-redirecting to room on session restore:', roomId);
+      setCurrentRoomId(roomId);
+      setCurrentView('room');
+    }
+  }, [playerId, roomId]);
 
   // 部屋に参加
   const handleRoomJoin = (roomId: string) => {
