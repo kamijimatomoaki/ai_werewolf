@@ -22,7 +22,7 @@ interface GameRoomProps {
 }
 
 export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
-  const { playerId: currentPlayerId, roomId: storedRoomId, clearRoomSession } = usePlayer();
+  const { playerId: currentPlayerId, roomId: storedRoomId, playerName, joinRoom, clearRoomSession } = usePlayer();
   const { isConnected, connectionStatus } = useWebSocket();
   const [room, setRoom] = useState<RoomInfo | null>(null);
   const [logs, setLogs] = useState<GameLogInfo[]>([]);
@@ -426,23 +426,31 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
     }
   }, [isConnected, connectionWarningShown, room]);
 
-  // 部屋ID不一致チェックと修正
+  // 部屋ID不一致チェックと修正、または未認証時の自動参加
   useEffect(() => {
     if (storedRoomId && storedRoomId !== roomId) {
       console.warn(`🚨 Room ID mismatch detected:`, {
         urlRoomId: roomId,
         storedRoomId: storedRoomId,
-        action: 'clearing_session_and_redirecting'
+        action: 'clearing_session_and_auto_joining'
       });
-      // 古いセッションをクリアして、正しい部屋に再参加させる
+      // 古いセッションをクリア
       clearRoomSession();
-      // ロビーに戻してユーザーに再参加を促す
-      onBackToLobby();
+    }
+    
+    // 認証されていない場合は自動参加を試行
+    if (!currentPlayerId && playerName) {
+      console.log(`🔄 Auto-joining room ${roomId} as ${playerName}...`);
+      joinRoom(roomId, playerName).catch(error => {
+        console.error('Auto-join failed:', error);
+        // 自動参加に失敗した場合はロビーに戻る
+        onBackToLobby();
+      });
       return;
     }
     
     fetchRoomData();
-  }, [roomId, storedRoomId, clearRoomSession, onBackToLobby]);
+  }, [roomId, storedRoomId, currentPlayerId, playerName, joinRoom, clearRoomSession, onBackToLobby]);
 
   // ステータス表示
   const getStatusColor = (status: string) => {
