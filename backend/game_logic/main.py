@@ -1978,10 +1978,30 @@ async def get_ai_speech_context(room_id: uuid.UUID, ai_player_id: uuid.UUID, day
         
         logger.info(f"AI speech count check: player={ai_player_id}, day={day_number}, count={ai_speech_count}")
         
-        # 初回発言の場合は空のコンテキストを返す
-        if ai_speech_count == 0:
-            logger.info(f"First speech detected for AI {ai_player_id} - returning empty context")
+        # 初回発言の場合は空のコンテキストを返す（1日目のみ）
+        if ai_speech_count == 0 and day_number == 1:
+            logger.info(f"First speech of Day 1 detected for AI {ai_player_id} - returning empty context")
             return []
+        
+        # 2日目以降の初回発言では前日の要約情報を含める
+        if ai_speech_count == 0 and day_number > 1:
+            logger.info(f"First speech of Day {day_number} detected for AI {ai_player_id} - including previous day context")
+            # 前日の重要な情報のみを簡潔に取得
+            previous_day_logs = db.query(GameLog).filter(
+                GameLog.room_id == room_id,
+                GameLog.day_number == day_number - 1,
+                GameLog.event_type.in_(["vote_result", "night_result"])
+            ).order_by(GameLog.created_at.desc()).limit(3).all()
+            
+            previous_context = []
+            for log in previous_day_logs:
+                if log.content:
+                    previous_context.append({
+                        'speaker': 'システム',
+                        'content': f"前日の結果: {log.content}",
+                        'timestamp': log.created_at
+                    })
+            return previous_context
         
         # 既に発言済みの場合は既存の発言履歴を取得
         recent_logs = db.query(GameLog).filter(
