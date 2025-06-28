@@ -1919,11 +1919,15 @@ def process_night_actions(db: Session, room_id: uuid.UUID) -> Dict[str, Any]:
     if seers:
         results['seer_status'] = f"{seers[0].character_name}による占いを待機中（手動実行）"
     
+    # 🔧 確実にデータベースに保存
+    db.commit()
+    
     # ゲーム終了条件をチェック
     game_end_result = check_game_end_condition(db, room_id)
     if game_end_result['game_over']:
         db_room.status = 'finished'
         results.update(game_end_result)
+        logger.info(f"Game ended: {game_end_result}")
     else:
         # 次の日に進む
         db_room.day_number += 1
@@ -1933,6 +1937,8 @@ def process_night_actions(db: Session, room_id: uuid.UUID) -> Dict[str, Any]:
         
         # 生存者でターン順序を再構築（相対順序を保持）
         living_players = [p for p in db_room.players if p.is_alive]
+        
+        logger.info(f"Night actions completed. Moving to Day {db_room.day_number}, {len(living_players)} players alive")
         
         # 前日のターン順序を参照して相対順序を保持
         if db_room.turn_order:
@@ -3194,12 +3200,16 @@ async def auto_progress_logic(room_id: uuid.UUID, db: Session) -> dict:
 
         if ai_to_vote:
             try:
+                logger.info(f"🗳️ Processing AI vote for {ai_to_vote.character_name}")
                 # AIの投票先を決定
                 possible_targets = [p for p in alive_players if p.player_id != ai_to_vote.player_id]
                 if not possible_targets:
+                    logger.error(f"No voting targets available for {ai_to_vote.character_name}")
                     return {"auto_progressed": False, "message": "No one to vote for."}
                 
+                logger.info(f"Possible vote targets for {ai_to_vote.character_name}: {[p.character_name for p in possible_targets]}")
                 target_player = await generate_ai_vote_decision(db, room_id, ai_to_vote, possible_targets)
+                logger.info(f"AI {ai_to_vote.character_name} decided to vote for {target_player.character_name}")
                 
                 # 投票処理
                 vote_result = process_vote(db, room_id, ai_to_vote.player_id, target_player.player_id)
@@ -3244,7 +3254,11 @@ async def auto_progress_logic(room_id: uuid.UUID, db: Session) -> dict:
                     logger.error(f"🚨 Fallback voting also failed: {fallback_error}", exc_info=True)
                     return {"auto_progressed": False, "message": f"Failed to process AI vote: {str(e)}"}
 
-    return {"auto_progressed": False, "message": "Not in a phase for auto-progression."}
+    # 🔧 デバッグ情報を追加
+    logger.warning(f"No auto-progression available for room {room_id} in status {room.status}")
+    logger.warning(f"Room details: day={room.day_number}, turn_index={room.current_turn_index}, turn_order_length={len(room.turn_order) if room.turn_order else 0}")
+    
+    return {"auto_progressed": False, "message": f"Not in a phase for auto-progression. Current status: {room.status}"}
 
 
 # --- Helper Functions ---

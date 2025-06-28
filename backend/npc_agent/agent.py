@@ -819,7 +819,10 @@ class RootAgent:
                         if p['name'] != player_info.get('name') and p['is_alive']]
         
         return f"""
-あなたは人狼ゲームの熟練プレイヤーです。現在の状況を分析し、最適な発言を行ってください。
+あなたは人狼ゲームの熟練プレイヤーです。以下のルールを完全に理解し、最適な発言を行ってください。
+
+# 🎯 詳細ゲームルールガイド
+{prompt.WEREWOLF_GAME_RULES_INSTR}
 
 {persona_info}
 
