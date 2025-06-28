@@ -1038,15 +1038,16 @@ def api_health_check():
 
 # --- Game Logic & CRUD Operations ---
 def get_role_config(player_count: int) -> List[str]:
+    # 🔧 バランス調整版役職構成（全人数でボディガード含む）
     configs: Dict[int, List[str]] = {
-        5: ['werewolf', 'seer', 'villager', 'villager', 'villager'],
-        6: ['werewolf', 'werewolf', 'seer', 'villager', 'villager', 'villager'],
-        7: ['werewolf', 'werewolf', 'seer', 'bodyguard', 'villager', 'villager', 'villager'],
-        8: ['werewolf', 'werewolf', 'seer', 'bodyguard', 'villager', 'villager', 'villager', 'villager'],
-        9: ['werewolf', 'werewolf', 'werewolf', 'seer', 'bodyguard', 'villager', 'villager', 'villager', 'villager'],
-        10: ['werewolf', 'werewolf', 'werewolf', 'seer', 'bodyguard', 'villager', 'villager', 'villager', 'villager', 'villager'],
-        11: ['werewolf', 'werewolf', 'werewolf', 'seer', 'bodyguard', 'villager', 'villager', 'villager', 'villager', 'villager', 'villager'],
-        12: ['werewolf', 'werewolf', 'werewolf', 'seer', 'bodyguard', 'villager', 'villager', 'villager', 'villager', 'villager', 'villager', 'villager']
+        5: ['werewolf', 'werewolf', 'seer', 'bodyguard', 'villager'],              # 人狼2：村人3（占1+護1+村1）
+        6: ['werewolf', 'werewolf', 'seer', 'bodyguard', 'villager', 'villager'], # 人狼2：村人4（占1+護1+村2）
+        7: ['werewolf', 'werewolf', 'seer', 'bodyguard', 'villager', 'villager', 'villager'], # 人狼2：村人5（占1+護1+村3）
+        8: ['werewolf', 'werewolf', 'werewolf', 'seer', 'bodyguard', 'villager', 'villager', 'villager'], # 人狼3：村人5（占1+護1+村3）
+        9: ['werewolf', 'werewolf', 'werewolf', 'seer', 'bodyguard', 'villager', 'villager', 'villager', 'villager'], # 人狼3：村人6（占1+護1+村4）
+        10: ['werewolf', 'werewolf', 'werewolf', 'seer', 'bodyguard', 'villager', 'villager', 'villager', 'villager', 'villager'], # 人狼3：村人7（占1+護1+村5）
+        11: ['werewolf', 'werewolf', 'werewolf', 'werewolf', 'seer', 'bodyguard', 'villager', 'villager', 'villager', 'villager', 'villager'], # 人狼4：村人7（占1+護1+村5）
+        12: ['werewolf', 'werewolf', 'werewolf', 'werewolf', 'seer', 'bodyguard', 'villager', 'villager', 'villager', 'villager', 'villager', 'villager'] # 人狼4：村人8（占1+護1+村6）
     }
     return configs.get(player_count, ['villager'] * player_count)
 
