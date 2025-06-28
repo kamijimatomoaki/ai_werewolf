@@ -27,7 +27,7 @@ steps:
       - '-f'
       - 'frontend/Dockerfile.cloudrun'
       - '--build-arg'
-      - 'VITE_API_BASE_URL=https://werewolf-backend-483231515533.asia-northeast1.run.app/api'
+      - 'VITE_API_BASE_URL=https://werewolf-backend-ygt525mx2a-an.a.run.app/api'
       - './frontend'
     waitFor: ['-']
 
