@@ -440,15 +440,9 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
       return;
     }
     
-    // 認証済みの場合のみ部屋データを取得
-    if (currentPlayerId) {
-      fetchRoomData();
-    } else {
-      // 未認証の場合はロビーに戻る
-      console.warn('🚫 Not authenticated for this room, redirecting to lobby');
-      onBackToLobby();
-    }
-  }, [roomId, storedRoomId, currentPlayerId, clearRoomSession, onBackToLobby]);
+    // 部屋データを取得（認証状態に関係なく）
+    fetchRoomData();
+  }, [roomId, storedRoomId, clearRoomSession, onBackToLobby]);
 
   // ステータス表示
   const getStatusColor = (status: string) => {
