@@ -426,31 +426,29 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
     }
   }, [isConnected, connectionWarningShown, room]);
 
-  // 部屋ID不一致チェックと修正、または未認証時の自動参加
+  // 部屋ID不一致チェックと修正
   useEffect(() => {
     if (storedRoomId && storedRoomId !== roomId) {
       console.warn(`🚨 Room ID mismatch detected:`, {
         urlRoomId: roomId,
         storedRoomId: storedRoomId,
-        action: 'clearing_session_and_auto_joining'
+        action: 'clearing_session_and_redirecting'
       });
-      // 古いセッションをクリア
+      // 古いセッションをクリアして、ロビーに戻る
       clearRoomSession();
-    }
-    
-    // 認証されていない場合は自動参加を試行
-    if (!currentPlayerId && playerName) {
-      console.log(`🔄 Auto-joining room ${roomId} as ${playerName}...`);
-      joinRoom(roomId, playerName).catch(error => {
-        console.error('Auto-join failed:', error);
-        // 自動参加に失敗した場合はロビーに戻る
-        onBackToLobby();
-      });
+      onBackToLobby();
       return;
     }
     
-    fetchRoomData();
-  }, [roomId, storedRoomId, currentPlayerId, playerName, joinRoom, clearRoomSession, onBackToLobby]);
+    // 認証済みの場合のみ部屋データを取得
+    if (currentPlayerId) {
+      fetchRoomData();
+    } else {
+      // 未認証の場合はロビーに戻る
+      console.warn('🚫 Not authenticated for this room, redirecting to lobby');
+      onBackToLobby();
+    }
+  }, [roomId, storedRoomId, currentPlayerId, clearRoomSession, onBackToLobby]);
 
   // ステータス表示
   const getStatusColor = (status: string) => {
