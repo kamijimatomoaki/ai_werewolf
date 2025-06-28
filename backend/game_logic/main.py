@@ -607,8 +607,8 @@ async def connection_pool_monitor():
         # 30秒間隔で監視
         await asyncio.sleep(30)
 
-async def generate_ai_player_name(player_number: int) -> str:
-    """LLMを使ってAIプレイヤーの名前を生成"""
+def generate_ai_player_name_sync(player_number: int) -> str:
+    """LLMを使ってAIプレイヤーの名前を生成（同期版）"""
     try:
         # Vertex AI の初期化を確認
         if not GOOGLE_PROJECT_ID:
@@ -648,6 +648,11 @@ async def generate_ai_player_name(player_number: int) -> str:
         logger.error(f"AI name generation failed: {e}", exc_info=True)
         # フォールバック
         return f"AIプレイヤー{player_number}"
+
+async def generate_ai_player_name(player_number: int) -> str:
+    """LLMを使ってAIプレイヤーの名前を生成（非同期版）"""
+    # 同期版を内部で呼び出し
+    return generate_ai_player_name_sync(player_number)
 
 async def game_loop_monitor():
     """Continuous monitoring and auto-progression for AI player turns"""
@@ -1141,8 +1146,8 @@ def create_room(db: Session, room: RoomCreate, host_name: str) -> Room:
         # total_players から既にいる人間プレイヤーの数を引いた残りをAIプレイヤーとして追加
         num_ai_to_add = room.total_players - room.human_players
         for i in range(num_ai_to_add):
-            # AIプレイヤーの名前をLLMで生成
-            ai_character_name = await generate_ai_player_name(i + 1)
+            # AIプレイヤーの名前をLLMで生成（同期版）
+            ai_character_name = generate_ai_player_name_sync(i + 1)
             
             ai_player = Player(
                 room_id=db_room.room_id,
