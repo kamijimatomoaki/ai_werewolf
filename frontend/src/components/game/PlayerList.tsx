@@ -55,7 +55,7 @@ export default function PlayerList({
   };
 
   const handleBulkGeneratePersona = async () => {
-    const unsetPersonaPlayers = players.filter(p => !p.is_human && !p.character_persona);
+    const unsetPersonaPlayers = players.filter(p => !p.character_persona); // 全プレイヤー対象
     
     try {
       // 全プレイヤーを順次生成（並列だとAPI制限に引っかかる可能性があるため）
@@ -228,7 +228,7 @@ export default function PlayerList({
                     onClick={handleBulkGeneratePersona}
                     disabled={
                       generatingPersona !== null ||
-                      !players.filter(p => !p.is_human && !p.character_persona).some(p => personaKeywords[p.player_id]?.trim())
+                      !players.filter(p => !p.character_persona).some(p => personaKeywords[p.player_id]?.trim())
                     }
                     className="w-full px-6 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-lg transition-colors flex items-center justify-center gap-2"
                   >
@@ -236,9 +236,9 @@ export default function PlayerList({
                     {generatingPersona ? 'ペルソナ生成中...' : 'すべてのペルソナを一括生成'}
                   </button>
                   
-                  {players.filter(p => !p.is_human && !p.character_persona).some(p => personaKeywords[p.player_id]?.trim()) && (
+                  {players.filter(p => !p.character_persona).some(p => personaKeywords[p.player_id]?.trim()) && (
                     <p className="text-xs text-gray-300 mt-2 text-center">
-                      💡 キーワードが入力されたキャラクターのペルソナを順次生成します
+                      💡 キーワードが入力されたプレイヤーのペルソナを順次生成します
                     </p>
                   )}
                 </div>
