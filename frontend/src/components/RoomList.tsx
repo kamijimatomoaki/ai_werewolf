@@ -58,6 +58,10 @@ export default function RoomList({ onRoomJoin, onSpectatorJoin }: RoomListProps)
       setLoading(true);
       setError(null);
       
+      // 🔧 修正: 部屋作成前に既存のセッション情報をクリア
+      console.log('🧹 Clearing previous room session before creating new room');
+      clearRoomSession();
+      
       // バリデーション
       if (newRoom.total_players < 5 || newRoom.total_players > 12) {
         throw new Error('プレイヤー数は5〜12人の範囲で設定してください');
@@ -74,6 +78,9 @@ export default function RoomList({ onRoomJoin, onSpectatorJoin }: RoomListProps)
         player_name: createdRoom.player_name,
         room_id: createdRoom.room_id
       });
+      
+      // モーダルを閉じる
+      setIsOpen(false);
       
       // 作成成功後、部屋に参加（ホストプレイヤーはcreateRoomで既に追加されているため、joinRoomAuthは不要）
       onRoomJoin(createdRoom.room_id);
@@ -101,6 +108,10 @@ export default function RoomList({ onRoomJoin, onSpectatorJoin }: RoomListProps)
       if (!joinPlayerName.trim()) {
         throw new Error('プレイヤー名を入力してください');
       }
+      
+      // 🔧 修正: 部屋参加前に既存のセッション情報をクリア
+      console.log('🧹 Clearing previous room session before joining room');
+      clearRoomSession();
       
       await joinRoomAuth(selectedRoomId, joinPlayerName);
       console.log('✅ Joined room successfully:', selectedRoomId);

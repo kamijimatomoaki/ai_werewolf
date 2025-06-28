@@ -1242,11 +1242,11 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
         # ターン進行
         db_room.current_turn_index = next_index
         
-        # ラウンド制進行チェック
+        # ラウンド制進行チェック（修正版）
         alive_count = sum(1 for pid in turn_order 
                          if get_player(db, uuid.UUID(pid)) and get_player(db, uuid.UUID(pid)).is_alive)
         
-        # 現在のラウンドでの発言回数をチェック
+        # 現在のラウンドでの発言回数をチェック（今回の発言を含む）
         current_round_speeches = db.query(GameLog).filter(
             GameLog.room_id == room_id,
             GameLog.phase == "day_discussion",
@@ -1254,9 +1254,36 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
             GameLog.day_number == db_room.day_number
         ).count()
         
-        # ラウンド完了チェック：全ての生存プレイヤーが発言したかどうか
-        if next_index == 0:  # ターンが一周した場合
-            logger.info(f"Round {db_room.current_round} completed. Total speeches: {current_round_speeches}")
+        # 🔧 修正: ラウンド完了判定を改善
+        # 現在のラウンドで全ての生存プレイヤーが発言したかどうかをチェック
+        current_round_speakers = set()
+        round_speech_logs = db.query(GameLog).filter(
+            GameLog.room_id == room_id,
+            GameLog.phase == "day_discussion", 
+            GameLog.event_type == "speech",
+            GameLog.day_number == db_room.day_number
+        ).all()
+        
+        # 現在のラウンドで発言したプレイヤーを特定
+        for log in round_speech_logs:
+            if log.actor_player_id:
+                current_round_speakers.add(str(log.actor_player_id))
+        
+        # 生存プレイヤー全員が発言したかどうかをチェック
+        alive_player_ids = set()
+        for pid in turn_order:
+            player = get_player(db, uuid.UUID(pid))
+            if player and player.is_alive:
+                alive_player_ids.add(pid)
+        
+        round_completed = len(current_round_speakers & alive_player_ids) >= len(alive_player_ids)
+        
+        logger.info(f"🎯 ROUND STATUS: round={db_room.current_round}, speeches={current_round_speeches}, "
+                   f"speakers={len(current_round_speakers)}, alive={len(alive_player_ids)}, completed={round_completed}")
+        
+        # ラウンド完了チェック：全ての生存プレイヤーが発言した場合
+        if round_completed:
+            logger.info(f"✅ Round {db_room.current_round} completed. All {len(alive_player_ids)} alive players spoke.")
             
             # 3ラウンド完了で投票フェーズへ移行
             if db_room.current_round >= 3:
@@ -1264,11 +1291,14 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
                 db_room.current_turn_index = 0
                 create_game_log(db, room_id, "day_discussion", "phase_transition", 
                               content=f"議論終了（{db_room.current_round}ラウンド完了）。投票フェーズに移行します。")
-                logger.info(f"Discussion phase completed after {db_room.current_round} rounds. Moving to voting phase.")
+                logger.info(f"🗳️ Discussion phase completed after {db_room.current_round} rounds. Moving to voting phase.")
             else:
                 # 次のラウンドに進む
                 db_room.current_round += 1
-                logger.info(f"Starting round {db_room.current_round}")
+                # ターンオーダーを最初の生存プレイヤーにリセット
+                first_alive_index = find_next_alive_player_safe(db, room_id, -1)  # -1から開始して最初の生存者を見つける
+                db_room.current_turn_index = first_alive_index
+                logger.info(f"🔄 Starting round {db_room.current_round}, first alive player index: {first_alive_index}")
                 create_game_log(db, room_id, "day_discussion", "round_start", 
                               content=f"ラウンド{db_room.current_round}が開始されました。")
         
@@ -2595,12 +2625,49 @@ async def auto_progress_logic(room_id: uuid.UUID, db: Session) -> dict:
                 }
                 return {"auto_progressed": True, "message": f"{current_player.character_name} spoke.", "websocket_data": websocket_data}
             except Exception as e:
-                logger.error(f"Error in AI speech generation for {current_player.character_name}: {e}", exc_info=True)
-                # フォールバック: ターンをスキップして次のプレイヤーに進む
-                next_index = find_next_alive_player_safe(db, room_id, room.current_turn_index)
-                room.current_turn_index = next_index
-                db.commit()
-                return {"auto_progressed": True, "message": f"{current_player.character_name} skipped due to error.", "error": str(e)}
+                logger.error(f"❌ Error in AI speech generation for {current_player.character_name}: {e}", exc_info=True)
+                # 🔧 改善: AI発言エラー時のフォールバック発言を生成
+                try:
+                    # フォールバック発言リスト
+                    fallback_speeches = [
+                        "すみません、少し考えさせてください。",
+                        "今の状況を整理したいと思います。",
+                        "皆さんの意見をお聞きしたいです。",
+                        "慎重に判断したいと思います。",
+                        "もう少し議論が必要ですね。"
+                    ]
+                    
+                    # ランダムにフォールバック発言を選択
+                    fallback_statement = random.choice(fallback_speeches)
+                    logger.info(f"🔄 Using fallback speech for {current_player.character_name}: '{fallback_statement}'")
+                    
+                    # フォールバック発言で speak_logic を実行
+                    updated_room = speak_logic(db, room_id, current_player_id, fallback_statement)
+                    
+                    # WebSocket通知データ
+                    websocket_data = {
+                        "type": "new_speech",
+                        "data": {
+                            'room_id': str(room_id),
+                            'speaker_id': str(current_player_id),
+                            'speaker_name': current_player.character_name,
+                            'statement': fallback_statement,
+                            'current_phase': updated_room.status,
+                            'current_turn_index': updated_room.current_turn_index,
+                            'is_fallback': True
+                        }
+                    }
+                    
+                    logger.info(f"✅ Fallback speech successfully processed for {current_player.character_name}")
+                    return {"auto_progressed": True, "message": f"{current_player.character_name} spoke (fallback).", "websocket_data": websocket_data}
+                    
+                except Exception as fallback_error:
+                    logger.error(f"🚨 Fallback speech also failed for {current_player.character_name}: {fallback_error}", exc_info=True)
+                    # 最終手段: ターンをスキップ
+                    next_index = find_next_alive_player_safe(db, room_id, room.current_turn_index)
+                    room.current_turn_index = next_index
+                    db.commit()
+                    return {"auto_progressed": True, "message": f"{current_player.character_name} skipped due to error.", "error": str(e)}
 
     elif room.status == 'day_vote':
         # 未投票のAIプレイヤーを探す
