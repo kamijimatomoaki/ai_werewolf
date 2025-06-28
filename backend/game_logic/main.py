@@ -1258,44 +1258,59 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
         # ターン進行
         db_room.current_turn_index = next_index
         
-        # ラウンド制進行チェック（修正版）
+        # 🔧 根本的な修正: ラウンド別発言管理システム
         alive_count = sum(1 for pid in turn_order 
                          if get_player(db, uuid.UUID(pid)) and get_player(db, uuid.UUID(pid)).is_alive)
         
-        # 現在のラウンドでの発言回数をチェック（今回の発言を含む）
-        current_round_speeches = db.query(GameLog).filter(
-            GameLog.room_id == room_id,
-            GameLog.phase == "day_discussion",
-            GameLog.event_type == "speech",
-            GameLog.day_number == db_room.day_number
-        ).count()
-        
-        # 🔧 修正: ラウンド完了判定を改善
-        # 現在のラウンドで全ての生存プレイヤーが発言したかどうかをチェック
-        current_round_speakers = set()
-        round_speech_logs = db.query(GameLog).filter(
-            GameLog.room_id == room_id,
-            GameLog.phase == "day_discussion", 
-            GameLog.event_type == "speech",
-            GameLog.day_number == db_room.day_number
-        ).all()
-        
-        # 現在のラウンドで発言したプレイヤーを特定
-        for log in round_speech_logs:
-            if log.actor_player_id:
-                current_round_speakers.add(str(log.actor_player_id))
-        
-        # 生存プレイヤー全員が発言したかどうかをチェック
+        # 生存プレイヤー一覧を取得
         alive_player_ids = set()
         for pid in turn_order:
             player = get_player(db, uuid.UUID(pid))
             if player and player.is_alive:
                 alive_player_ids.add(pid)
         
+        # 現在のラウンドでの発言回数を正確にカウント
+        # ラウンド別発言管理: 各ラウンドで特定のプレイヤーが1回づつ発言
+        round_speech_logs = db.query(GameLog).filter(
+            GameLog.room_id == room_id,
+            GameLog.phase == "day_discussion", 
+            GameLog.event_type == "speech",
+            GameLog.day_number == db_room.day_number
+        ).order_by(GameLog.created_at.asc()).all()
+        
+        # 最近のラウンド_startメッセージ以降の発言を取得（現在のラウンドの発言）
+        last_round_start = db.query(GameLog).filter(
+            GameLog.room_id == room_id,
+            GameLog.day_number == db_room.day_number,
+            GameLog.event_type == "round_start",
+            GameLog.content.like(f"%ラウンド{db_room.current_round}%")
+        ).order_by(GameLog.created_at.desc()).first()
+        
+        current_round_speakers = set()
+        if last_round_start:
+            # 現在のラウンド開始以降の発言のみをカウント
+            current_round_speeches = db.query(GameLog).filter(
+                GameLog.room_id == room_id,
+                GameLog.phase == "day_discussion",
+                GameLog.event_type == "speech",
+                GameLog.day_number == db_room.day_number,
+                GameLog.created_at > last_round_start.created_at
+            ).all()
+        else:
+            # 初回ラウンドの場合は全ての発言をカウント
+            current_round_speeches = round_speech_logs
+        
+        # 現在のラウンドで発言したプレイヤーを特定
+        for speech in current_round_speeches:
+            if speech.actor_player_id:
+                current_round_speakers.add(str(speech.actor_player_id))
+        
+        # ラウンド完了判定: 現在のラウンドで全ての生存プレイヤーが1回づつ発言
         round_completed = len(current_round_speakers & alive_player_ids) >= len(alive_player_ids)
         
-        logger.info(f"🎯 ROUND STATUS: round={db_room.current_round}, speeches={current_round_speeches}, "
-                   f"speakers={len(current_round_speakers)}, alive={len(alive_player_ids)}, completed={round_completed}")
+        logger.info(f"🎯 ROUND STATUS: round={db_room.current_round}, current_speakers={len(current_round_speakers)}, "
+                   f"alive_players={len(alive_player_ids)}, completed={round_completed}")
+        logger.info(f"🎯 CURRENT ROUND SPEAKERS: {[get_player(db, uuid.UUID(pid)).character_name for pid in current_round_speakers if get_player(db, uuid.UUID(pid))]}")
         
         # ラウンド完了チェック：全ての生存プレイヤーが発言した場合
         if round_completed:
@@ -1311,10 +1326,21 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
             else:
                 # 次のラウンドに進む
                 db_room.current_round += 1
-                # ターンオーダーを最初の生存プレイヤーにリセット
-                first_alive_index = find_next_alive_player_safe(db, room_id, -1)  # -1から開始して最初の生存者を見つける
-                db_room.current_turn_index = first_alive_index
-                logger.info(f"🔄 Starting round {db_room.current_round}, first alive player index: {first_alive_index}")
+                # 🔧 改善: ターンオーダーを最初の生存プレイヤーにリセット
+                first_alive_index = None
+                for i, pid in enumerate(turn_order):
+                    player = get_player(db, uuid.UUID(pid))
+                    if player and player.is_alive:
+                        first_alive_index = i
+                        break
+                
+                if first_alive_index is not None:
+                    db_room.current_turn_index = first_alive_index
+                    first_player = get_player(db, uuid.UUID(turn_order[first_alive_index]))
+                    logger.info(f"🔄 Round {db_room.current_round} started - first player: {first_player.character_name} (index={first_alive_index})")
+                else:
+                    logger.error(f"⚠️ No alive players found for round {db_room.current_round}")
+                    db_room.current_turn_index = 0
                 
                 # 🔧 重複防止：同じラウンドのround_startメッセージが既に存在するかチェック
                 existing_round_start = db.query(GameLog).filter(
@@ -1337,15 +1363,18 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
         db.commit()
         db.refresh(db_room)
         
-        logger.info(f"Turn advanced: {current_index} -> {next_index}, status: {db_room.status}")
+        logger.info(f"🎯 TURN PROGRESSION: {current_index} -> {next_index}, status: {db_room.status}, round: {db_room.current_round}")
         
-        # AI progression is now handled exclusively by auto-progression monitor
-        # to prevent duplicate scheduling and maintain consistent turn management
+        # 🔧 ターン進行の安全性チェックとログ出力の改善
         if db_room.status == 'day_discussion' and next_index < len(turn_order):
             next_player_id = turn_order[next_index]
             next_player = get_player(db, uuid.UUID(next_player_id))
-            if next_player and not next_player.is_human and next_player.is_alive:
-                logger.info(f"Next player is AI ({next_player.character_name}), auto-progression monitor will handle")
+            if next_player and next_player.is_alive:
+                logger.info(f"🎯 TURN ADVANCED TO: {next_player.character_name} (index={next_index}, is_human={next_player.is_human})")
+                if not next_player.is_human:
+                    logger.info(f"Next player is AI ({next_player.character_name}), auto-progression monitor will handle")
+            else:
+                logger.warning(f"⚠️ Invalid next player at index {next_index}: player_id={next_player_id}")
         
         return db_room
         
@@ -1356,24 +1385,35 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
 
 
 def find_next_alive_player_safe(db: Session, room_id: uuid.UUID, current_index: int) -> int:
-    """安全な次のプレイヤー検索（無限ループ対策）"""
+    """安全な次のプレイヤー検索（無限ループ対策・改善版）"""
     room = get_room(db, room_id)
     if not room or not room.turn_order:
+        logger.warning(f"Room or turn_order not found for room {room_id}")
         return current_index
         
     turn_order = room.turn_order
     max_attempts = len(turn_order)
     
+    # 🔧 改善: より安全なインデックス検索
     for attempt in range(1, max_attempts + 1):
         next_index = (current_index + attempt) % len(turn_order)
-        player_id = turn_order[next_index]
-        player = get_player(db, uuid.UUID(player_id))
         
-        if player and player.is_alive:
-            return next_index
+        if next_index >= len(turn_order):
+            logger.warning(f"Index out of bounds: {next_index} >= {len(turn_order)}")
+            continue
+            
+        player_id = turn_order[next_index]
+        try:
+            player = get_player(db, uuid.UUID(player_id))
+            if player and player.is_alive:
+                logger.info(f"🎯 Next alive player found: {player.character_name} at index {next_index}")
+                return next_index
+        except Exception as e:
+            logger.error(f"Error getting player {player_id}: {e}")
+            continue
     
     # 全員死亡の場合は現在のインデックスを返す
-    logger.warning(f"No alive players found in room {room_id}")
+    logger.warning(f"No alive players found in room {room_id}, staying at current index {current_index}")
     return current_index
 
 def create_game_log(db: Session, room_id: uuid.UUID, phase: str, event_type: str, actor_player_id: Optional[uuid.UUID] = None, content: Optional[str] = None):
