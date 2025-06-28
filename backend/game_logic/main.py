@@ -607,6 +607,48 @@ async def connection_pool_monitor():
         # 30秒間隔で監視
         await asyncio.sleep(30)
 
+async def generate_ai_player_name(player_number: int) -> str:
+    """LLMを使ってAIプレイヤーの名前を生成"""
+    try:
+        # Vertex AI の初期化を確認
+        if not GOOGLE_PROJECT_ID:
+            logger.warning("Google Cloud project not configured, using default AI player name")
+            return f"AIプレイヤー{player_number}"
+        
+        # Vertex AI を使用して名前を生成
+        vertexai.init(project=GOOGLE_PROJECT_ID, location=GOOGLE_LOCATION)
+        model = GenerativeModel("gemini-1.5-flash")
+        
+        prompt = f"""人狼ゲームに参加するキャラクターの名前を1つ生成してください。
+
+要求:
+- 日本人らしい名前（姓名両方含む）
+- 覚えやすく親しみやすい
+- 人狼ゲームに適したキャラクター性を感じさせる
+- 他のプレイヤーと区別しやすい
+- カタカナや漢字を使用
+
+例: 田中太郎、山田花子、佐藤勇気、高橋美咲
+
+**名前のみを返答してください（説明や追加情報は不要）**"""
+        
+        response = model.generate_content(prompt)
+        generated_name = response.text.strip()
+        
+        # 生成された名前をクリーンアップ
+        # 改行や余分な文字を除去
+        generated_name = generated_name.replace('\n', '').replace('\r', '')
+        if len(generated_name) > 20:  # 長すぎる場合は切り詰め
+            generated_name = generated_name[:20]
+        
+        logger.info(f"Generated AI player name: {generated_name}")
+        return generated_name
+        
+    except Exception as e:
+        logger.error(f"AI name generation failed: {e}", exc_info=True)
+        # フォールバック
+        return f"AIプレイヤー{player_number}"
+
 async def game_loop_monitor():
     """Continuous monitoring and auto-progression for AI player turns"""
     logger.info("Starting AI game auto-progression monitor...")
@@ -1099,9 +1141,12 @@ def create_room(db: Session, room: RoomCreate, host_name: str) -> Room:
         # total_players から既にいる人間プレイヤーの数を引いた残りをAIプレイヤーとして追加
         num_ai_to_add = room.total_players - room.human_players
         for i in range(num_ai_to_add):
+            # AIプレイヤーの名前をLLMで生成
+            ai_character_name = await generate_ai_player_name(i + 1)
+            
             ai_player = Player(
                 room_id=db_room.room_id,
-                character_name=f"AIプレイヤー{i+1}",
+                character_name=ai_character_name,
                 is_human=False,
                 character_persona=None,
                 is_claimed=False
@@ -2879,22 +2924,23 @@ async def night_action(room_id: uuid.UUID, db: Session = Depends(get_db)):
     await sio.emit('night_action_result', {'room_id': str(room_id), 'results': results}, room=str(room_id))
     return results
 
-@app.get("/api/players/{player_id}/available_targets", summary="占い可能な対象を取得")
-async def get_available_investigate_targets(player_id: uuid.UUID, db: Session = Depends(get_db)):
-    """占い師が占い可能な対象プレイヤーのリストを取得"""
+@app.get("/api/players/{player_id}/available_targets", summary="夜間アクション可能な対象を取得")
+async def get_available_targets(player_id: uuid.UUID, db: Session = Depends(get_db)):
+    """占い師・ボディガードが夜間アクション可能な対象プレイヤーのリストを取得"""
     player = db.query(Player).filter(Player.player_id == player_id).first()
     if not player:
         raise HTTPException(status_code=404, detail="Player not found")
     
-    if player.role != 'seer':
-        raise HTTPException(status_code=403, detail="Only seers can investigate")
+    # 占い師とボディガードのみ許可
+    if player.role not in ['seer', 'bodyguard']:
+        raise HTTPException(status_code=403, detail="Only seers and bodyguards can use this endpoint")
     
     if not player.is_alive:
-        raise HTTPException(status_code=403, detail="Dead players cannot investigate")
+        raise HTTPException(status_code=403, detail="Dead players cannot perform night actions")
     
     room = db.query(Room).filter(Room.room_id == player.room_id).first()
     if not room or room.status != 'night':
-        raise HTTPException(status_code=400, detail="Investigation only available during night phase")
+        raise HTTPException(status_code=400, detail="Night actions only available during night phase")
     
     # 生存している他のプレイヤーを取得
     available_targets = db.query(Player).filter(
@@ -2903,10 +2949,19 @@ async def get_available_investigate_targets(player_id: uuid.UUID, db: Session = 
         Player.player_id != player_id
     ).all()
     
-    return {
-        'available_targets': [PlayerInfo.model_validate(p) for p in available_targets],
-        'can_investigate': True  # 簡略化：実際にはその夜に既に占ったかチェックが必要
-    }
+    # 役職に応じたレスポンス
+    if player.role == 'seer':
+        return {
+            'targets': [PlayerInfo.model_validate(p) for p in available_targets],
+            'can_investigate': True,
+            'action_type': 'investigate'
+        }
+    elif player.role == 'bodyguard':
+        return {
+            'targets': [PlayerInfo.model_validate(p) for p in available_targets],
+            'can_protect': True,
+            'action_type': 'protect'
+        }
 
 @app.post("/api/rooms/{room_id}/seer_investigate", summary="占い師の調査実行")
 async def seer_investigate(
@@ -2977,6 +3032,84 @@ async def seer_investigate(
         'message': f"{target.character_name}の正体: {result}"
     }
 
+@app.post("/api/rooms/{room_id}/bodyguard_protect", summary="ボディガードの護衛実行")
+async def bodyguard_protect(
+    room_id: uuid.UUID, 
+    protector_id: str = Query(...),
+    target_data: dict = Body(...),
+    db: Session = Depends(get_db)
+):
+    """ボディガードが特定の対象を護衛する"""
+    try:
+        protector_uuid = uuid.UUID(protector_id)
+        target_player_id = uuid.UUID(target_data['target_player_id'])
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid UUID format")
+    
+    # 護衛者の検証
+    protector = db.query(Player).filter(Player.player_id == protector_uuid).first()
+    if not protector:
+        raise HTTPException(status_code=404, detail="Protector not found")
+    
+    if protector.role != 'bodyguard':
+        raise HTTPException(status_code=403, detail="Only bodyguards can protect")
+    
+    if not protector.is_alive:
+        raise HTTPException(status_code=403, detail="Dead players cannot protect")
+    
+    # 対象の検証
+    target = db.query(Player).filter(Player.player_id == target_player_id).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="Target not found")
+    
+    if not target.is_alive:
+        raise HTTPException(status_code=400, detail="Cannot protect dead players")
+    
+    if target.player_id == protector.player_id:
+        raise HTTPException(status_code=400, detail="Cannot protect yourself")
+    
+    # 部屋とフェーズの検証
+    room = db.query(Room).filter(Room.room_id == room_id).first()
+    if not room or room.status != 'night':
+        raise HTTPException(status_code=400, detail="Protection only available during night phase")
+    
+    # 同じ夜に既に護衛を実行していないかチェック
+    existing_protection = db.query(GameLog).filter(
+        GameLog.room_id == room_id,
+        GameLog.day_number == room.day_number,
+        GameLog.phase == "night",
+        GameLog.event_type == "protect",
+        GameLog.actor_player_id == protector.player_id
+    ).first()
+    
+    if existing_protection:
+        raise HTTPException(status_code=400, detail="You have already protected someone tonight")
+    
+    # 護衛実行ログを記録
+    create_game_log(db, room_id, "night", "protect", 
+                  actor_player_id=protector.player_id,
+                  content=f"protected {target.character_name}")
+    
+    db.commit()
+    
+    # 🔧 護衛後の夜フェーズ自動進行チェック
+    try:
+        if await check_night_actions_completion(db, room_id):
+            logger.info(f"All night actions completed, auto-progressing from night phase for room {room_id}")
+            # 2秒の遅延を追加してフロントエンドの安定性を向上
+            await asyncio.sleep(2)
+            await sio.emit('complete_game_state', get_room_dict(db, room_id), room=str(room_id))
+    except Exception as e:
+        logger.error(f"Error in night actions completion check: {e}")
+    
+    # ボディガードに結果を返す
+    return {
+        'protector': protector.character_name,
+        'target': target.character_name,
+        'message': f"{target.character_name}を今夜の攻撃から守ります",
+        'success': True
+    }
+
 @app.post("/api/rooms/{room_id}/transition_to_vote", summary="投票フェーズに移行")
 async def transition_to_vote(room_id: uuid.UUID, db: Session = Depends(get_db)):
     """議論フェーズから投票フェーズに手動で移行する"""
@@ -3017,12 +3150,12 @@ def read_game_logs(room_id: uuid.UUID, db: Session = Depends(get_db)):
     """特定のゲームルームのログを取得する"""
     return get_game_logs(db, room_id)
 
-@app.post("/api/players/{player_id}/generate_persona", summary="AIプレイヤーのペルソナを生成")
+@app.post("/api/players/{player_id}/generate_persona", summary="プレイヤーのペルソナを生成")
 async def generate_persona(player_id: uuid.UUID, persona_input: PersonaInput, db: Session = Depends(get_db)):
-    """AIプレイヤーのペルソナをキーワードに基づいて生成する"""
+    """プレイヤー（AI・人間問わず）のペルソナをキーワードに基づいて生成する"""
     player = get_player(db, player_id)
-    if not player or player.is_human:
-        raise HTTPException(status_code=400, detail="Invalid player for persona generation")
+    if not player:
+        raise HTTPException(status_code=404, detail="Player not found")
 
     try:
         # Vertex AI の初期化を確認

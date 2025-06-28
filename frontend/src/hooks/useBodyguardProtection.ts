@@ -44,12 +44,14 @@ export function useBodyguardProtection(roomId: string, playerId: string): UseBod
           target.player_id !== playerId && target.is_alive
         ) || [];
         setAvailableTargets(targets);
+        setError(null); // 成功時はエラーをクリア
       } else {
-        throw new Error('Failed to fetch available targets');
+        const errorData = await response.json();
+        throw new Error(errorData.detail || 'Failed to fetch available targets');
       }
     } catch (err) {
       console.error('Error fetching available targets:', err);
-      setError('対象プレイヤーの取得に失敗しました');
+      setError(err instanceof Error ? err.message : '対象プレイヤーの取得に失敗しました');
     }
   }, [playerId]);
 

@@ -155,30 +155,44 @@ export default function PlayerList({
         ))}
       </div>
 
-      {/* AIペルソナ生成（待機中のみ） */}
+      {/* ペルソナ生成（待機中のみ） */}
       {gameStatus === 'waiting' && (
         <div className="mt-6 space-y-3">
-          <h3 className="font-semibold text-lg">AIペルソナ一括設定</h3>
+          <h3 className="font-semibold text-lg">プレイヤーペルソナ設定</h3>
           
-          {players.filter(p => !p.is_human && !p.character_persona).length === 0 ? (
+          {players.filter(p => !p.character_persona).length === 0 ? (
             <div className="text-sm text-green-200 p-4 bg-green-600/20 rounded-lg border border-green-500/30 backdrop-blur-sm">
-              ✅ すべてのAIプレイヤーにペルソナが設定されました
+              ✅ すべてのプレイヤーにペルソナが設定されました
             </div>
           ) : (
             <>
               <div className="text-sm text-blue-200 mb-4 p-3 bg-blue-600/20 rounded-lg border border-blue-500/30 backdrop-blur-sm">
-                💡 各AIプレイヤーのキャラクター特徴を入力して、一括でペルソナを生成できます
+                💡 各プレイヤーのキャラクター特徴を入力して、ペルソナを生成できます
+                <br />
+                <span className="text-xs text-blue-300">✨ 人間プレイヤーも公平性のためペルソナ設定が可能です</span>
               </div>
               
               <div className="space-y-4">
-                {/* 各AIプレイヤーのキーワード入力 */}
-                {players.filter(p => !p.is_human && !p.character_persona).map((player) => (
+                {/* 各プレイヤーのキーワード入力 */}
+                {players.filter(p => !p.character_persona).map((player) => (
                   <div key={player.player_id} className="space-y-2 p-4 bg-gradient-to-r from-gray-700/60 to-gray-600/60 rounded-lg border border-gray-500/40 backdrop-blur-sm">
                     <div className="flex items-center gap-2 mb-2">
-                      <div className="w-8 h-8 rounded-full bg-gray-500 text-white flex items-center justify-center text-xs font-bold">
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${
+                        player.is_human ? 'bg-blue-500 text-white' : 'bg-gray-500 text-white'
+                      }`}>
                         {player.character_name.charAt(0)}
                       </div>
                       <span className="font-medium text-white">{player.character_name}</span>
+                      <span className={`px-2 py-1 text-xs rounded ${
+                        player.is_human ? 'bg-blue-500/20 text-blue-400' : 'bg-gray-500/20 text-gray-400'
+                      }`}>
+                        {player.is_human ? "人間" : "AI"}
+                      </span>
+                      {player.player_id === currentPlayerId && (
+                        <span className="px-2 py-1 text-xs rounded bg-green-500/20 text-green-400">
+                          あなた
+                        </span>
+                      )}
                       {generatingPersona === player.player_id && (
                         <span className="px-2 py-1 text-xs rounded bg-yellow-500/20 text-yellow-400">
                           生成中...
@@ -189,7 +203,10 @@ export default function PlayerList({
                     <textarea
                       className="w-full p-3 bg-gray-700/80 border border-gray-400/50 rounded-lg resize-none focus:border-red-400 focus:ring-2 focus:ring-red-400/30 text-sm text-white placeholder-gray-300 backdrop-blur-sm transition-all"
                       rows={2}
-                      placeholder="例: 冷静沈着, 探偵, 30代, 鋭い観察力"
+                      placeholder={player.is_human 
+                        ? "例: 慎重派, 会社員, 20代, 論理的思考" 
+                        : "例: 冷静沈着, 探偵, 30代, 鋭い観察力"
+                      }
                       value={personaKeywords[player.player_id] || ''}
                       onChange={(e) => setPersonaKeywords(prev => ({
                         ...prev,
