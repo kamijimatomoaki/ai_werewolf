@@ -24,7 +24,7 @@ import socketio
 import vertexai
 from vertexai.generative_models import GenerativeModel
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
+from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
