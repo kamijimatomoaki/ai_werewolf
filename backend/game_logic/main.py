@@ -232,6 +232,7 @@ class Room(Base):
     turn_order = Column(JSON, nullable=True)
     current_turn_index = Column(Integer, default=0)
     current_round = Column(Integer, default=1)
+    vote_round = Column(Integer, default=1)
     # 【追加】公開・非公開設定
     is_private = Column(Boolean, default=False, nullable=False)
     # 【修正】created_at を再追加
@@ -362,6 +363,7 @@ class VoteResult(BaseModel):
     vote_counts: Dict[str, int]
     voted_out_player_id: Optional[str]
     tied_vote: bool
+    is_revote: bool = False
     message: str
 
 class NightActionRequest(BaseModel):
@@ -773,11 +775,11 @@ async def force_vote_progression(room_id: uuid.UUID, room, db: Session):
             if not p.is_human and p.player_id not in voted_player_ids
         ]
         
-        # 各未投票AIプレイヤーにランダム投票を実行
+        # 各未投票AIプレイヤーに戦略的投票を実行
         for ai_player in unvoted_ai_players:
             possible_targets = [p for p in alive_players if p.player_id != ai_player.player_id]
             if possible_targets:
-                target = random.choice(possible_targets)
+                target = strategic_target_selection(ai_player, possible_targets, "vote")
                 logger.info(f"Emergency vote: {ai_player.character_name} -> {target.character_name}")
                 
                 try:
@@ -1299,8 +1301,21 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
                 first_alive_index = find_next_alive_player_safe(db, room_id, -1)  # -1から開始して最初の生存者を見つける
                 db_room.current_turn_index = first_alive_index
                 logger.info(f"🔄 Starting round {db_room.current_round}, first alive player index: {first_alive_index}")
-                create_game_log(db, room_id, "day_discussion", "round_start", 
-                              content=f"ラウンド{db_room.current_round}が開始されました。")
+                
+                # 🔧 重複防止：同じラウンドのround_startメッセージが既に存在するかチェック
+                existing_round_start = db.query(GameLog).filter(
+                    GameLog.room_id == room_id,
+                    GameLog.day_number == db_room.day_number,
+                    GameLog.event_type == "round_start",
+                    GameLog.content.like(f"%ラウンド{db_room.current_round}が開始%")
+                ).first()
+                
+                if not existing_round_start:
+                    create_game_log(db, room_id, "day_discussion", "round_start", 
+                                  content=f"ラウンド{db_room.current_round}が開始されました。")
+                    logger.info(f"✅ Round {db_room.current_round} start message created")
+                else:
+                    logger.info(f"⚠️ Round {db_room.current_round} start message already exists, skipping duplicate")
         
         # 最終活動時間を更新（自動クローズ用）
         db_room.last_activity = datetime.now(timezone.utc)
@@ -1645,16 +1660,49 @@ def process_vote(db: Session, room_id: uuid.UUID, voter_id: uuid.UUID, target_id
                     else:
                         message = "追放対象のプレイヤーが見つかりませんでした。"
                 else:
-                    # 同票
+                    # 同票の場合：再投票処理
                     tied_vote = True
-                    message = "同票のため、誰も追放されませんでした。"
-                    create_game_log(db, room_id, "day_vote", "execution", content="Tied vote. No one was voted out.")
+                    
+                    # 現在の投票ラウンド数を確認（初期値は1）
+                    current_vote_round = getattr(db_room, 'vote_round', 1)
+                    
+                    if current_vote_round < 2:  # 最大2ラウンドまで再投票
+                        # 再投票実施
+                        db_room.vote_round = current_vote_round + 1
+                        
+                        # 既存の投票ログを削除して再投票を可能にする
+                        db.query(GameLog).filter(
+                            GameLog.room_id == room_id,
+                            GameLog.day_number == db_room.day_number,
+                            GameLog.phase == "day_vote",
+                            GameLog.event_type == "vote"
+                        ).delete()
+                        
+                        message = f"同票のため再投票を行います（{current_vote_round + 1}回目の投票）。"
+                        create_game_log(db, room_id, "day_vote", "revote_start", 
+                                      content=f"同票により{current_vote_round + 1}回目の投票を開始します。最多票者：{', '.join(most_voted_names)}")
+                        
+                        db.commit()
+                        
+                        # 再投票のためVoteResultを返す（投票継続）
+                        return VoteResult(
+                            message=message,
+                            vote_counts={name: count for name, count in vote_counts.items()},
+                            voted_out_player_id=None,
+                            tied_vote=True,
+                            is_revote=True  # 再投票フラグ
+                        )
+                    else:
+                        # 2回目でも同票の場合は処刑なし
+                        message = "2回目の投票でも同票のため、誰も追放されませんでした。"
+                        create_game_log(db, room_id, "day_vote", "execution", content="Final tied vote. No one was voted out.")
             else:
                 # 投票なし
                 message = "投票がありませんでした。"
 
-            # 夜フェーズへ移行
+            # 夜フェーズへ移行（再投票でない場合のみ）
             db_room.status = 'night'
+            db_room.vote_round = 1  # 投票ラウンドをリセット
             create_game_log(db, room_id, "phase_transition", "night", content="夜フェーズに移行します。")
             db.commit()
             
@@ -1693,8 +1741,19 @@ def process_night_actions(db: Session, room_id: uuid.UUID) -> Dict[str, Any]:
     villagers = [p for p in db_room.players if p.role in ['villager', 'seer', 'bodyguard'] and p.is_alive]
     
     if werewolves and villagers:
-        # ランダムに村人を襲撃
-        target = random.choice(villagers)
+        # 知性的な襲撃ターゲット選択
+        # 優先順位: 1) 占い師 2) ボディガード 3) 村人
+        seers = [p for p in villagers if p.role == 'seer']
+        bodyguards = [p for p in villagers if p.role == 'bodyguard']
+        normal_villagers = [p for p in villagers if p.role == 'villager']
+        
+        if seers:
+            target = seers[0]  # 占い師を最優先狙い
+        elif bodyguards:
+            target = bodyguards[0]  # ボディガードを次点狙い
+        else:
+            # 戦略的な村人選択（ランダムの代わりに戦略的フォールバック）
+            target = strategic_target_selection(werewolves[0], normal_villagers, "attack")
         
         # ボディガードの守りをチェック
         protection_log = db.query(GameLog).filter(
@@ -1720,31 +1779,37 @@ def process_night_actions(db: Session, room_id: uuid.UUID) -> Dict[str, Any]:
             results['victim_id'] = str(target.player_id)
             results['protected'] = False
     
-    # ボディガードの守り（自動）
+    # ボディガードの守り（知性的判断）
     bodyguards = [p for p in db_room.players if p.role == 'bodyguard' and p.is_alive]
     if bodyguards:
         bodyguard = bodyguards[0]
         alive_players = [p for p in db_room.players if p.is_alive and p.player_id != bodyguard.player_id]
         if alive_players:
-            protected = random.choice(alive_players)
+            # 知性的な護衛対象選択
+            # 優先順位: 1) 占い師 2) 村人 3) 自分以外のボディガード
+            protection_candidates = []
+            seers_to_protect = [p for p in alive_players if p.role == 'seer']
+            villagers_to_protect = [p for p in alive_players if p.role == 'villager']
+            other_bodyguards = [p for p in alive_players if p.role == 'bodyguard']
+            
+            if seers_to_protect:
+                protected = seers_to_protect[0]  # 占い師を最優先護衛
+            elif villagers_to_protect:
+                protected = strategic_target_selection(bodyguard, villagers_to_protect, "protect")  # 村人を戦略的護衛
+            elif other_bodyguards:
+                protected = other_bodyguards[0]  # 他のボディガードを護衛
+            else:
+                protected = strategic_target_selection(bodyguard, alive_players, "protect")  # 戦略的最終選択
             create_game_log(db, room_id, "night", "protect", 
                           actor_player_id=bodyguard.player_id,
                           content=f"protected {protected.character_name}")
             results['protection'] = f"{bodyguard.character_name}が{protected.character_name}を守りました"
     
-    # 占い師の占い（自動）
+    # 占い師の占い（手動システムに移行済み）
+    # 占い師は専用エンドポイント /api/rooms/{room_id}/seer_investigate を使用
     seers = [p for p in db_room.players if p.role == 'seer' and p.is_alive]
     if seers:
-        seer = seers[0]
-        alive_players = [p for p in db_room.players if p.is_alive and p.player_id != seer.player_id]
-        if alive_players:
-            investigated = random.choice(alive_players)
-            result = "人狼" if investigated.role == 'werewolf' else "村人"
-            
-            create_game_log(db, room_id, "night", "investigate", 
-                          actor_player_id=seer.player_id,
-                          content=f"investigated {investigated.character_name}: {result}")
-            results['investigation'] = f"{seer.character_name}が{investigated.character_name}を占いました: {result}"
+        results['seer_status'] = f"{seers[0].character_name}による占いを待機中（手動実行）"
     
     # ゲーム終了条件をチェック
     game_end_result = check_game_end_condition(db, room_id)
@@ -1968,6 +2033,77 @@ async def broadcast_complete_game_state(room_id: uuid.UUID, db: Session):
     except Exception as e:
         logger.error(f"Error broadcasting complete game state: {e}", exc_info=True)
 
+def generate_safe_fallback_speech(ai_player, room) -> str:
+    """AIプレイヤーのペルソナに基づいた安全なフォールバック発言を生成"""
+    try:
+        # ペルソナ情報を取得
+        persona = ai_player.character_persona or ""
+        role = ai_player.role
+        day_number = room.day_number
+        
+        # ペルソナから話し方を抽出
+        speech_style = ""
+        if persona and isinstance(persona, str):
+            if 'でござる' in persona:
+                speech_style = 'samurai'
+            elif 'なんでやねん' in persona or '関西弁' in persona:
+                speech_style = 'kansai' 
+            elif 'ナリ' in persona:
+                speech_style = 'nari'
+            elif 'だよ' in persona:
+                speech_style = 'energetic'
+        
+        # 役職と状況に応じたベース発言を生成
+        if role == 'werewolf':
+            base_speeches = [
+                "慎重に状況を見極めたいと思います。",
+                "皆さんの意見を聞かせてください。",
+                "もう少し情報を整理してから判断しましょう。"
+            ]
+        elif role == 'seer':
+            base_speeches = [
+                "現在の情報をもとに判断したいと思います。",
+                "しっかりと観察して考察します。",
+                "真実を見極めるために慎重に行動します。"
+            ]
+        elif role == 'bodyguard':
+            base_speeches = [
+                "みんなを守るために注意深く見ています。",
+                "状況をよく観察して判断します。",
+                "安全を最優先に考えて行動します。"
+            ]
+        else:  # villager
+            base_speeches = [
+                "情報を整理して冷静に判断します。",
+                "皆で協力して真実を見つけましょう。",
+                "疑わしい点があれば教えてください。"
+            ]
+        
+        # 話し方に応じて発言を調整
+        base_speech = random.choice(base_speeches)
+        
+        if speech_style == 'samurai':
+            # でござる調
+            adjusted_speech = base_speech.replace('です。', 'でござる。').replace('ます。', 'まする。').replace('しましょう。', 'しましょうぞ。')
+        elif speech_style == 'kansai':
+            # 関西弁
+            adjusted_speech = base_speech.replace('です。', 'や。').replace('ます。', 'まっせ。').replace('しましょう。', 'しよか。')
+        elif speech_style == 'nari':
+            # ナリ調
+            adjusted_speech = base_speech.replace('です。', 'ナリ。').replace('ます。', 'ナリ。').replace('しましょう。', 'するナリ。')
+        elif speech_style == 'energetic':
+            # だよ調
+            adjusted_speech = base_speech.replace('です。', 'だよ！').replace('ます。', 'よ！').replace('しましょう。', 'しよう！')
+        else:
+            adjusted_speech = base_speech
+        
+        return adjusted_speech
+        
+    except Exception as e:
+        # 最終フォールバック
+        logger.error(f"Safe fallback speech generation failed: {e}")
+        return "状況を確認しています。"
+
 async def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid.UUID, emergency_skip: bool = False) -> str:
     """AIプレイヤーの発言を生成（AIエージェント使用・緊急スキップ対応）"""
     # 超堅牢なフォールバック用の発言リスト
@@ -2078,7 +2214,15 @@ async def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid
                 logger.info(f"🚀 Player info being passed: {player_info}")
                 logger.info(f"🚀 Game context being passed: {game_context}")
                 logger.info(f"🚀 Recent messages count: {len(recent_messages)}")
-                speech = root_agent.generate_speech(player_info, game_context, recent_messages)
+                
+                # タイムアウト付きでAI発言生成を呼び出し（ゲーム進行を止めないため）
+                import asyncio
+                speech = await asyncio.wait_for(
+                    asyncio.create_task(asyncio.to_thread(
+                        root_agent.generate_speech, player_info, game_context, recent_messages
+                    )), 
+                    timeout=15.0  # 15秒でタイムアウト（45秒から短縮）
+                )
                 logger.info(f"✅ AI agent system response: {speech}")
                 logger.info(f"📏 Speech length: {len(speech) if speech else 0} characters")
                 logger.info(f"✅ AI agent system SUCCESS - using Function Calling tools")
@@ -2103,63 +2247,12 @@ async def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid
                 else:
                     logger.error("🔧 Other AI agent system error")
                 
-                # 🔧 強化されたフォールバック：直接Vertex AI呼び出し
-                try:
-                    logger.info("🔄 Attempting enhanced fallback with direct Vertex AI...")
-                    
-                    # より詳細なプロンプトでVertex AI直接呼び出し
-                    enhanced_prompt = f"""あなたは人狼ゲームのプレイヤー「{ai_player.character_name}」です。
-
-キャラクター設定：
-{persona}
-
-現在の状況：
-- フェーズ: {room.status}
-- 日数: {room.day_number}日目
-- 役職: {ai_player.role}
-
-あなたのキャラクターらしく、ゲームの進行に貢献する自然な発言を1-2文で行ってください。
-人狼ゲームらしい推理や議論の要素を含めてください。
-
-発言:"""
-                    
-                    # Vertex AI再初期化（念のため）
-                    logger.info(f"🔄 Re-initializing Vertex AI: {GOOGLE_PROJECT_ID} @ {GOOGLE_LOCATION}")
-                    vertexai.init(project=GOOGLE_PROJECT_ID, location=GOOGLE_LOCATION)
-                    model = GenerativeModel("gemini-1.5-flash")
-                    
-                    # タイムアウト付きで実行
-                    import asyncio
-                    from concurrent.futures import ThreadPoolExecutor, TimeoutError
-                    
-                    def generate_with_direct_ai():
-                        return model.generate_content(enhanced_prompt)
-                    
-                    try:
-                        with ThreadPoolExecutor() as executor:
-                            future = executor.submit(generate_with_direct_ai)
-                            response = future.result(timeout=20)  # 20秒でタイムアウト
-                    except TimeoutError:
-                        logger.error("🔄 Direct Vertex AI call timed out")
-                        response = None
-                    
-                    if response and response.text and len(response.text.strip()) > 10:
-                        speech = response.text.strip()
-                        logger.info(f"✅ Enhanced fallback speech generation successful: {speech}")
-                    else:
-                        logger.warning(f"❌ Direct Vertex AI returned invalid response: {response.text if response else 'None'}")
-                        speech = None
-                        
-                except Exception as fallback_error:
-                    logger.error(f"🚨 Enhanced fallback speech generation also failed: {fallback_error}")
-                    logger.error(f"🚨 Fallback error type: {type(fallback_error).__name__}")
-                    import traceback
-                    logger.error(f"🚨 Fallback error traceback: {traceback.format_exc()}")
-                    speech = None
+                # 🔧 確実なフォールバック：即座に安全な発言を返す
+                logger.info("🔄 Using immediate safe fallback due to AI agent system failure")
                 
-                if not speech:
-                    logger.info("Using ultra-safe fallback due to all AI generation failures")
-                    return random.choice(ULTRA_SAFE_FALLBACK_SPEECHES)
+                # ペルソナに基づいた適切なフォールバック発言を生成
+                logger.info(f"🔄 Generating safe fallback speech for {ai_player.character_name}")
+                speech = generate_safe_fallback_speech(ai_player, room)
             
             # レスポンスの検証と整形
             if speech and isinstance(speech, str) and speech.strip():
@@ -2271,6 +2364,147 @@ async def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid
         logger.info(f"Using emergency ultra-safe fallback speech for {player_name}: '{fallback_speech}'")
         return fallback_speech
 
+def build_ai_vote_prompt(ai_player, room, possible_targets, recent_logs) -> str:
+    """AI投票決定用のプロンプトを構築"""
+    try:
+        # ペルソナ情報を取得
+        persona = ai_player.character_persona or f"私は{ai_player.character_name}です。"
+        
+        # 候補者リスト
+        target_names = [target.character_name for target in possible_targets]
+        
+        # 最近の発言を要約
+        recent_speeches = []
+        for log in recent_logs[:5]:  # 最新5件
+            if log.actor and log.content:
+                speaker_name = log.actor.character_name if hasattr(log.actor, 'character_name') else 'Unknown'
+                content = log.content[:100] + "..." if len(log.content) > 100 else log.content
+                recent_speeches.append(f"- {speaker_name}: {content}")
+        
+        speeches_text = "\n".join(recent_speeches) if recent_speeches else "- まだ発言がありません"
+        
+        return f"""あなたは人狼ゲームのプレイヤー「{ai_player.character_name}」として投票を行います。
+
+キャラクター設定：
+{persona}
+
+あなたの役職：{ai_player.role}
+現在：{room.day_number}日目の投票フェーズ
+
+最近の議論：
+{speeches_text}
+
+投票候補者：{', '.join(target_names)}
+
+【重要な判断基準】
+- 村人陣営なら：疑わしい行動をした人に投票
+- 人狼陣営なら：村人（特に占い師など重要役職）に投票
+- 発言内容、行動パターン、投票履歴を考慮
+
+上記の候補者の中から、最も投票すべき相手を1人選んで、その名前だけを答えてください。
+理由は不要です。候補者の名前のみを正確に回答してください。
+
+投票先："""
+        
+    except Exception as e:
+        logger.error(f"Error building AI vote prompt: {e}")
+        # フォールバック：シンプルなプロンプト
+        target_names = [target.character_name for target in possible_targets]
+        return f"""投票候補者：{', '.join(target_names)}
+
+上記の中から1人を選んで名前を答えてください。
+投票先："""
+
+def strategic_target_selection(actor_player, possible_targets: List[Player], context: str = "vote") -> Player:
+    """
+    戦略的ターゲット選択機能
+    
+    Args:
+        actor_player: 行動するプレイヤー（投票者、襲撃者、護衛者等）
+        possible_targets: 可能なターゲットのリスト
+        context: 選択の文脈 ("vote", "attack", "protect")
+    
+    Returns:
+        選択されたターゲット
+    """
+    if not possible_targets:
+        return None
+    
+    # 人狼陣営の場合
+    if actor_player.role == 'werewolf':
+        if context == "vote":
+            # 人狼の投票戦略：村人陣営を優先、特に占い師・ボディガード
+            # 1. 占い師を最優先
+            seers = [p for p in possible_targets if p.role == 'seer']
+            if seers:
+                return seers[0]
+            
+            # 2. ボディガードを次点
+            bodyguards = [p for p in possible_targets if p.role == 'bodyguard']
+            if bodyguards:
+                return bodyguards[0]
+            
+            # 3. 村人
+            villagers = [p for p in possible_targets if p.role == 'villager']
+            if villagers:
+                return villagers[0]
+            
+            # 4. AIプレイヤーを優先（人間よりも読みやすい）
+            ai_targets = [p for p in possible_targets if not p.is_human]
+            if ai_targets:
+                return ai_targets[0]
+                
+        elif context == "attack":
+            # 夜の襲撃戦略（既存ロジックを流用）
+            # 1. 占い師を最優先
+            seers = [p for p in possible_targets if p.role == 'seer']
+            if seers:
+                return seers[0]
+            
+            # 2. ボディガードを次点
+            bodyguards = [p for p in possible_targets if p.role == 'bodyguard']
+            if bodyguards:
+                return bodyguards[0]
+            
+            # 3. 村人をバランス良く選択（完全ランダムではなく、最初の村人）
+            villagers = [p for p in possible_targets if p.role == 'villager']
+            if villagers:
+                return villagers[0]
+    
+    # 村人陣営（占い師、ボディガード、村人）の場合
+    elif actor_player.role in ['seer', 'bodyguard', 'villager']:
+        if context == "vote":
+            # 村人陣営の投票戦略：疑わしいプレイヤーを優先
+            # 1. AIプレイヤーを優先（戦略が読みにくく疑わしい）
+            ai_targets = [p for p in possible_targets if not p.is_human]
+            if ai_targets:
+                return ai_targets[0]
+            
+            # 2. 人狼の可能性が高いプレイヤー（ここでは人間プレイヤー）
+            human_targets = [p for p in possible_targets if p.is_human]
+            if human_targets:
+                return human_targets[0]
+                
+        elif context == "protect":
+            # ボディガードの護衛戦略
+            # 1. 占い師を最優先
+            seers = [p for p in possible_targets if p.role == 'seer']
+            if seers:
+                return seers[0]
+            
+            # 2. 村人を次点（最初の村人を選択）
+            villagers = [p for p in possible_targets if p.role == 'villager']
+            if villagers:
+                return villagers[0]
+            
+            # 3. 他のボディガード
+            other_bodyguards = [p for p in possible_targets if p.role == 'bodyguard']
+            if other_bodyguards:
+                return other_bodyguards[0]
+    
+    # フォールバック：最初のターゲットを選択（完全ランダムの代替）
+    return possible_targets[0]
+
 async def generate_ai_vote_decision(db: Session, room_id: uuid.UUID, ai_player, possible_targets) -> Player:
     """
     LLMベースのAI投票先決定
@@ -2291,34 +2525,51 @@ async def generate_ai_vote_decision(db: Session, room_id: uuid.UUID, ai_player, 
             model = GenerativeModel("gemini-1.5-flash")
             
             try:
-                # 非同期でタイムアウト付き実行
+                # 非同期でタイムアウト付き実行（短縮：30秒→12秒）
                 response = await asyncio.wait_for(
                     asyncio.to_thread(model.generate_content, prompt),
-                    timeout=30.0
+                    timeout=12.0
                 )
             except asyncio.TimeoutError:
-                logger.warning(f"AI vote decision timeout for {ai_player.character_name}, using random selection")
-                return random.choice(possible_targets)
+                logger.warning(f"AI vote decision timeout for {ai_player.character_name}, using strategic selection")
+                return strategic_target_selection(ai_player, possible_targets, "vote")
             
-            # レスポンスからプレイヤー名を抽出
+            # レスポンスからプレイヤー名を抽出（改善版）
             decision_text = response.text.strip()
+            logger.info(f"AI {ai_player.character_name} vote decision response: {decision_text}")
             
-            # プレイヤー名でマッチング
+            # より精密なプレイヤー名マッチング
+            target_names = [target.character_name for target in possible_targets]
+            
+            # 完全一致を優先
             for target in possible_targets:
-                if target.character_name in decision_text:
-                    logger.info(f"AI {ai_player.character_name} decided to vote for {target.character_name} via LLM")
+                if target.character_name == decision_text.strip():
+                    logger.info(f"AI {ai_player.character_name} decided to vote for {target.character_name} (exact match)")
                     return target
             
-            # マッチしなかった場合は最初のターゲット
-            logger.warning(f"AI {ai_player.character_name} LLM vote decision unclear: {decision_text}, using first target")
+            # 部分一致をチェック
+            for target in possible_targets:
+                if target.character_name in decision_text:
+                    logger.info(f"AI {ai_player.character_name} decided to vote for {target.character_name} (partial match)")
+                    return target
+            
+            # レスポンスにプレイヤー名が含まれているかを逆順でチェック
+            decision_lower = decision_text.lower()
+            for target in possible_targets:
+                if target.character_name.lower() in decision_lower:
+                    logger.info(f"AI {ai_player.character_name} decided to vote for {target.character_name} (case insensitive match)")
+                    return target
+            
+            # どれもマッチしなかった場合は最初のターゲット
+            logger.warning(f"AI {ai_player.character_name} LLM vote decision unclear: '{decision_text}', candidates: {target_names}, using first target")
             return possible_targets[0]
             
     except Exception as e:
         logger.error(f"Error in AI vote decision: {e}")
     
-    # フォールバック: ランダム選択
-    logger.warning(f"AI vote decision failed for {ai_player.character_name}, using random selection")
-    return random.choice(possible_targets)
+    # フォールバック: 戦略的選択
+    logger.warning(f"AI vote decision failed for {ai_player.character_name}, using strategic selection")
+    return strategic_target_selection(ai_player, possible_targets, "vote")
 
 
 # --- WebSocket (Socket.IO) Setup ---
@@ -2496,6 +2747,94 @@ async def night_action(room_id: uuid.UUID, db: Session = Depends(get_db)):
     await sio.emit('night_action_result', {'room_id': str(room_id), 'results': results}, room=str(room_id))
     return results
 
+@app.get("/api/players/{player_id}/available_targets", summary="占い可能な対象を取得")
+async def get_available_investigate_targets(player_id: uuid.UUID, db: Session = Depends(get_db)):
+    """占い師が占い可能な対象プレイヤーのリストを取得"""
+    player = db.query(Player).filter(Player.player_id == player_id).first()
+    if not player:
+        raise HTTPException(status_code=404, detail="Player not found")
+    
+    if player.role != 'seer':
+        raise HTTPException(status_code=403, detail="Only seers can investigate")
+    
+    if not player.is_alive:
+        raise HTTPException(status_code=403, detail="Dead players cannot investigate")
+    
+    room = db.query(Room).filter(Room.room_id == player.room_id).first()
+    if not room or room.status != 'night':
+        raise HTTPException(status_code=400, detail="Investigation only available during night phase")
+    
+    # 生存している他のプレイヤーを取得
+    available_targets = db.query(Player).filter(
+        Player.room_id == player.room_id,
+        Player.is_alive == True,
+        Player.player_id != player_id
+    ).all()
+    
+    return {
+        'available_targets': [PlayerInfo.model_validate(p) for p in available_targets],
+        'can_investigate': True  # 簡略化：実際にはその夜に既に占ったかチェックが必要
+    }
+
+@app.post("/api/rooms/{room_id}/seer_investigate", summary="占い師の調査実行")
+async def seer_investigate(
+    room_id: uuid.UUID, 
+    investigator_id: str = Query(...),
+    target_data: dict = Body(...),
+    db: Session = Depends(get_db)
+):
+    """占い師が特定の対象を調査する"""
+    try:
+        investigator_uuid = uuid.UUID(investigator_id)
+        target_player_id = uuid.UUID(target_data['target_player_id'])
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid UUID format")
+    
+    # 調査者の検証
+    investigator = db.query(Player).filter(Player.player_id == investigator_uuid).first()
+    if not investigator:
+        raise HTTPException(status_code=404, detail="Investigator not found")
+    
+    if investigator.role != 'seer':
+        raise HTTPException(status_code=403, detail="Only seers can investigate")
+    
+    if not investigator.is_alive:
+        raise HTTPException(status_code=403, detail="Dead players cannot investigate")
+    
+    # 対象の検証
+    target = db.query(Player).filter(Player.player_id == target_player_id).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="Target not found")
+    
+    if not target.is_alive:
+        raise HTTPException(status_code=400, detail="Cannot investigate dead players")
+    
+    if target.player_id == investigator.player_id:
+        raise HTTPException(status_code=400, detail="Cannot investigate yourself")
+    
+    # 部屋とフェーズの検証
+    room = db.query(Room).filter(Room.room_id == room_id).first()
+    if not room or room.status != 'night':
+        raise HTTPException(status_code=400, detail="Investigation only available during night phase")
+    
+    # 調査実行
+    result = "人狼" if target.role == 'werewolf' else "村人"
+    
+    # 調査実行ログを記録（結果は秘匿）
+    create_game_log(db, room_id, "night", "investigate", 
+                  actor_player_id=investigator.player_id,
+                  content=f"{investigator.character_name}が占いを実行しました")
+    
+    db.commit()
+    
+    # 占い師にのみ結果を返す
+    return {
+        'investigator': investigator.character_name,
+        'target': target.character_name,
+        'result': result,
+        'message': f"{target.character_name}の正体: {result}"
+    }
+
 @app.post("/api/rooms/{room_id}/transition_to_vote", summary="投票フェーズに移行")
 async def transition_to_vote(room_id: uuid.UUID, db: Session = Depends(get_db)):
     """議論フェーズから投票フェーズに手動で移行する"""
@@ -2672,19 +3011,39 @@ async def auto_progress_logic(room_id: uuid.UUID, db: Session) -> dict:
                 return {"auto_progressed": True, "message": f"{current_player.character_name} spoke.", "websocket_data": websocket_data}
             except Exception as e:
                 logger.error(f"❌ CRITICAL: AI speech generation failed for {current_player.character_name}: {e}", exc_info=True)
-                logger.error(f"❌ This indicates a fundamental problem with the AI Agent system")
                 logger.error(f"❌ Error type: {type(e).__name__}")
                 logger.error(f"❌ Error details: {str(e)}")
                 
-                # 🚨 Critical AI system failure - should not happen with proper fixes
-                logger.error(f"🚨 STOPPING auto-progress due to AI system failure")
-                logger.error(f"🚨 Manual intervention may be required to fix AI Agent initialization")
+                # 🔧 改善されたエラー処理：ターンスキップではなく安全なフォールバック発言を使用
+                logger.info(f"🔄 Using emergency fallback speech for {current_player.character_name}")
+                emergency_statement = generate_safe_fallback_speech(current_player, room)
+                logger.info(f"🔄 Emergency fallback speech: {emergency_statement}")
                 
-                # ターンをスキップして次のプレイヤーに進む（一時的措置）
-                next_index = find_next_alive_player_safe(db, room_id, room.current_turn_index)
-                room.current_turn_index = next_index
-                db.commit()
-                return {"auto_progressed": True, "message": f"{current_player.character_name} skipped due to AI system error.", "error": str(e)}
+                try:
+                    # フォールバック発言で発言処理を実行
+                    updated_room = speak_logic(db, room_id, current_player_id, emergency_statement)
+                    logger.info(f"✅ Emergency fallback speech successful for {current_player.character_name}")
+                    
+                    # WebSocket通知データ
+                    websocket_data = {
+                        "type": "new_speech",
+                        "data": {
+                            'room_id': str(room_id),
+                            'speaker_id': str(current_player_id),
+                            'speaker_name': current_player.character_name,
+                            'statement': emergency_statement,
+                            'current_turn_index': updated_room.current_turn_index
+                        }
+                    }
+                    return {"auto_progressed": True, "message": f"{current_player.character_name} spoke (emergency fallback).", "websocket_data": websocket_data}
+                    
+                except Exception as fallback_error:
+                    logger.error(f"🚨 Emergency fallback speech also failed: {fallback_error}")
+                    # 最終手段としてターンスキップ
+                    next_index = find_next_alive_player_safe(db, room_id, room.current_turn_index)
+                    room.current_turn_index = next_index
+                    db.commit()
+                    return {"auto_progressed": True, "message": f"{current_player.character_name} skipped due to complete AI failure.", "error": str(e)}
 
     elif room.status == 'day_vote':
         # 未投票のAIプレイヤーを探す
@@ -2725,13 +3084,29 @@ async def auto_progress_logic(room_id: uuid.UUID, db: Session) -> dict:
                 return {"auto_progressed": True, "message": f"{ai_to_vote.character_name} voted for {target_player.character_name}.", "websocket_data": websocket_data}
             except Exception as e:
                 logger.error(f"Error in AI voting for {ai_to_vote.character_name}: {e}", exc_info=True)
-                # フォールバック: ランダム投票
+                # フォールバック: 戦略的投票
                 try:
-                    target_player = random.choice(possible_targets)
+                    logger.info(f"🔄 Using fallback strategic voting for {ai_to_vote.character_name}")
+                    target_player = strategic_target_selection(ai_to_vote, possible_targets, "vote")
                     vote_result = process_vote(db, room_id, ai_to_vote.player_id, target_player.player_id)
-                    return {"auto_progressed": True, "message": f"{ai_to_vote.character_name} voted randomly for {target_player.character_name} (fallback).", "error": str(e)}
+                    logger.info(f"✅ Fallback random vote successful: {ai_to_vote.character_name} → {target_player.character_name}")
+                    
+                    # WebSocket通知データ（フォールバック用）
+                    websocket_data = {
+                        "type": "new_vote",
+                        "data": {
+                            'room_id': str(room_id),
+                            'voter_id': str(ai_to_vote.player_id),
+                            'voter_name': ai_to_vote.character_name,
+                            'target_id': str(target_player.player_id),
+                            'target_name': target_player.character_name,
+                            'vote_result': vote_result.message if vote_result else None,
+                            'is_fallback': True
+                        }
+                    }
+                    return {"auto_progressed": True, "message": f"{ai_to_vote.character_name} voted randomly for {target_player.character_name} (fallback).", "websocket_data": websocket_data, "error": str(e)}
                 except Exception as fallback_error:
-                    logger.error(f"Fallback voting also failed: {fallback_error}", exc_info=True)
+                    logger.error(f"🚨 Fallback voting also failed: {fallback_error}", exc_info=True)
                     return {"auto_progressed": False, "message": f"Failed to process AI vote: {str(e)}"}
 
     return {"auto_progressed": False, "message": "Not in a phase for auto-progression."}

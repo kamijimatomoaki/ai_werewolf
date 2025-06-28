@@ -33,12 +33,13 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
   const [connectionWarningShown, setConnectionWarningShown] = useState(false);
   const [autoProgressInProgress, setAutoProgressInProgress] = useState(false);
   const [showSummary, setShowSummary] = useState(false);
+  const [fetchRoomDataDebounceRef, setFetchRoomDataDebounceRef] = useState<NodeJS.Timeout | null>(null);
   
   // フェーズ遷移アニメーション
   const { isTransitioning, handlePhaseChange, animationSettings } = usePhaseTransition();
 
-  // 部屋情報とログを取得
-  const fetchRoomData = useCallback(async (skipAutoProgress = false) => {
+  // 部屋情報とログを取得（デバウンス付き）
+  const fetchRoomDataImmediate = useCallback(async (skipAutoProgress = false) => {
     try {
       setLoading(true);
       setError(null);
@@ -81,6 +82,28 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
       setLoading(false);
     }
   }, [currentPlayerId, playerName, updatePlayerId, room, handlePhaseChange, roomId]);
+
+  // デバウンス付きfetchRoomData（重複実行防止）
+  const fetchRoomData = useCallback((skipAutoProgress = false, immediate = false) => {
+    // immediate実行の場合はデバウンスをスキップ
+    if (immediate) {
+      return fetchRoomDataImmediate(skipAutoProgress);
+    }
+
+    // 既存のタイマーをクリア
+    if (fetchRoomDataDebounceRef) {
+      clearTimeout(fetchRoomDataDebounceRef);
+    }
+
+    // 新しいタイマーを設定（200msディレイ）
+    const newTimeout = setTimeout(() => {
+      console.log('🔄 Debounced fetchRoomData executed');
+      fetchRoomDataImmediate(skipAutoProgress);
+      setFetchRoomDataDebounceRef(null);
+    }, 200);
+
+    setFetchRoomDataDebounceRef(newTimeout);
+  }, [fetchRoomDataImmediate, fetchRoomDataDebounceRef]);
 
   // AI自動進行のチェック（改良版）
   const checkForAIAutoProgress = useCallback(async (roomData: any) => {
@@ -319,19 +342,16 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
   const handleGameStarted = useCallback((data: { room_id: string; message: string }) => {
     if (data.room_id === roomId) {
       console.log('Game started:', data.message);
-      fetchRoomData(); // 部屋データを更新
+      fetchRoomData(); // デバウンス付きで部屋データを更新
     }
-  }, [roomId]);
+  }, [roomId, fetchRoomData]);
 
   const handleNewSpeech = useCallback((data: { room_id: string; speaker_id: string; statement: string }) => {
     if (data.room_id === roomId) {
       console.log('🗣️ New speech WebSocket event received:', data);
-      console.log('🔄 Triggering fetchRoomData in 100ms...');
-      // 即座にデータを更新（WebSocket通知への依存度を上げる）
-      setTimeout(() => {
-        console.log('🔄 Executing fetchRoomData now...');
-        fetchRoomData();
-      }, 100); // 短いディレイで確実に更新
+      console.log('🔄 Triggering debounced fetchRoomData...');
+      // デバウンス付きで重複実行を防止
+      fetchRoomData();
     } else {
       console.log('🚫 New speech event for different room:', data.room_id, 'vs', roomId);
     }
@@ -339,8 +359,8 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
 
   const handlePlayerJoined = useCallback((data: { player_name: string; sid: string }) => {
     console.log('Player joined:', data);
-    fetchRoomData(); // プレイヤーリストを更新
-  }, []);
+    fetchRoomData(); // デバウンス付きでプレイヤーリストを更新
+  }, [fetchRoomData]);
 
   const handleRoomUpdated = useCallback((data: { room_id: string; room_data: RoomInfo }) => {
     if (data.room_id === roomId) {
@@ -367,23 +387,23 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
   const handleVotePhaseStarted = useCallback((data: { room_id: string; message: string }) => {
     if (data.room_id === roomId) {
       console.log('Vote phase started:', data.message);
-      fetchRoomData();
+      fetchRoomData(); // デバウンス付き
     }
-  }, [roomId]);
+  }, [roomId, fetchRoomData]);
 
   const handleVoteCast = useCallback((data: { room_id: string; voter_id: string; target_id: string }) => {
     if (data.room_id === roomId) {
       console.log('Vote cast:', data);
-      fetchRoomData();
+      fetchRoomData(); // デバウンス付き
     }
-  }, [roomId]);
+  }, [roomId, fetchRoomData]);
 
   const handleNightPhaseStarted = useCallback((data: { room_id: string; message: string }) => {
     if (data.room_id === roomId) {
       console.log('Night phase started:', data.message);
-      fetchRoomData();
+      fetchRoomData(); // デバウンス付き
     }
-  }, [roomId]);
+  }, [roomId, fetchRoomData]);
 
   // 完全ゲーム状態通知ハンドラー
   const handleCompleteGameState = useCallback((data: any) => {
@@ -410,7 +430,7 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
       });
       
       // 確実にログも更新（AI発言後の自動更新を保証）
-      setTimeout(() => fetchRoomData(), 200);
+      fetchRoomData(); // デバウンス付きで重複実行を防止
     }
   }, [roomId, fetchRoomData]);
 

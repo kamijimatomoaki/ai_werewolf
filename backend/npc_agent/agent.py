@@ -439,12 +439,39 @@ class RootAgent:
         return f"候補者{target_candidates}に対して{strategy_desc}を採用することを推奨します。"
     
     def _rate_player_suspicion(self, players: List[str], evaluation_criteria: str) -> str:
-        """疑惑度評価ツールの実装"""
+        """疑惑度評価ツールの実装（知性的分析）"""
         ratings = []
         for player in players:
-            # ランダムに疑惑度を設定（実際の実装では詳細な分析を行う）
-            suspicion_level = random.randint(3, 8)
+            # 基本疑惑度（中程度から開始）
+            suspicion_level = 5
+            
+            # 発言量による調整（発言が少ない=疑わしい）
+            speech_count = len([log for log in self.recent_speeches 
+                              if log.get('speaker') == player])
+            if speech_count < 2:
+                suspicion_level += 2  # 発言少ない=疑いUp
+            elif speech_count > 5:
+                suspicion_level -= 1  # 発言多い=疑いDown
+            
+            # 投票パターンによる調整
+            # (実際の投票データがあれば更に詳細な分析可能)
+            if "投票" in evaluation_criteria and player in self.recent_speeches:
+                # 投票に関する発言の一貫性をチェック
+                player_speeches = [log for log in self.recent_speeches 
+                                 if log.get('speaker') == player]
+                if len(player_speeches) > 0:
+                    last_speech = player_speeches[-1].get('content', '')
+                    if any(word in last_speech for word in ['疑わしい', '人狼', '怪しい']):
+                        suspicion_level -= 1  # 積極的に疑いを表明=疑いDown
+            
+            # ランダム要素を最小限に（±1のバリエーション）
+            suspicion_level += random.randint(-1, 1)
+            
+            # 範囲制限 (1-10)
+            suspicion_level = max(1, min(10, suspicion_level))
+            
             ratings.append(f"{player}: {suspicion_level}/10")
+        
         return f"{evaluation_criteria}基準での疑惑度評価: {', '.join(ratings)}"
     
     def _analyze_coming_out_timing(self, my_role: str, game_phase: str, alive_count: int) -> str:

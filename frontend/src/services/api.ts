@@ -26,6 +26,7 @@ export interface VoteResult {
   vote_counts: { [key: string]: number };
   voted_out_player_id?: string;
   tied_vote: boolean;
+  is_revote: boolean;
   message: string;
 }
 

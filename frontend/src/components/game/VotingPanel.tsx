@@ -57,19 +57,23 @@ export default function VotingPanel({
   const votableTargets = players.filter(p => p.is_alive && p.player_id !== currentPlayerId);
 
   return (
-    <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
+    <div className="p-4 bg-red-900/20 border border-red-500/50 rounded-lg backdrop-blur-sm">
       <div className="flex items-center gap-3 mb-4">
-        <VoteIcon className="w-6 h-6 text-red-600" />
+        <VoteIcon className="w-6 h-6 text-red-400" />
         <div>
-          <h3 className="text-lg font-semibold text-red-800">投票フェーズ</h3>
-          <p className="text-sm text-red-600">処刑したいプレイヤーに投票してください</p>
+          <h3 className="text-lg font-semibold text-red-200">
+            {voteResult?.is_revote ? '再投票フェーズ' : '投票フェーズ'}
+          </h3>
+          <p className="text-sm text-red-300">
+            {voteResult?.is_revote ? '同票のため再投票を行います。処刑したいプレイヤーに投票してください' : '処刑したいプレイヤーに投票してください'}
+          </p>
         </div>
       </div>
 
-      {/* 投票結果表示 */}
-      {voteResult ? (
+      {/* 投票結果表示（再投票時は除く） */}
+      {voteResult && !voteResult.is_revote ? (
         <div className="space-y-4">
-          <h4 className="font-semibold text-red-800">投票結果</h4>
+          <h4 className="font-semibold text-red-200">投票結果</h4>
           
           {/* 投票数表示 */}
           <div className="space-y-2">
@@ -95,12 +99,12 @@ export default function VotingPanel({
 
           {/* 処刑結果 */}
           {voteResult.voted_out_player_id && (
-            <div className="p-4 bg-red-100 rounded-lg border border-red-300">
+            <div className="p-4 bg-red-900/30 rounded-lg border border-red-500/50">
               <div className="flex items-center gap-2 mb-2">
-                <WarningIcon className="w-5 h-5 text-red-700" />
-                <h5 className="font-semibold text-red-800">処刑決定</h5>
+                <WarningIcon className="w-5 h-5 text-red-400" />
+                <h5 className="font-semibold text-red-200">処刑決定</h5>
               </div>
-              <p className="text-red-700">
+              <p className="text-red-300">
                 <span className="font-medium">
                   {players.find(p => p.player_id === voteResult.voted_out_player_id)?.character_name}
                 </span>
@@ -111,18 +115,18 @@ export default function VotingPanel({
 
           {/* 同票の場合 */}
           {voteResult.tied_vote && (
-            <div className="p-4 bg-orange-100 rounded-lg border border-orange-300">
+            <div className="p-4 bg-orange-900/30 rounded-lg border border-orange-500/50">
               <div className="flex items-center gap-2 mb-2">
-                <WarningIcon className="w-5 h-5 text-orange-700" />
-                <h5 className="font-semibold text-orange-800">同票</h5>
+                <WarningIcon className="w-5 h-5 text-orange-400" />
+                <h5 className="font-semibold text-orange-200">同票</h5>
               </div>
-              <p className="text-orange-700">
+              <p className="text-orange-300">
                 同票のため誰も処刑されませんでした
               </p>
             </div>
           )}
 
-          <p className="text-sm text-gray-600 bg-white p-3 rounded border">
+          <p className="text-sm text-gray-300 bg-gray-800/50 p-3 rounded border border-gray-600/50">
             {voteResult.message}
           </p>
         </div>
@@ -131,7 +135,7 @@ export default function VotingPanel({
         <div className="space-y-4">
           {votableTargets.length === 0 ? (
             <div className="text-center py-6">
-              <p className="text-gray-500">投票できる対象がいません</p>
+              <p className="text-gray-400">投票できる対象がいません</p>
             </div>
           ) : (
             <>
@@ -142,8 +146,8 @@ export default function VotingPanel({
                     key={player.player_id}
                     className={`p-3 rounded-lg border cursor-pointer transition-all duration-200 ${
                       selectedVoteTarget === player.player_id
-                        ? 'bg-red-100 border-red-300 shadow-md'
-                        : 'bg-white border-gray-200 hover:bg-gray-50 hover:border-gray-300'
+                        ? 'bg-red-900/40 border-red-500/60 shadow-md'
+                        : 'bg-gray-800/50 border-gray-600/50 hover:bg-gray-700/50 hover:border-gray-500/50'
                     } ${isVoting || isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
                     onClick={() => handleTargetSelect(player.player_id)}
                   >
@@ -152,7 +156,7 @@ export default function VotingPanel({
                         {player.character_name.charAt(0)}
                       </div>
                       <div className="flex-1">
-                        <span className="font-medium">{player.character_name}</span>
+                        <span className="font-medium text-white">{player.character_name}</span>
                         <div className="flex gap-1 mt-1">
                           <span className={`px-2 py-1 text-xs rounded ${
                             player.is_human ? 'bg-blue-500/20 text-blue-400' : 'bg-gray-500/20 text-gray-400'
@@ -162,7 +166,7 @@ export default function VotingPanel({
                         </div>
                       </div>
                       {selectedVoteTarget === player.player_id && (
-                        <span className="px-2 py-1 text-xs rounded bg-red-500/20 text-red-400">
+                        <span className="px-2 py-1 text-xs rounded bg-red-500/30 text-red-300">
                           選択中
                         </span>
                       )}
@@ -176,8 +180,8 @@ export default function VotingPanel({
               {/* 投票ボタン */}
               <div className="space-y-3">
                 {selectedVoteTarget && (
-                  <div className="p-3 bg-red-100 rounded-lg border border-red-200">
-                    <p className="text-sm text-red-700">
+                  <div className="p-3 bg-red-900/30 rounded-lg border border-red-500/50">
+                    <p className="text-sm text-red-300">
                       <span className="font-medium">
                         {players.find(p => p.player_id === selectedVoteTarget)?.character_name}
                       </span>
