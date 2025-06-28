@@ -432,17 +432,16 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
       console.warn(`🚨 Room ID mismatch detected:`, {
         urlRoomId: roomId,
         storedRoomId: storedRoomId,
-        action: 'complete_logout_and_redirecting'
+        action: 'updating_stored_room_id'
       });
-      // 完全にセッションをクリアして、ロビーに戻る
-      logout();
-      onBackToLobby();
-      return;
+      // 新しい部屋IDでlocalStorageを更新（ログアウトしない）
+      localStorage.setItem('room_id', roomId);
+      console.log(`✅ Updated stored room_id to: ${roomId}`);
     }
     
     // 部屋データを取得（認証状態に関係なく）
     fetchRoomData();
-  }, [roomId, storedRoomId, logout, onBackToLobby]);
+  }, [roomId, storedRoomId, onBackToLobby]);
 
   // ステータス表示
   const getStatusColor = (status: string) => {
