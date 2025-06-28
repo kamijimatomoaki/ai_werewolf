@@ -2003,17 +2003,29 @@ async def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid
             logger.error(f"Player {ai_player.character_name} is not an AI player")
             return "少し考えさせてください。"
         
-        # デバッグ: ペルソナ情報をログ出力
-        logger.info(f"Generating speech for {ai_player.character_name}")
+        # 🔍 詳細デバッグ: AI発言システム状態診断
+        logger.info(f"=== AI SPEECH SYSTEM DIAGNOSIS ===")
+        logger.info(f"Player: {ai_player.character_name}")
         logger.info(f"Player persona type: {type(ai_player.character_persona)}")
         logger.info(f"Player persona content: {ai_player.character_persona}")
-        logger.info(f"Using root_agent: {root_agent is not None}")
-        logger.info(f"GOOGLE_PROJECT_ID: {GOOGLE_PROJECT_ID} (actual value)")
-        logger.info(f"GOOGLE_LOCATION: {GOOGLE_LOCATION} (actual value)")
         logger.info(f"Room status: {room.status}, Day: {room.day_number}")
         
+        # 🔍 root_agent状態の詳細チェック
+        logger.info(f"🤖 root_agent diagnosis:")
+        logger.info(f"🤖 - root_agent exists: {root_agent is not None}")
+        logger.info(f"🤖 - root_agent type: {type(root_agent) if root_agent else 'None'}")
+        if root_agent:
+            logger.info(f"🤖 - model available: {getattr(root_agent, 'model', None) is not None}")
+            logger.info(f"🤖 - tools_available: {getattr(root_agent, 'tools_available', 'Unknown')}")
+            logger.info(f"🤖 - fallback_mode: {getattr(root_agent, 'fallback_mode', 'Unknown')}")
+        
+        # 🔍 環境変数チェック
+        logger.info(f"🌐 Environment variables:")
+        logger.info(f"🌐 - GOOGLE_PROJECT_ID: '{GOOGLE_PROJECT_ID}' (length: {len(GOOGLE_PROJECT_ID) if GOOGLE_PROJECT_ID else 0})")
+        logger.info(f"🌐 - GOOGLE_LOCATION: '{GOOGLE_LOCATION}' (length: {len(GOOGLE_LOCATION) if GOOGLE_LOCATION else 0})")
+        
         # AIエージェントシステムを使用した発言生成
-        logger.info(f"Using AI agent system for speech generation: root_agent={root_agent is not None}, GOOGLE_PROJECT_ID='{GOOGLE_PROJECT_ID}', GOOGLE_LOCATION='{GOOGLE_LOCATION}'")
+        logger.info(f"🚀 AI agent system selection logic: root_agent={root_agent is not None}, PROJECT_ID_OK={bool(GOOGLE_PROJECT_ID)}, LOCATION_OK={bool(GOOGLE_LOCATION)}")
         
         # 高度なAIエージェントシステムが利用可能な場合
         if root_agent and GOOGLE_PROJECT_ID and GOOGLE_LOCATION:
@@ -2091,24 +2103,58 @@ async def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid
                 else:
                     logger.error("🔧 Other AI agent system error")
                 
-                # フォールバック：直接Vertex AI呼び出し
+                # 🔧 強化されたフォールバック：直接Vertex AI呼び出し
                 try:
-                    logger.info("🔄 Attempting fallback with direct Vertex AI...")
-                    basic_prompt = f"""あなたは{ai_player.character_name}です。
-ペルソナ: {persona}
-現在の状況: {room.status}、{room.day_number}日目
-簡潔に1-2文で発言してください。"""
+                    logger.info("🔄 Attempting enhanced fallback with direct Vertex AI...")
                     
+                    # より詳細なプロンプトでVertex AI直接呼び出し
+                    enhanced_prompt = f"""あなたは人狼ゲームのプレイヤー「{ai_player.character_name}」です。
+
+キャラクター設定：
+{persona}
+
+現在の状況：
+- フェーズ: {room.status}
+- 日数: {room.day_number}日目
+- 役職: {ai_player.role}
+
+あなたのキャラクターらしく、ゲームの進行に貢献する自然な発言を1-2文で行ってください。
+人狼ゲームらしい推理や議論の要素を含めてください。
+
+発言:"""
+                    
+                    # Vertex AI再初期化（念のため）
+                    logger.info(f"🔄 Re-initializing Vertex AI: {GOOGLE_PROJECT_ID} @ {GOOGLE_LOCATION}")
                     vertexai.init(project=GOOGLE_PROJECT_ID, location=GOOGLE_LOCATION)
                     model = GenerativeModel("gemini-1.5-flash")
-                    response = model.generate_content(basic_prompt)
-                    if response.text and len(response.text.strip()) > 10:
+                    
+                    # タイムアウト付きで実行
+                    import asyncio
+                    from concurrent.futures import ThreadPoolExecutor, TimeoutError
+                    
+                    def generate_with_direct_ai():
+                        return model.generate_content(enhanced_prompt)
+                    
+                    try:
+                        with ThreadPoolExecutor() as executor:
+                            future = executor.submit(generate_with_direct_ai)
+                            response = future.result(timeout=20)  # 20秒でタイムアウト
+                    except TimeoutError:
+                        logger.error("🔄 Direct Vertex AI call timed out")
+                        response = None
+                    
+                    if response and response.text and len(response.text.strip()) > 10:
                         speech = response.text.strip()
-                        logger.info(f"✅ Fallback speech generation successful: {speech}")
+                        logger.info(f"✅ Enhanced fallback speech generation successful: {speech}")
                     else:
+                        logger.warning(f"❌ Direct Vertex AI returned invalid response: {response.text if response else 'None'}")
                         speech = None
+                        
                 except Exception as fallback_error:
-                    logger.error(f"🚨 Fallback speech generation also failed: {fallback_error}")
+                    logger.error(f"🚨 Enhanced fallback speech generation also failed: {fallback_error}")
+                    logger.error(f"🚨 Fallback error type: {type(fallback_error).__name__}")
+                    import traceback
+                    logger.error(f"🚨 Fallback error traceback: {traceback.format_exc()}")
                     speech = None
                 
                 if not speech:
@@ -2625,49 +2671,20 @@ async def auto_progress_logic(room_id: uuid.UUID, db: Session) -> dict:
                 }
                 return {"auto_progressed": True, "message": f"{current_player.character_name} spoke.", "websocket_data": websocket_data}
             except Exception as e:
-                logger.error(f"❌ Error in AI speech generation for {current_player.character_name}: {e}", exc_info=True)
-                # 🔧 改善: AI発言エラー時のフォールバック発言を生成
-                try:
-                    # フォールバック発言リスト
-                    fallback_speeches = [
-                        "すみません、少し考えさせてください。",
-                        "今の状況を整理したいと思います。",
-                        "皆さんの意見をお聞きしたいです。",
-                        "慎重に判断したいと思います。",
-                        "もう少し議論が必要ですね。"
-                    ]
-                    
-                    # ランダムにフォールバック発言を選択
-                    fallback_statement = random.choice(fallback_speeches)
-                    logger.info(f"🔄 Using fallback speech for {current_player.character_name}: '{fallback_statement}'")
-                    
-                    # フォールバック発言で speak_logic を実行
-                    updated_room = speak_logic(db, room_id, current_player_id, fallback_statement)
-                    
-                    # WebSocket通知データ
-                    websocket_data = {
-                        "type": "new_speech",
-                        "data": {
-                            'room_id': str(room_id),
-                            'speaker_id': str(current_player_id),
-                            'speaker_name': current_player.character_name,
-                            'statement': fallback_statement,
-                            'current_phase': updated_room.status,
-                            'current_turn_index': updated_room.current_turn_index,
-                            'is_fallback': True
-                        }
-                    }
-                    
-                    logger.info(f"✅ Fallback speech successfully processed for {current_player.character_name}")
-                    return {"auto_progressed": True, "message": f"{current_player.character_name} spoke (fallback).", "websocket_data": websocket_data}
-                    
-                except Exception as fallback_error:
-                    logger.error(f"🚨 Fallback speech also failed for {current_player.character_name}: {fallback_error}", exc_info=True)
-                    # 最終手段: ターンをスキップ
-                    next_index = find_next_alive_player_safe(db, room_id, room.current_turn_index)
-                    room.current_turn_index = next_index
-                    db.commit()
-                    return {"auto_progressed": True, "message": f"{current_player.character_name} skipped due to error.", "error": str(e)}
+                logger.error(f"❌ CRITICAL: AI speech generation failed for {current_player.character_name}: {e}", exc_info=True)
+                logger.error(f"❌ This indicates a fundamental problem with the AI Agent system")
+                logger.error(f"❌ Error type: {type(e).__name__}")
+                logger.error(f"❌ Error details: {str(e)}")
+                
+                # 🚨 Critical AI system failure - should not happen with proper fixes
+                logger.error(f"🚨 STOPPING auto-progress due to AI system failure")
+                logger.error(f"🚨 Manual intervention may be required to fix AI Agent initialization")
+                
+                # ターンをスキップして次のプレイヤーに進む（一時的措置）
+                next_index = find_next_alive_player_safe(db, room_id, room.current_turn_index)
+                room.current_turn_index = next_index
+                db.commit()
+                return {"auto_progressed": True, "message": f"{current_player.character_name} skipped due to AI system error.", "error": str(e)}
 
     elif room.status == 'day_vote':
         # 未投票のAIプレイヤーを探す

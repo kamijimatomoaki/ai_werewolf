@@ -1,4 +1,5 @@
 import os
+import sys
 import random
 import asyncio
 import uuid
@@ -28,14 +29,62 @@ print(f"[INIT] Vertex AI initialization check:")
 print(f"[INIT] GOOGLE_PROJECT_ID: '{GOOGLE_PROJECT_ID}'")
 print(f"[INIT] GOOGLE_LOCATION: '{GOOGLE_LOCATION}'")
 
-# Vertex AI初期化を試行
+# Vertex AI初期化を試行（強化版）
 vertex_ai_initialized = False
 try:
-    vertexai.init(project=GOOGLE_PROJECT_ID, location=GOOGLE_LOCATION)
-    print(f"✅ [SUCCESS] Vertex AI initialized: {GOOGLE_PROJECT_ID} @ {GOOGLE_LOCATION}")
-    vertex_ai_initialized = True
+    print(f"[INIT] Starting Vertex AI initialization...")
+    print(f"[INIT] - GOOGLE_PROJECT_ID: '{GOOGLE_PROJECT_ID}' (empty: {not GOOGLE_PROJECT_ID})")
+    print(f"[INIT] - GOOGLE_LOCATION: '{GOOGLE_LOCATION}' (empty: {not GOOGLE_LOCATION})")
+    
+    # 🔧 修正: 環境変数が空の場合の適切な処理
+    if not GOOGLE_PROJECT_ID or not GOOGLE_LOCATION:
+        print(f"[WARNING] Missing required environment variables")
+        print(f"[WARNING] - PROJECT_ID available: {bool(GOOGLE_PROJECT_ID)}")
+        print(f"[WARNING] - LOCATION available: {bool(GOOGLE_LOCATION)}")
+        
+        # Cloud Run環境での認証を試行
+        print(f"[INIT] Attempting Cloud Run service account detection...")
+        import subprocess
+        try:
+            # メタデータサーバーからプロジェクトIDを取得
+            result = subprocess.run([
+                'curl', '-s', '-H', 'Metadata-Flavor: Google',
+                'http://metadata.google.internal/computeMetadata/v1/project/project-id'
+            ], capture_output=True, text=True, timeout=5)
+            
+            if result.returncode == 0 and result.stdout.strip():
+                detected_project = result.stdout.strip()
+                print(f"[INIT] Detected project from metadata: '{detected_project}'")
+                GOOGLE_PROJECT_ID = detected_project
+                if not GOOGLE_LOCATION:
+                    GOOGLE_LOCATION = "asia-northeast1"  # デフォルト
+                print(f"[INIT] Using detected project: {GOOGLE_PROJECT_ID} @ {GOOGLE_LOCATION}")
+            else:
+                print(f"[WARNING] Failed to detect project from metadata: {result.stderr}")
+        except Exception as metadata_error:
+            print(f"[WARNING] Metadata detection failed: {metadata_error}")
+    
+    # Vertex AI初期化を実行
+    if GOOGLE_PROJECT_ID and GOOGLE_LOCATION:
+        vertexai.init(project=GOOGLE_PROJECT_ID, location=GOOGLE_LOCATION)
+        print(f"✅ [SUCCESS] Vertex AI initialized: {GOOGLE_PROJECT_ID} @ {GOOGLE_LOCATION}")
+        vertex_ai_initialized = True
+        
+        # 🔍 初期化テスト
+        try:
+            test_model = GenerativeModel("gemini-1.5-flash")
+            print(f"✅ [SUCCESS] Test model created successfully")
+        except Exception as model_error:
+            print(f"❌ [WARNING] Test model creation failed: {model_error}")
+            # 初期化は成功したが、モデル作成に問題がある場合
+            vertex_ai_initialized = False
+    else:
+        print(f"❌ [ERROR] Cannot initialize Vertex AI: missing required configuration")
+        vertex_ai_initialized = False
+        
 except Exception as e:
     print(f"❌ [ERROR] Failed to initialize Vertex AI: {e}")
+    print(f"❌ [ERROR] Error type: {type(e).__name__}")
     import traceback
     print(f"[ERROR] Full traceback: {traceback.format_exc()}")
     vertex_ai_initialized = False
@@ -1318,11 +1367,65 @@ class RootAgent:
 # グローバルインスタンス
 try:
     print("[INIT] Creating RootAgent instance...")
+    print(f"[INIT] Pre-creation state:")
+    print(f"[INIT] - GOOGLE_PROJECT_ID: '{GOOGLE_PROJECT_ID}' (length: {len(GOOGLE_PROJECT_ID) if GOOGLE_PROJECT_ID else 0})")
+    print(f"[INIT] - GOOGLE_LOCATION: '{GOOGLE_LOCATION}' (length: {len(GOOGLE_LOCATION) if GOOGLE_LOCATION else 0})")
+    print(f"[INIT] - vertex_ai_initialized: {vertex_ai_initialized}")
+    
     root_agent = RootAgent()
+    
     print(f"✅ [SUCCESS] RootAgent created successfully: {type(root_agent)}")
+    print(f"✅ [SUCCESS] RootAgent state check:")
+    print(f"✅ - model: {root_agent.model is not None}")
+    print(f"✅ - tools_available: {getattr(root_agent, 'tools_available', 'Unknown')}")
+    print(f"✅ - fallback_mode: {getattr(root_agent, 'fallback_mode', 'Unknown')}")
     print(f"✅ [SUCCESS] RootAgent methods: {[m for m in dir(root_agent) if not m.startswith('_')]}")
+    
+    # 🔍 AI発言生成のテスト実行
+    print("[TEST] Testing AI speech generation...")
+    test_player_info = {
+        'name': 'テストプレイヤー',
+        'role': 'villager',
+        'is_alive': True,
+        'persona': 'テスト用のペルソナです。'
+    }
+    test_game_context = {
+        'day_number': 1,
+        'phase': 'day_discussion',
+        'alive_count': 5,
+        'total_players': 5,
+        'all_players': [test_player_info]
+    }
+    test_recent_messages = []
+    
+    try:
+        test_speech = root_agent.generate_speech(test_player_info, test_game_context, test_recent_messages)
+        print(f"✅ [TEST SUCCESS] Generated speech: '{test_speech[:50]}...'")
+    except Exception as test_error:
+        print(f"❌ [TEST FAILED] Speech generation test failed: {test_error}")
+        import traceback
+        print(f"[TEST ERROR] Full traceback: {traceback.format_exc()}")
+        
 except Exception as e:
     print(f"❌ [ERROR] Failed to create RootAgent: {e}")
+    print(f"❌ [ERROR] Error type: {type(e).__name__}")
+    print(f"❌ [ERROR] Error args: {e.args}")
     import traceback
     print(f"[ERROR] Full traceback: {traceback.format_exc()}")
+    
+    # 🔍 詳細なエラー診断
+    print(f"[DIAGNOSIS] Environment check:")
+    print(f"[DIAGNOSIS] - Current working directory: {os.getcwd()}")
+    print(f"[DIAGNOSIS] - Python path: {sys.path[:3]}")  # 最初の3個のみ表示
+    print(f"[DIAGNOSIS] - vertex_ai_initialized: {vertex_ai_initialized}")
+    
+    # 🔍 環境変数の再チェック
+    import os
+    from dotenv import load_dotenv
+    load_dotenv()
+    recheck_project = os.getenv("GOOGLE_PROJECT_ID") or os.getenv("GOOGLE_CLOUD_PROJECT", "").strip('"')
+    recheck_location = os.getenv("GOOGLE_LOCATION") or os.getenv("GOOGLE_CLOUD_LOCATION", "").strip('"')
+    print(f"[DIAGNOSIS] - Rechecked GOOGLE_PROJECT_ID: '{recheck_project}'")
+    print(f"[DIAGNOSIS] - Rechecked GOOGLE_LOCATION: '{recheck_location}'")
+    
     root_agent = None
