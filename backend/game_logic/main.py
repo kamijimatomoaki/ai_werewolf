@@ -1146,8 +1146,8 @@ def create_room(db: Session, room: RoomCreate, host_name: str) -> Room:
         # total_players から既にいる人間プレイヤーの数を引いた残りをAIプレイヤーとして追加
         num_ai_to_add = room.total_players - room.human_players
         for i in range(num_ai_to_add):
-            # AIプレイヤーの名前をLLMで生成（同期版）
-            ai_character_name = generate_ai_player_name_sync(i + 1)
+            # 初期はAIプレイヤー1形式、ペルソナ生成時に名前変更
+            ai_character_name = f"AIプレイヤー{i+1}"
             
             ai_player = Player(
                 room_id=db_room.room_id,
@@ -1197,6 +1197,13 @@ def start_game_logic(db: Session, room_id: uuid.UUID) -> Room:
     player_count = len(players)
     if player_count != db_room.total_players:
         raise HTTPException(status_code=400, detail=f"Player count mismatch. Expected {db_room.total_players}, but have {player_count}.")
+    
+    # ペルソナ設定チェック（推奨）
+    players_without_persona = [p for p in players if not p.character_persona]
+    if players_without_persona:
+        player_names = [p.character_name for p in players_without_persona]
+        logger.warning(f"Game starting with players without persona: {player_names}")
+        # 警告のみ、ゲーム開始は継続（強制はしない）
     
     roles = get_role_config(player_count)
     random.shuffle(roles)
@@ -3168,6 +3175,7 @@ async def generate_persona(player_id: uuid.UUID, persona_input: PersonaInput, db
             logger.warning("Google Cloud project not configured, using mock persona")
             # モックペルソナを生成
             persona_data = {
+                "name": f"プレイヤー{player.character_name[-1] if player.character_name else '1'}",
                 "gender": "不明",
                 "age": 25,
                 "personality": "ミステリアスで慎重な性格",
@@ -3183,6 +3191,7 @@ async def generate_persona(player_id: uuid.UUID, persona_input: PersonaInput, db
 
 返答は必ず以下のJSON形式のみで回答してください：
 {{
+  "name": "キャラクターに合った日本人らしい名前（姓名両方）",
   "gender": "男性/女性/その他",
   "age": 数値,
   "personality": "性格の説明",
@@ -3212,6 +3221,7 @@ async def generate_persona(player_id: uuid.UUID, persona_input: PersonaInput, db
                 logger.error(f"Vertex AI persona generation failed: {ai_error}", exc_info=True)
                 # フォールバック用のペルソナ
                 persona_data = {
+                    "name": generate_ai_player_name_sync(1),  # フォールバック名前生成
                     "gender": "不明",
                     "age": 25,
                     "personality": f"キーワード「{persona_input.keywords}」に基づく個性的なキャラクター",
@@ -3221,6 +3231,16 @@ async def generate_persona(player_id: uuid.UUID, persona_input: PersonaInput, db
         
         # データベースを更新
         update_player_persona(db, player_id, persona_data)
+        
+        # ペルソナに名前が含まれている場合、プレイヤー名も更新
+        if "name" in persona_data and persona_data["name"]:
+            try:
+                player.character_name = persona_data["name"]
+                db.commit()
+                logger.info(f"Updated player name to: {persona_data['name']}")
+            except Exception as name_error:
+                logger.error(f"Failed to update player name: {name_error}")
+                # 名前更新失敗してもペルソナ生成は成功として扱う
         
         # 更新を通知
         await sio.emit('room_updated', {'room_id': str(player.room_id)}, room=str(player.room_id))

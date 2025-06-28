@@ -83,7 +83,7 @@ export default function PlayerList({
   };
 
   const canStartGame = gameStatus === 'waiting' && players.length === totalPlayers;
-  const hasUnsetPersonas = players.some(p => !p.is_human && !p.character_persona);
+  const hasUnsetPersonas = players.some(p => !p.character_persona); // 全プレイヤー（人間含む）をチェック
 
   return (
     <div className="p-4 bg-gray-800/70 border border-gray-600/50 rounded-lg backdrop-blur-sm">
@@ -135,6 +135,11 @@ export default function PlayerList({
                     <div className="w-full mt-2">
                       <div className="p-3 bg-gradient-to-r from-slate-800/90 to-slate-700/90 border border-slate-400/50 rounded-lg backdrop-blur-sm shadow-lg">
                         <p className="text-xs font-semibold text-slate-200 mb-1">ペルソナ:</p>
+                        {player.character_persona.name && (
+                          <p className="text-sm font-bold text-blue-200 mb-2">
+                            キャラクター名: {player.character_persona.name}
+                          </p>
+                        )}
                         <p className="text-sm text-white leading-relaxed">
                           <span className="font-medium">{player.character_persona.age}歳の{player.character_persona.gender}</span>。
                           <span className="text-slate-100">{player.character_persona.personality}</span>。
@@ -252,7 +257,7 @@ export default function PlayerList({
                 {players.length < totalPlayers 
                   ? `ゲーム開始には${totalPlayers - players.length}人の参加が必要です`
                   : hasUnsetPersonas
-                  ? 'すべてのAIプレイヤーにペルソナを設定してください'
+                  ? 'すべてのプレイヤーにペルソナを設定してください（公平性のため）'
                   : 'ゲーム開始の準備が整いました'
                 }
               </p>
