@@ -1226,7 +1226,11 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
             
             if recent_speech:
                 # 最後の発言から5秒以内の場合は連続発言防止
-                time_since_last = datetime.now(timezone.utc) - recent_speech.created_at
+                # timezone対応: created_atがnaiveな場合はUTCとして扱う
+                created_at = recent_speech.created_at
+                if created_at.tzinfo is None:
+                    created_at = created_at.replace(tzinfo=timezone.utc)
+                time_since_last = datetime.now(timezone.utc) - created_at
                 if time_since_last.total_seconds() < 5:
                     logger.warning(f"🚫 AI連続発言防止: {player.character_name} は最近発言したばかり")
                     raise HTTPException(status_code=400, detail=f"AI player {player.character_name} spoke too recently")
