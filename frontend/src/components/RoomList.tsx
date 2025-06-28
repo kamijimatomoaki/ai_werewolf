@@ -66,13 +66,14 @@ export default function RoomList({ onRoomJoin, onSpectatorJoin }: RoomListProps)
         throw new Error('人間プレイヤーは最低1人必要です');
       }
       
-      // 念のため古いセッションをクリア
-      console.log('🧹 Creating room - clearing old session to prevent conflicts');
-      clearRoomSession();
-      
       const createdRoom = await apiService.createRoom(newRoom, hostName || 'ホスト');
       
       console.log('✅ Room created successfully:', createdRoom.room_id);
+      console.log('🔑 Player authentication data received:', {
+        player_id: createdRoom.player_id,
+        player_name: createdRoom.player_name,
+        room_id: createdRoom.room_id
+      });
       
       // 作成成功後、部屋に参加（ホストプレイヤーはcreateRoomで既に追加されているため、joinRoomAuthは不要）
       onRoomJoin(createdRoom.room_id);
@@ -100,10 +101,6 @@ export default function RoomList({ onRoomJoin, onSpectatorJoin }: RoomListProps)
       if (!joinPlayerName.trim()) {
         throw new Error('プレイヤー名を入力してください');
       }
-      
-      // 古いセッション情報をクリアしてから新しい部屋に参加
-      console.log('🧹 Joining room - clearing old session to prevent conflicts');
-      clearRoomSession();
       
       await joinRoomAuth(selectedRoomId, joinPlayerName);
       console.log('✅ Joined room successfully:', selectedRoomId);
@@ -156,11 +153,8 @@ export default function RoomList({ onRoomJoin, onSpectatorJoin }: RoomListProps)
 
   // 初期化時に部屋一覧を取得
   useEffect(() => {
-    // ロビー表示時に古いセッション情報をクリア
-    console.log('🧹 RoomList mounted - clearing any old room session');
-    clearRoomSession();
     fetchRooms();
-  }, [clearRoomSession]);
+  }, []);
 
   // ステータスに応じた色を返す
   const getStatusColor = (status: string) => {

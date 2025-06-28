@@ -34,8 +34,8 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({ children }) => {
   const [roomId, setRoomId] = useState<string | null>(null);
   const [sessionToken, setSessionToken] = useState<string | null>(null);
 
-  // セッション情報をローカルストレージから復元
-  useEffect(() => {
+  // セッション情報を復元する関数
+  const restoreSessionFromStorage = () => {
     const storedPlayerId = localStorage.getItem('player_id');
     const storedPlayerName = localStorage.getItem('player_name');
     const storedRoomId = localStorage.getItem('room_id');
@@ -55,9 +55,35 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({ children }) => {
       setPlayerName(storedPlayerName);
       setRoomId(storedRoomId);
       setSessionToken(storedSessionToken);
+      return true;
     } else {
       console.log('❌ Cannot restore player session - missing data');
+      return false;
     }
+  };
+
+  // セッション情報をローカルストレージから復元
+  useEffect(() => {
+    restoreSessionFromStorage();
+  }, []);
+
+  // localStorage変更を監視してリアルタイムで更新
+  useEffect(() => {
+    const handleStorageChange = () => {
+      console.log('🔄 localStorage changed - refreshing session');
+      restoreSessionFromStorage();
+    };
+
+    // storage イベントリスナーを追加
+    window.addEventListener('storage', handleStorageChange);
+    
+    // 同一タブ内での localStorage 変更も監視（カスタムイベント）
+    window.addEventListener('localStorageUpdate', handleStorageChange);
+
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+      window.removeEventListener('localStorageUpdate', handleStorageChange);
+    };
   }, []);
 
   // 部屋に参加

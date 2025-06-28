@@ -69,6 +69,10 @@ class ApiService {
     localStorage.setItem('player_id', data.player_id); // player_idを保存
     localStorage.setItem('player_name', data.player_name); // player_nameを保存
     localStorage.setItem('room_id', data.room_id); // room_idを保存
+    
+    // PlayerContextに即座に反映させるためカスタムイベントを発火
+    window.dispatchEvent(new CustomEvent('localStorageUpdate'));
+    
     return data;
   }
 
@@ -135,6 +139,10 @@ class ApiService {
     localStorage.setItem('player_id', data.player_id);
     localStorage.setItem('player_name', data.player_name);
     localStorage.setItem('room_id', data.room_id);
+    
+    // PlayerContextに即座に反映させるためカスタムイベントを発火
+    window.dispatchEvent(new CustomEvent('localStorageUpdate'));
+    
     return data;
   }
 

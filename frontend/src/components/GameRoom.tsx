@@ -38,7 +38,7 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
   const { isTransitioning, handlePhaseChange, animationSettings } = usePhaseTransition();
 
   // 部屋情報とログを取得
-  const fetchRoomData = async (skipAutoProgress = false) => {
+  const fetchRoomData = useCallback(async (skipAutoProgress = false) => {
     try {
       setLoading(true);
       setError(null);
@@ -80,7 +80,7 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [currentPlayerId, playerName, updatePlayerId, room, handlePhaseChange, roomId]);
 
   // AI自動進行のチェック（改良版）
   const checkForAIAutoProgress = useCallback(async (roomData: any) => {
