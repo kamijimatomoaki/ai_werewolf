@@ -1779,6 +1779,60 @@ def process_vote(db: Session, room_id: uuid.UUID, voter_id: uuid.UUID, target_id
         logger.error(f"Error processing vote: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="An unexpected error occurred during voting.")
 
+async def check_night_actions_completion(db: Session, room_id: uuid.UUID) -> bool:
+    """夜のアクションが完了したかチェックし、必要に応じて朝フェーズに移行"""
+    try:
+        db_room = db.query(Room).filter(Room.room_id == room_id).first()
+        if not db_room or db_room.status != 'night':
+            return False
+        
+        # 生きている特殊役職プレイヤーを取得
+        alive_seers = db.query(Player).filter(
+            Player.room_id == room_id,
+            Player.role == 'seer',
+            Player.is_alive == True
+        ).all()
+        
+        alive_bodyguards = db.query(Player).filter(
+            Player.room_id == room_id,
+            Player.role == 'bodyguard',
+            Player.is_alive == True
+        ).all()
+        
+        # 今夜の占い・護衛アクションが実行済みかチェック
+        night_logs = db.query(GameLog).filter(
+            GameLog.room_id == room_id,
+            GameLog.day_number == db_room.day_number,
+            GameLog.phase == "night"
+        ).all()
+        
+        # 占い師のアクション完了チェック
+        seer_completed = True
+        if alive_seers:
+            seer_actions = [log for log in night_logs if log.event_type == "investigate"]
+            seer_completed = len(seer_actions) >= len(alive_seers)
+        
+        # ボディガードのアクション完了チェック
+        bodyguard_completed = True
+        if alive_bodyguards:
+            bodyguard_actions = [log for log in night_logs if log.event_type == "protect"]
+            bodyguard_completed = len(bodyguard_actions) >= len(alive_bodyguards)
+        
+        logger.info(f"Night actions check for room {room_id}: seers={len(alive_seers)}, seer_completed={seer_completed}, bodyguards={len(alive_bodyguards)}, bodyguard_completed={bodyguard_completed}")
+        
+        # すべてのアクションが完了している場合、朝フェーズに移行
+        if seer_completed and bodyguard_completed:
+            logger.info(f"All night actions completed for room {room_id}, transitioning to day")
+            # 夜のアクションを処理して朝フェーズに移行
+            results = process_night_actions(db, room_id)
+            return True
+        
+        return False
+        
+    except Exception as e:
+        logger.error(f"Error checking night actions completion: {e}")
+        return False
+
 def process_night_actions(db: Session, room_id: uuid.UUID) -> Dict[str, Any]:
     """夜のアクションを自動処理"""
     db_room = get_room(db, room_id)
@@ -2023,25 +2077,22 @@ async def get_ai_speech_context(room_id: uuid.UUID, ai_player_id: uuid.UUID, day
             logger.info(f"First speech of Day 1 detected for AI {ai_player_id} - returning empty context")
             return []
         
-        # 2日目以降の初回発言では前日の要約情報を含める
-        if ai_speech_count == 0 and day_number > 1:
-            logger.info(f"First speech of Day {day_number} detected for AI {ai_player_id} - including previous day context")
-            # 前日の重要な情報のみを簡潔に取得
-            previous_day_logs = db.query(GameLog).filter(
-                GameLog.room_id == room_id,
-                GameLog.day_number == day_number - 1,
-                GameLog.event_type.in_(["vote_result", "night_result"])
-            ).order_by(GameLog.created_at.desc()).limit(3).all()
+        # 🔧 修正: 2日目以降の初回発言でも現在の日の情報のみを提供
+        # 存在しない前日情報を参照させないため、現在の状況に集中させる
+        if ai_speech_count == 0:
+            logger.info(f"First speech of Day {day_number} detected for AI {ai_player_id} - providing current day context only")
             
-            previous_context = []
-            for log in previous_day_logs:
-                if log.content:
-                    previous_context.append({
-                        'speaker': 'システム',
-                        'content': f"前日の結果: {log.content}",
-                        'timestamp': log.created_at
-                    })
-            return previous_context
+            # 現在の日の状況のみを提供（混乱を避けるため）
+            current_day_info = []
+            if day_number > 1:
+                # 2日目以降は一般的な朝の挨拶コンテキストのみ
+                current_day_info.append({
+                    'speaker': 'システム',
+                    'content': f"{day_number}日目の議論が始まりました。",
+                    'timestamp': datetime.now(timezone.utc)
+                })
+            
+            return current_day_info
         
         # 既に発言済みの場合は既存の発言履歴を取得
         recent_logs = db.query(GameLog).filter(
@@ -2900,6 +2951,16 @@ async def seer_investigate(
                   content=f"{investigator.character_name}が占いを実行しました")
     
     db.commit()
+    
+    # 🔧 占い後の夜フェーズ自動進行チェック
+    try:
+        if await check_night_actions_completion(db, room_id):
+            logger.info(f"All night actions completed, auto-progressing from night phase for room {room_id}")
+            # 2秒の遅延を追加してフロントエンドの安定性を向上
+            await asyncio.sleep(2)
+            await sio.emit('complete_game_state', get_room_dict(db, room_id), room=str(room_id))
+    except Exception as e:
+        logger.error(f"Error in night actions completion check: {e}")
     
     # 占い師にのみ結果を返す
     return {

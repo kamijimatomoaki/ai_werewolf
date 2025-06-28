@@ -349,9 +349,11 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
   const handleNewSpeech = useCallback((data: { room_id: string; speaker_id: string; statement: string }) => {
     if (data.room_id === roomId) {
       console.log('🗣️ New speech WebSocket event received:', data);
-      console.log('🔄 Triggering debounced fetchRoomData...');
-      // デバウンス付きで重複実行を防止
-      fetchRoomData();
+      console.log('🔄 Triggering delayed fetchRoomData for stability...');
+      // 🔧 発言後の安定性向上のため3秒ディレイを追加
+      setTimeout(() => {
+        fetchRoomData();
+      }, 3000);
     } else {
       console.log('🚫 New speech event for different room:', data.room_id, 'vs', roomId);
     }
@@ -429,8 +431,10 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
         };
       });
       
-      // 確実にログも更新（AI発言後の自動更新を保証）
-      fetchRoomData(); // デバウンス付きで重複実行を防止
+      // 🔧 安定性向上のため2秒ディレイ後に更新
+      setTimeout(() => {
+        fetchRoomData(); // デバウンス付きで重複実行を防止
+      }, 2000);
     }
   }, [roomId, fetchRoomData]);
 
