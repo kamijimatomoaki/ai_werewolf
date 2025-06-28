@@ -56,21 +56,17 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
       setRoom(roomData);
       setLogs(logsData);
       
-      // プレイヤーID同期チェック（部屋変更時の認証情報修正）
+      // プレイヤーID同期チェック（危険なリロードは削除）
       if (currentPlayerId && playerName && roomData.players) {
         const actualPlayer = roomData.players.find(p => p.character_name === playerName && p.is_human);
         if (actualPlayer && actualPlayer.player_id !== currentPlayerId) {
-          console.warn(`🔄 Player ID mismatch detected:`, {
+          console.warn(`🔄 Player ID mismatch detected - logging for analysis:`, {
             storedPlayerId: currentPlayerId,
             actualPlayerId: actualPlayer.player_id,
             playerName: playerName,
-            action: 'updating_player_id'
+            action: 'logged_only'
           });
-          localStorage.setItem('player_id', actualPlayer.player_id);
-          console.log(`✅ Updated stored player_id to: ${actualPlayer.player_id}`);
-          // ページをリロードして新しいplayer_idを反映
-          window.location.reload();
-          return;
+          // 危険なリロードは削除、ログのみ出力
         }
       }
       
@@ -91,6 +87,16 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
     if (autoProgressInProgress) {
       console.log('Auto progress already in progress, skipping');
       return;
+    }
+    
+    // 強制状態同期（デバッグ用）
+    if (roomData?.status === 'day_discussion') {
+      console.log('🔍 Room state debug:', {
+        currentTurnIndex: roomData.current_turn_index,
+        turnOrder: roomData.turn_order,
+        currentPlayerInTurn: roomData.turn_order?.[roomData.current_turn_index],
+        myPlayerId: currentPlayerId
+      });
     }
     
     // 基本的な検証
@@ -337,7 +343,7 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
 
   const handleRoomUpdated = useCallback((data: { room_id: string; room_data: RoomInfo }) => {
     if (data.room_id === roomId) {
-      console.log('Room updated via WebSocket:', data);
+      console.log('🔄 Room updated via WebSocket:', data);
       // 安全な差分データ更新
       if (data.room_data) {
         setRoom(data.room_data);
@@ -345,9 +351,17 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
         if (data.room_data.logs && Array.isArray(data.room_data.logs)) {
           setLogs(data.room_data.logs);
         }
+        
+        // ターン状態の強制デバッグ
+        console.log('🎯 Turn state after WebSocket update:', {
+          currentTurnIndex: data.room_data.current_turn_index,
+          turnOrder: data.room_data.turn_order,
+          currentPlayerInTurn: data.room_data.turn_order?.[data.room_data.current_turn_index],
+          myPlayerId: currentPlayerId
+        });
       }
     }
-  }, [roomId]);
+  }, [roomId, currentPlayerId]);
 
   const handleVotePhaseStarted = useCallback((data: { room_id: string; message: string }) => {
     if (data.room_id === roomId) {
