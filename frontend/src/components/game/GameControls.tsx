@@ -28,8 +28,20 @@ export default function GameControls({
   const [statement, setStatement] = useState('');
   const [isSpeaking, setIsSpeaking] = useState(false);
 
-  // 現在のプレイヤーが人間かどうかを判定
-  const myPlayerInfo = allPlayers.find(p => p.player_id === currentPlayerId);
+  // 現在のプレイヤーが人間かどうかを判定（複数の方法で検索）
+  let myPlayerInfo = allPlayers.find(p => p.player_id === currentPlayerId);
+  
+  // Player ID一致で見つからない場合、プレイヤー名で検索（フォールバック）
+  if (!myPlayerInfo && currentPlayerId) {
+    // 現在のプレイヤー情報から名前を取得（currentPlayerから推測）
+    const humanPlayers = allPlayers.filter(p => p.is_human);
+    if (humanPlayers.length === 1) {
+      // 人間プレイヤーが1人だけの場合、それが自分
+      myPlayerInfo = humanPlayers[0];
+      console.log('🔧 Using fallback: found single human player', myPlayerInfo);
+    }
+  }
+  
   const isHumanPlayer = myPlayerInfo?.is_human ?? false;
 
   // デバッグログ（開発環境でのみ）
@@ -42,7 +54,8 @@ export default function GameControls({
       myPlayerInfo: myPlayerInfo,
       isHumanPlayer,
       allPlayersCount: allPlayers.length,
-      showInputCondition: isMyTurn && currentPlayerId && isHumanPlayer
+      showInputCondition: isMyTurn && currentPlayerId && isHumanPlayer,
+      humanPlayersCount: allPlayers.filter(p => p.is_human).length
     });
   }
 

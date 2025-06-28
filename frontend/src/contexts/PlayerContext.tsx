@@ -11,6 +11,7 @@ interface PlayerContextType {
   logout: () => void;
   clearRoomSession: () => void;
   verifySession: () => Promise<boolean>;
+  updatePlayerId: (newPlayerId: string) => void;
 }
 
 const PlayerContext = createContext<PlayerContextType | undefined>(undefined);
@@ -118,6 +119,16 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({ children }) => {
     }
   };
 
+  // Player ID更新機能（ゲーム進行中のID不一致修正用）
+  const updatePlayerId = (newPlayerId: string) => {
+    console.log('🔧 Updating player ID:', {
+      oldPlayerId: playerId,
+      newPlayerId: newPlayerId
+    });
+    setPlayerId(newPlayerId);
+    localStorage.setItem('player_id', newPlayerId);
+  };
+
   const isAuthenticated = !!(playerId && sessionToken);
 
   const value: PlayerContextType = {
@@ -130,6 +141,7 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({ children }) => {
     logout,
     clearRoomSession,
     verifySession,
+    updatePlayerId,
   };
 
   return (
