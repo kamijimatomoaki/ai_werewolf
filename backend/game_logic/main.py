@@ -337,6 +337,16 @@ class DistributedLock(Base):
 try:
     Base.metadata.create_all(bind=engine)
     logger.info("Database tables created/verified at startup")
+    
+    # 手動で vote_round カラムを追加（既存データベース用の一時的な修正）
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE rooms ADD COLUMN IF NOT EXISTS vote_round INTEGER DEFAULT 1"))
+            conn.commit()
+            logger.info("vote_round column added/verified successfully")
+    except Exception as alter_e:
+        logger.warning(f"Failed to add vote_round column (may already exist): {alter_e}")
+        
 except Exception as e:
     logger.warning(f"Failed to create database tables at startup: {e}")
 
