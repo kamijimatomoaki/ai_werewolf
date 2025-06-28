@@ -22,7 +22,7 @@ interface GameRoomProps {
 }
 
 export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
-  const { playerId: currentPlayerId, roomId: storedRoomId, playerName, logout, updatePlayerId } = usePlayer();
+  const { playerId: currentPlayerId, roomId: storedRoomId, playerName, logout, updatePlayerId, clearRoomSession } = usePlayer();
   const { isConnected, connectionStatus } = useWebSocket();
   const [room, setRoom] = useState<RoomInfo | null>(null);
   const [logs, setLogs] = useState<GameLogInfo[]>([]);
@@ -522,7 +522,11 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
   if (!room) {
     return (
       <div className="max-w-4xl mx-auto p-6 bg-gray-900 text-white min-h-screen">
-        <button onClick={onBackToLobby} className="mb-4 px-4 py-2 border border-gray-300 hover:bg-gray-50 text-white rounded transition-colors">
+        <button onClick={() => {
+          console.log('🔄 Returning to lobby - clearing room session');
+          clearRoomSession(); // セッション情報をクリア
+          onBackToLobby();
+        }} className="mb-4 px-4 py-2 border border-gray-300 hover:bg-gray-50 text-white rounded transition-colors">
           ← ロビーに戻る
         </button>
         {loading ? (
@@ -591,7 +595,11 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
     <div className="max-w-6xl mx-auto p-6 bg-gray-900 text-white min-h-screen">
       {/* ヘッダー */}
       <div className="flex justify-between items-center mb-6">
-        <button onClick={onBackToLobby} className="px-4 py-2 border border-gray-300 hover:bg-gray-50 text-white rounded transition-colors">
+        <button onClick={() => {
+          console.log('🔄 Returning to lobby - clearing room session');
+          clearRoomSession(); // セッション情報をクリア
+          onBackToLobby();
+        }} className="px-4 py-2 border border-gray-300 hover:bg-gray-50 text-white rounded transition-colors">
           ← ロビーに戻る
         </button>
         <div className="text-center">

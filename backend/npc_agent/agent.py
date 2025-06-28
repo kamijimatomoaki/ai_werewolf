@@ -600,8 +600,8 @@ class RootAgent:
             tool_prompt = self._build_tool_enhanced_prompt(player_info, game_context, context, recent_messages)
             
             print("[DEBUG] Attempting tool-enhanced speech generation (Function Calling)")
-            # AIモデルにツール使用を含めて発言生成を依頼（タイムアウトを25秒に短縮）
-            response = generate_content_with_timeout(self.model, tool_prompt, timeout_seconds=25)
+            # AIモデルにツール使用を含めて発言生成を依頼（タイムアウトを45秒に延長）
+            response = generate_content_with_timeout(self.model, tool_prompt, timeout_seconds=45)
             
             # レスポンスを処理（ツール呼び出しを含む）
             final_speech = self._process_response_with_tools(response, player_info, game_context)
@@ -612,7 +612,7 @@ class RootAgent:
         except (TimeoutError, Exception) as e:
             # タイムアウトやその他のエラー時のフォールバック
             if isinstance(e, TimeoutError):
-                print(f"[WARNING] Tool-enhanced speech generation timed out after 25 seconds: {e}")
+                print(f"[WARNING] Tool-enhanced speech generation timed out after 45 seconds: {e}")
             else:
                 print(f"[ERROR] Tool-enhanced speech generation failed: {e}")
             
@@ -1005,7 +1005,7 @@ class RootAgent:
                 try:
                     with ThreadPoolExecutor() as executor:
                         future = executor.submit(get_summary_with_timeout)
-                        summary = future.result(timeout=20)  # 20秒でタイムアウト
+                        summary = future.result(timeout=30)  # 30秒でタイムアウト
                 except TimeoutError:
                     print(f"[WARNING] Summary fetch timed out for room {room_id}")
                     summary = None

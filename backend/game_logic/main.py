@@ -1201,20 +1201,23 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
             current_name = current_player.character_name if current_player else "不明"
             raise HTTPException(status_code=403, detail=f"It's not your turn. Current turn: {current_name}")
 
-        # 🚫 AI連続発言防止チェック
+        # 🚫 AI連続発言防止チェック（現在のターンでの重複発言チェック）
         player = get_player(db, player_id)
         if player and not player.is_human:
-            # 同じAIプレイヤーが同じ日に既に発言していないかチェック
-            existing_speech_count = db.query(GameLog).filter(
+            # 同じAIプレイヤーが短時間内に連続発言していないかチェック
+            recent_speech = db.query(GameLog).filter(
                 GameLog.room_id == room_id,
                 GameLog.day_number == db_room.day_number,
                 GameLog.event_type == "speech",
                 GameLog.actor_player_id == player_id
-            ).count()
+            ).order_by(GameLog.created_at.desc()).first()
             
-            if existing_speech_count > 0:
-                logger.warning(f"🚫 AI連続発言防止: {player.character_name} は今日既に{existing_speech_count}回発言済み")
-                raise HTTPException(status_code=400, detail=f"AI player {player.character_name} has already spoken today")
+            if recent_speech:
+                # 最後の発言から5秒以内の場合は連続発言防止
+                time_since_last = datetime.now(timezone.utc) - recent_speech.created_at
+                if time_since_last.total_seconds() < 5:
+                    logger.warning(f"🚫 AI連続発言防止: {player.character_name} は最近発言したばかり")
+                    raise HTTPException(status_code=400, detail=f"AI player {player.character_name} spoke too recently")
 
         # 発言を記録
         create_game_log(db, room_id, "day_discussion", "speech", actor_player_id=player_id, content=statement)
@@ -1239,23 +1242,35 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
         # ターン進行
         db_room.current_turn_index = next_index
         
-        # 発言回数チェック
+        # ラウンド制進行チェック
         alive_count = sum(1 for pid in turn_order 
                          if get_player(db, uuid.UUID(pid)) and get_player(db, uuid.UUID(pid)).is_alive)
         
-        total_speeches = db.query(GameLog).filter(
+        # 現在のラウンドでの発言回数をチェック
+        current_round_speeches = db.query(GameLog).filter(
             GameLog.room_id == room_id,
             GameLog.phase == "day_discussion",
             GameLog.event_type == "speech",
             GameLog.day_number == db_room.day_number
         ).count()
         
-        # 生存プレイヤー数の3倍の発言で投票フェーズへ
-        if total_speeches >= alive_count * 3:
-            db_room.status = "day_vote"
-            db_room.current_turn_index = 0
-            create_game_log(db, room_id, "day_discussion", "phase_transition", 
-                          content="議論終了。投票フェーズに移行します。")
+        # ラウンド完了チェック：全ての生存プレイヤーが発言したかどうか
+        if next_index == 0:  # ターンが一周した場合
+            logger.info(f"Round {db_room.current_round} completed. Total speeches: {current_round_speeches}")
+            
+            # 3ラウンド完了で投票フェーズへ移行
+            if db_room.current_round >= 3:
+                db_room.status = "day_vote"
+                db_room.current_turn_index = 0
+                create_game_log(db, room_id, "day_discussion", "phase_transition", 
+                              content=f"議論終了（{db_room.current_round}ラウンド完了）。投票フェーズに移行します。")
+                logger.info(f"Discussion phase completed after {db_room.current_round} rounds. Moving to voting phase.")
+            else:
+                # 次のラウンドに進む
+                db_room.current_round += 1
+                logger.info(f"Starting round {db_room.current_round}")
+                create_game_log(db, room_id, "day_discussion", "round_start", 
+                              content=f"ラウンド{db_room.current_round}が開始されました。")
         
         # 最終活動時間を更新（自動クローズ用）
         db_room.last_activity = datetime.now(timezone.utc)
