@@ -22,7 +22,7 @@ interface GameRoomProps {
 }
 
 export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
-  const { playerId: currentPlayerId, roomId: storedRoomId, logout } = usePlayer();
+  const { playerId: currentPlayerId, roomId: storedRoomId, playerName, logout } = usePlayer();
   const { isConnected, connectionStatus } = useWebSocket();
   const [room, setRoom] = useState<RoomInfo | null>(null);
   const [logs, setLogs] = useState<GameLogInfo[]>([]);
@@ -55,6 +55,24 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
       
       setRoom(roomData);
       setLogs(logsData);
+      
+      // プレイヤーID同期チェック（部屋変更時の認証情報修正）
+      if (currentPlayerId && playerName && roomData.players) {
+        const actualPlayer = roomData.players.find(p => p.character_name === playerName && p.is_human);
+        if (actualPlayer && actualPlayer.player_id !== currentPlayerId) {
+          console.warn(`🔄 Player ID mismatch detected:`, {
+            storedPlayerId: currentPlayerId,
+            actualPlayerId: actualPlayer.player_id,
+            playerName: playerName,
+            action: 'updating_player_id'
+          });
+          localStorage.setItem('player_id', actualPlayer.player_id);
+          console.log(`✅ Updated stored player_id to: ${actualPlayer.player_id}`);
+          // ページをリロードして新しいplayer_idを反映
+          window.location.reload();
+          return;
+        }
+      }
       
       // AI自動進行のチェック（無限ループ防止）
       if (!skipAutoProgress) {
