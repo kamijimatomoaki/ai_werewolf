@@ -45,7 +45,7 @@ export default function GameControls({
   const isHumanPlayer = myPlayerInfo?.is_human ?? false;
 
   // デバッグログ（開発環境でのみ）
-  if (process.env.NODE_ENV === 'development' || true) { // 一時的に本番でも有効
+  if (process.env.NODE_ENV === 'development') {
     console.log('🎮 GameControls Debug:', {
       gameStatus,
       isMyTurn,
