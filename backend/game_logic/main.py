@@ -1193,7 +1193,45 @@ def start_game_logic(db: Session, room_id: uuid.UUID) -> Room:
     if not db_room: raise HTTPException(status_code=404, detail="Room not found")
     if db_room.status != 'waiting': raise HTTPException(status_code=400, detail="Game has already started or finished.")
     
+    # 🔧 完全なゲームデータリセット処理（ペルソナ保持問題対策）
+    logger.info(f"🧹 Starting complete game data reset for room {room_id}")
+    
+    # 1. 全プレイヤーのゲーム関連データをリセット
     players = db_room.players
+    for player in players:
+        logger.info(f"🧹 Resetting player data for {player.character_name}")
+        player.role = None  # 役職をクリア
+        player.is_alive = True  # 生存状態をリセット
+        player.is_claimed = False  # カミングアウト状態をリセット
+        # 注意: character_persona は保持（プレイヤーが設定したペルソナを維持）
+        logger.info(f"🧹 Player {player.character_name} data reset complete")
+    
+    # 2. 既存のGameLog（発言履歴）を完全削除
+    try:
+        deleted_logs = db.query(GameLog).filter(GameLog.room_id == room_id).delete()
+        logger.info(f"🧹 Deleted {deleted_logs} existing GameLog entries for room {room_id}")
+    except Exception as log_error:
+        logger.error(f"🧹 Error deleting GameLog entries: {log_error}")
+        # 削除に失敗してもゲーム開始は継続
+    
+    # 3. 部屋状態の完全初期化
+    db_room.day_number = 1
+    db_room.current_round = 1
+    db_room.current_turn_index = 0
+    db_room.turn_order = []  # 後で設定される
+    db_room.last_activity = datetime.now(timezone.utc)
+    
+    # 4. リセット処理をデータベースにコミット
+    try:
+        db.commit()
+        logger.info(f"🧹 Game data reset committed to database for room {room_id}")
+    except Exception as commit_error:
+        logger.error(f"🧹 Error committing game data reset: {commit_error}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to reset game data")
+    
+    logger.info(f"🧹 Complete game data reset finished for room {room_id}")
+    
     player_count = len(players)
     if player_count != db_room.total_players:
         raise HTTPException(status_code=400, detail=f"Player count mismatch. Expected {db_room.total_players}, but have {player_count}.")
@@ -2225,26 +2263,54 @@ async def get_ai_speech_context(room_id: uuid.UUID, ai_player_id: uuid.UUID, day
         
         # 既に発言済みの場合は既存の発言履歴を取得
         logger.info(f"🔍 Fetching speech logs for room {room_id}, day {day_number}")
-        recent_logs = db.query(GameLog).filter(
-            GameLog.room_id == room_id,
-            GameLog.day_number == day_number,
-            GameLog.event_type == "speech"
-        ).order_by(GameLog.created_at.asc()).all()
+        try:
+            recent_logs = db.query(GameLog).filter(
+                GameLog.room_id == room_id,
+                GameLog.day_number == day_number,
+                GameLog.event_type == "speech"
+            ).order_by(GameLog.created_at.asc()).all()
+        except Exception as db_error:
+            logger.error(f"❌ Database error in get_ai_speech_context: {db_error}")
+            # データベースエラーの場合は最小限のコンテキストを返す
+            return [{
+                'speaker': 'システム',
+                'content': f"{day_number}日目の議論が続いています。",
+                'timestamp': datetime.now(timezone.utc)
+            }]
         
         logger.info(f"🔍 Found {len(recent_logs)} speech logs")
         
         recent_messages = []
         for i, log in enumerate(recent_logs):
             logger.info(f"🔍 Processing log {i+1}: actor_id={log.actor_player_id}, content_preview={log.content[:50] if log.content else 'None'}...")
-            if log.actor:
-                recent_messages.append({
-                    'speaker': log.actor.character_name,
-                    'content': log.content or '',
-                    'timestamp': log.created_at
-                })
-                logger.info(f"🔍 Added message from {log.actor.character_name}")
-            else:
-                logger.warning(f"🔍 Log {i+1} has no actor: log_id={log.log_id}")
+            try:
+                if log.actor:
+                    recent_messages.append({
+                        'speaker': log.actor.character_name,
+                        'content': log.content or '',
+                        'timestamp': log.created_at
+                    })
+                    logger.info(f"🔍 Added message from {log.actor.character_name}")
+                elif log.actor_player_id:
+                    # actorがNullだが、actor_player_idが存在する場合は直接データベースから取得を試みる
+                    try:
+                        player = get_player(db, log.actor_player_id)
+                        if player:
+                            recent_messages.append({
+                                'speaker': player.character_name,
+                                'content': log.content or '',
+                                'timestamp': log.created_at
+                            })
+                            logger.info(f"🔍 Added message from {player.character_name} (recovered from actor_player_id)")
+                        else:
+                            logger.warning(f"🔍 Could not find player for actor_player_id: {log.actor_player_id}")
+                    except Exception as player_error:
+                        logger.error(f"🔍 Error recovering player from actor_player_id {log.actor_player_id}: {player_error}")
+                else:
+                    logger.warning(f"🔍 Log {i+1} has no actor or actor_player_id: log_id={log.log_id}")
+            except Exception as log_error:
+                logger.error(f"🔍 Error processing log {i+1}: {log_error}")
+                continue
         
         logger.info(f"🔍 Speech context prepared: {len(recent_messages)} messages for AI {ai_player_id}")
         return recent_messages
@@ -2426,6 +2492,18 @@ async def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid
         # AIエージェントシステムを使用した発言生成
         logger.info(f"🚀 AI agent system selection logic: root_agent={root_agent is not None}, PROJECT_ID_OK={bool(GOOGLE_PROJECT_ID)}, LOCATION_OK={bool(GOOGLE_LOCATION)}")
         
+        # 🔧 root_agentの再初期化処理（発言失敗対策）
+        global root_agent
+        if not root_agent and GOOGLE_PROJECT_ID and GOOGLE_LOCATION:
+            logger.warning("⚠️ root_agent is None, attempting re-initialization...")
+            try:
+                from npc_agent.agent import RootAgent
+                root_agent = RootAgent()
+                logger.info("✅ root_agent successfully re-initialized")
+            except Exception as reinit_error:
+                logger.error(f"❌ Failed to re-initialize root_agent: {reinit_error}")
+                root_agent = None
+        
         # 高度なAIエージェントシステムが利用可能な場合
         if root_agent and GOOGLE_PROJECT_ID and GOOGLE_LOCATION:
             logger.info("✅ Using advanced AI agent system with Function Calling")
@@ -2506,7 +2584,7 @@ async def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid
                     asyncio.create_task(asyncio.to_thread(
                         root_agent.generate_speech, player_info, game_context, recent_messages
                     )), 
-                    timeout=25.0  # 25秒に調整（データベースアクセス時間を考慮）
+                    timeout=30.0  # 30秒に延長（Cloud Run環境での接続不安定性を考慮）
                 )
                 logger.info(f"✅ AI agent system response: {speech}")
                 logger.info(f"📏 Speech length: {len(speech) if speech else 0} characters")
