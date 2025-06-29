@@ -230,7 +230,7 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
     }
     
     // 投票フェーズでのAI自動投票 (Backend should handle this automatically)
-    if (roomData.status === 'day_vote') {
+    if (roomData.status === 'day_vote' && roomData.players) {
       const aiPlayers = roomData.players.filter((p: any) => p.is_alive && !p.is_human);
       if (aiPlayers.length > 0) {
         console.log(`AI auto vote check for ${aiPlayers.length} AI players - Backend should handle automatically`);
@@ -533,7 +533,7 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
       return null;
     }
     const currentPlayerId = room.turn_order[room.current_turn_index];
-    const speaker = room.players.find(p => p.player_id === currentPlayerId) || null;
+    const speaker = room.players?.find(p => p.player_id === currentPlayerId) || null;
     
     if (speaker) {
       console.log('Current speaker:', speaker.character_name, speaker.player_id);
@@ -602,7 +602,7 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
   const isMyTurn = getIsMyTurn();
   
   // 現在のプレイヤー情報を取得
-  const currentPlayer = room?.players.find(p => p.player_id === currentPlayerId);
+  const currentPlayer = room?.players?.find(p => p.player_id === currentPlayerId);
   
   // 占い師UIを表示するかどうか
   const shouldShowSeerPanel = room?.status === 'night' && 
@@ -695,7 +695,7 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
         {/* プレイヤー一覧 - 独立スクロール */}
         <div className="lg:col-span-1 h-full overflow-y-auto scrollbar-thin scrollbar-thumb-gray-600 scrollbar-track-gray-800">
           <PlayerList
-            players={room.players}
+            players={room.players || []}
             currentPlayerId={currentPlayerId}
             gameStatus={room.status}
             totalPlayers={room.total_players}
@@ -729,13 +729,13 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
             onSpeak={handleSpeak}
             isLoading={loading}
             currentPlayerId={currentPlayerId}
-            allPlayers={room.players}
+            allPlayers={room.players || []}
           />
 
           {/* 投票フェーズUI */}
           {room.status === 'day_vote' && currentPlayerId && (
             <VotingPanel
-              players={room.players}
+              players={room.players || []}
               currentPlayerId={currentPlayerId}
               voteResult={voteResult}
               onVote={handleVote}
