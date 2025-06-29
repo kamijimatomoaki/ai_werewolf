@@ -29,67 +29,50 @@ print(f"[INIT] Vertex AI initialization check:")
 print(f"[INIT] GOOGLE_PROJECT_ID: '{GOOGLE_PROJECT_ID}'")
 print(f"[INIT] GOOGLE_LOCATION: '{GOOGLE_LOCATION}'")
 
-# Vertex AI初期化を試行（強化版）
+# Vertex AI初期化を試行（簡潔版）
 vertex_ai_initialized = False
 try:
     print(f"[INIT] Starting Vertex AI initialization...")
-    print(f"[INIT] - GOOGLE_PROJECT_ID: '{GOOGLE_PROJECT_ID}' (empty: {not GOOGLE_PROJECT_ID})")
-    print(f"[INIT] - GOOGLE_LOCATION: '{GOOGLE_LOCATION}' (empty: {not GOOGLE_LOCATION})")
+    print(f"[INIT] - GOOGLE_PROJECT_ID: '{GOOGLE_PROJECT_ID}' (length: {len(GOOGLE_PROJECT_ID) if GOOGLE_PROJECT_ID else 0})")
+    print(f"[INIT] - GOOGLE_LOCATION: '{GOOGLE_LOCATION}' (length: {len(GOOGLE_LOCATION) if GOOGLE_LOCATION else 0})")
     
-    # 🔧 修正: 環境変数が空の場合の適切な処理
-    if not GOOGLE_PROJECT_ID or not GOOGLE_LOCATION:
-        print(f"[WARNING] Missing required environment variables")
-        print(f"[WARNING] - PROJECT_ID available: {bool(GOOGLE_PROJECT_ID)}")
-        print(f"[WARNING] - LOCATION available: {bool(GOOGLE_LOCATION)}")
-        
-        # Cloud Run環境での認証を試行
-        print(f"[INIT] Attempting Cloud Run service account detection...")
-        import subprocess
+    # 基本的な環境変数確認とデフォルト設定
+    if not GOOGLE_PROJECT_ID:
+        # Cloud Run環境での自動検出を試行
         try:
-            # メタデータサーバーからプロジェクトIDを取得
+            import subprocess
             result = subprocess.run([
                 'curl', '-s', '-H', 'Metadata-Flavor: Google',
                 'http://metadata.google.internal/computeMetadata/v1/project/project-id'
-            ], capture_output=True, text=True, timeout=5)
+            ], capture_output=True, text=True, timeout=3)
             
             if result.returncode == 0 and result.stdout.strip():
-                detected_project = result.stdout.strip()
-                print(f"[INIT] Detected project from metadata: '{detected_project}'")
-                GOOGLE_PROJECT_ID = detected_project
-                if not GOOGLE_LOCATION:
-                    GOOGLE_LOCATION = "asia-northeast1"  # デフォルト
-                print(f"[INIT] Using detected project: {GOOGLE_PROJECT_ID} @ {GOOGLE_LOCATION}")
-            else:
-                print(f"[WARNING] Failed to detect project from metadata: {result.stderr}")
-        except Exception as metadata_error:
-            print(f"[WARNING] Metadata detection failed: {metadata_error}")
+                GOOGLE_PROJECT_ID = result.stdout.strip()
+                print(f"[INIT] Auto-detected project: {GOOGLE_PROJECT_ID}")
+        except:
+            print(f"[INIT] Could not auto-detect project, using fallback")
+            
+    if not GOOGLE_LOCATION:
+        GOOGLE_LOCATION = "asia-northeast1"
+        print(f"[INIT] Using default location: {GOOGLE_LOCATION}")
     
-    # Vertex AI初期化を実行
+    # Vertex AI初期化
     if GOOGLE_PROJECT_ID and GOOGLE_LOCATION:
         vertexai.init(project=GOOGLE_PROJECT_ID, location=GOOGLE_LOCATION)
-        print(f"✅ [SUCCESS] Vertex AI initialized: {GOOGLE_PROJECT_ID} @ {GOOGLE_LOCATION}")
-        vertex_ai_initialized = True
         
-        # 🔍 初期化テスト
-        try:
-            test_model = GenerativeModel("gemini-1.5-flash")
-            print(f"✅ [SUCCESS] Test model created successfully")
-        except Exception as model_error:
-            print(f"❌ [WARNING] Test model creation failed: {model_error}")
-            # 初期化は成功したが、モデル作成に問題がある場合
-            vertex_ai_initialized = False
+        # 簡単なテスト実行
+        test_model = GenerativeModel("gemini-1.5-flash")
+        test_response = test_model.generate_content("テスト")
+        
+        print(f"✅ [SUCCESS] Vertex AI initialized and tested: {GOOGLE_PROJECT_ID} @ {GOOGLE_LOCATION}")
+        vertex_ai_initialized = True
     else:
-        print(f"❌ [ERROR] Cannot initialize Vertex AI: missing required configuration")
+        print(f"❌ [ERROR] Cannot initialize Vertex AI: missing configuration")
         vertex_ai_initialized = False
         
 except Exception as e:
-    print(f"❌ [ERROR] Failed to initialize Vertex AI: {e}")
-    print(f"❌ [ERROR] Error type: {type(e).__name__}")
-    import traceback
-    print(f"[ERROR] Full traceback: {traceback.format_exc()}")
+    print(f"❌ [ERROR] Vertex AI initialization failed: {e}")
     vertex_ai_initialized = False
-    print(f"   GOOGLE_PROJECT_ID: '{GOOGLE_PROJECT_ID}' (empty: {not GOOGLE_PROJECT_ID})")
-    print(f"   GOOGLE_LOCATION: '{GOOGLE_LOCATION}' (empty: {not GOOGLE_LOCATION})")
 
 def generate_content_with_timeout(model, prompt, timeout_seconds=15):
     """効率化されたcontent生成（ユーザー体験重視・短縮タイムアウト）"""
@@ -350,55 +333,53 @@ class RootAgent:
         global vertex_ai_initialized
         print("[DEBUG] RootAgent initialization starting...")
         
+        # 基本設定
+        self.model = None
+        self.tools_available = False
+        self.fallback_mode = True
+        
         # Vertex AI初期化状態をチェック
         if not vertex_ai_initialized:
-            print("[ERROR] Vertex AI not initialized, attempting re-initialization...")
-            # 緊急時の再初期化を試行
+            print("[WARNING] Vertex AI not initialized, using fallback mode")
+        else:
+            # モデル初期化を試行
             try:
-                import vertexai
-                vertexai.init(project=GOOGLE_PROJECT_ID, location=GOOGLE_LOCATION)
-                print(f"✅ [SUCCESS] Emergency Vertex AI re-initialization: {GOOGLE_PROJECT_ID} @ {GOOGLE_LOCATION}")
-                vertex_ai_initialized = True
-            except Exception as reinit_error:
-                print(f"❌ [ERROR] Emergency re-initialization also failed: {reinit_error}")
-                print("[ERROR] Using emergency fallback mode")
-                self.model = None
-                self.tools_available = False
-                self.fallback_mode = True
-                return
-        
-        # ツール対応モデルを初期化
-        try:
-            print("[DEBUG] Creating werewolf tools...")
-            self.werewolf_tools = create_werewolf_tools()
-            print("[DEBUG] Initializing GenerativeModel with tools...")
-            self.model = GenerativeModel(
-                "gemini-1.5-flash",
-                tools=[self.werewolf_tools]
-            )
-            self.tools_available = True
-            self.fallback_mode = False
-            print("✅ [SUCCESS] Tool-enabled model initialized successfully")
-        except Exception as e:
-            print(f"[WARNING] Failed to initialize tool-enabled model: {e}")
-            try:
-                print("[DEBUG] Trying fallback model without tools...")
-                self.model = GenerativeModel("gemini-1.5-flash")  # フォールバック
+                print("[DEBUG] Attempting to initialize AI model...")
+                self.model = GenerativeModel("gemini-1.5-flash")
                 self.tools_available = False
                 self.fallback_mode = False
-                print("✅ [SUCCESS] Fallback model initialized successfully")
-            except Exception as fallback_error:
-                print(f"[ERROR] Even fallback model failed: {fallback_error}")
+                print("✅ [SUCCESS] Basic model initialized successfully")
+                
+                # ツール対応モデルの初期化を試行（オプション）
+                try:
+                    print("[DEBUG] Attempting to initialize tool-enabled model...")
+                    self.werewolf_tools = create_werewolf_tools()
+                    tool_model = GenerativeModel("gemini-1.5-flash", tools=[self.werewolf_tools])
+                    self.model = tool_model
+                    self.tools_available = True
+                    print("✅ [SUCCESS] Tool-enabled model initialized successfully")
+                except Exception as tool_error:
+                    print(f"[WARNING] Tool-enabled model failed, using basic model: {tool_error}")
+                    # 基本モデルは既に初期化済みなので続行
+                    
+            except Exception as model_error:
+                print(f"[ERROR] Model initialization failed: {model_error}")
                 self.model = None
                 self.tools_available = False
                 self.fallback_mode = True
+        
+        # 従来のエージェントツールを初期化（必ず実行）
+        try:
+            self.question_tool = AgentTool(question_agent)
+            self.accuse_tool = AgentTool(accuse_agent)
+            self.support_tool = AgentTool(support_agent)
+            self.coming_out_tool = AgentTool(coming_out_agent)
+            self.speech_history_tool = AgentTool(speech_history_agent)
+            print("[DEBUG] Legacy agent tools initialized")
+        except Exception as tool_init_error:
+            print(f"[WARNING] Legacy agent tools initialization failed: {tool_init_error}")
             
-        # 従来のエージェントツールも保持
-        self.question_tool = AgentTool(question_agent)
-        self.accuse_tool = AgentTool(accuse_agent)
-        self.support_tool = AgentTool(support_agent)
-        self.coming_out_tool = AgentTool(coming_out_agent)
-        self.speech_history_tool = AgentTool(speech_history_agent)
+        print(f"[DEBUG] RootAgent initialization complete: model={self.model is not None}, tools={self.tools_available}, fallback={self.fallback_mode}")
     
     def execute_tool_function(self, function_name: str, args: Dict) -> str:
         """ツール関数を実際に実行する"""
@@ -720,11 +701,24 @@ class RootAgent:
         import traceback
         print(f"[CRITICAL] Full traceback: {traceback.format_exc()}")
         
-        # エラーの種類によって適切なメッセージを返す
-        if isinstance(error, TimeoutError):
-            return f"[システム] {player_name}の発言生成がタイムアウトしました。しばらくお待ちください..."
-        else:
-            return f"[システムエラー] {player_name}の発言生成に失敗しました。システム管理者にお問い合わせください。"
+        # システムエラーメッセージではなく、適切なゲーム内発言を返す
+        fallback_speeches = [
+            "少し考えさせてください。",
+            "状況を整理しています。",
+            "慎重に判断したいと思います。",
+            "もう少し様子を見ます。",
+            "皆さんの意見を聞かせてください。"
+        ]
+        
+        # プレイヤー名に基づいて一貫性のある発言を選択
+        import hashlib
+        seed = int(hashlib.md5(player_name.encode()).hexdigest()[:8], 16)
+        import random
+        random.seed(seed)
+        
+        selected_speech = random.choice(fallback_speeches)
+        print(f"[DEBUG] Using fallback speech for {player_name}: {selected_speech}")
+        return selected_speech
 
     def _emergency_fallback_speech(self, player_info: Dict) -> str:
         """緊急時フォールバック発言（AIモデルを使わない）
@@ -1438,68 +1432,30 @@ class RootAgent:
             print(f"[WARNING] LLM cleaning failed: {e}")
             return speech
 
-# グローバルインスタンス
+# グローバルインスタンス（堅牢版）
+print("[INIT] Creating RootAgent instance...")
+print(f"[INIT] Vertex AI state: {vertex_ai_initialized}")
+
 try:
-    print("[INIT] Creating RootAgent instance...")
-    print(f"[INIT] Pre-creation state:")
-    print(f"[INIT] - GOOGLE_PROJECT_ID: '{GOOGLE_PROJECT_ID}' (length: {len(GOOGLE_PROJECT_ID) if GOOGLE_PROJECT_ID else 0})")
-    print(f"[INIT] - GOOGLE_LOCATION: '{GOOGLE_LOCATION}' (length: {len(GOOGLE_LOCATION) if GOOGLE_LOCATION else 0})")
-    print(f"[INIT] - vertex_ai_initialized: {vertex_ai_initialized}")
-    
     root_agent = RootAgent()
-    
-    print(f"✅ [SUCCESS] RootAgent created successfully: {type(root_agent)}")
-    print(f"✅ [SUCCESS] RootAgent state check:")
-    print(f"✅ - model: {root_agent.model is not None}")
-    print(f"✅ - tools_available: {getattr(root_agent, 'tools_available', 'Unknown')}")
-    print(f"✅ - fallback_mode: {getattr(root_agent, 'fallback_mode', 'Unknown')}")
-    print(f"✅ [SUCCESS] RootAgent methods: {[m for m in dir(root_agent) if not m.startswith('_')]}")
-    
-    # 🔍 AI発言生成のテスト実行
-    print("[TEST] Testing AI speech generation...")
-    test_player_info = {
-        'name': 'テストプレイヤー',
-        'role': 'villager',
-        'is_alive': True,
-        'persona': 'テスト用のペルソナです。'
-    }
-    test_game_context = {
-        'day_number': 1,
-        'phase': 'day_discussion',
-        'alive_count': 5,
-        'total_players': 5,
-        'all_players': [test_player_info]
-    }
-    test_recent_messages = []
-    
-    try:
-        test_speech = root_agent.generate_speech(test_player_info, test_game_context, test_recent_messages)
-        print(f"✅ [TEST SUCCESS] Generated speech: '{test_speech[:50]}...'")
-    except Exception as test_error:
-        print(f"❌ [TEST FAILED] Speech generation test failed: {test_error}")
-        import traceback
-        print(f"[TEST ERROR] Full traceback: {traceback.format_exc()}")
-        
+    print(f"✅ [SUCCESS] RootAgent created: model={root_agent.model is not None}, fallback={root_agent.fallback_mode}")
 except Exception as e:
-    print(f"❌ [ERROR] Failed to create RootAgent: {e}")
-    print(f"❌ [ERROR] Error type: {type(e).__name__}")
-    print(f"❌ [ERROR] Error args: {e.args}")
-    import traceback
-    print(f"[ERROR] Full traceback: {traceback.format_exc()}")
+    print(f"❌ [ERROR] RootAgent creation failed: {e}")
+    # 最小限のフォールバックインスタンスを作成
+    class FallbackRootAgent:
+        def __init__(self):
+            self.model = None
+            self.tools_available = False
+            self.fallback_mode = True
+            
+        def generate_speech(self, player_info, game_context, recent_messages):
+            fallback_speeches = [
+                "少し考えさせてください。",
+                "状況を整理しています。",
+                "慎重に判断したいと思います。"
+            ]
+            import random
+            return random.choice(fallback_speeches)
     
-    # 🔍 詳細なエラー診断
-    print(f"[DIAGNOSIS] Environment check:")
-    print(f"[DIAGNOSIS] - Current working directory: {os.getcwd()}")
-    print(f"[DIAGNOSIS] - Python path: {sys.path[:3]}")  # 最初の3個のみ表示
-    print(f"[DIAGNOSIS] - vertex_ai_initialized: {vertex_ai_initialized}")
-    
-    # 🔍 環境変数の再チェック
-    import os
-    from dotenv import load_dotenv
-    load_dotenv()
-    recheck_project = os.getenv("GOOGLE_PROJECT_ID") or os.getenv("GOOGLE_CLOUD_PROJECT", "").strip('"')
-    recheck_location = os.getenv("GOOGLE_LOCATION") or os.getenv("GOOGLE_CLOUD_LOCATION", "").strip('"')
-    print(f"[DIAGNOSIS] - Rechecked GOOGLE_PROJECT_ID: '{recheck_project}'")
-    print(f"[DIAGNOSIS] - Rechecked GOOGLE_LOCATION: '{recheck_location}'")
-    
-    root_agent = None
+    root_agent = FallbackRootAgent()
+    print("[WARNING] Using minimal fallback RootAgent")

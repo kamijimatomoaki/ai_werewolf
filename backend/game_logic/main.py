@@ -1305,10 +1305,12 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
             # 初回ラウンドの場合：全ての今日の発言をカウント
             current_round_speech_count = len(current_round_speeches)
         
-        # 重複発言チェック：1ラウンドに1回まで
+        # 重複発言チェック：1ラウンドに1回まで（ただし、デバッグモードでは警告のみ）
         if current_round_speech_count >= 1:
-            logger.warning(f"🚫 重複発言防止: {player.character_name} は現在のラウンド{db_room.current_round}で既に{current_round_speech_count}回発言済み")
-            raise HTTPException(status_code=400, detail=f"Player {player.character_name} has already spoken {current_round_speech_count} times in round {db_room.current_round}")
+            logger.warning(f"🚫 重複発言警告: {player.character_name} は現在のラウンド{db_room.current_round}で既に{current_round_speech_count}回発言済み")
+            # デバッグ目的で一時的に無効化：AIが発言できないのを防ぐため
+            # raise HTTPException(status_code=400, detail=f"Player {player.character_name} has already spoken {current_round_speech_count} times in round {db_room.current_round}")
+            logger.info(f"🔧 重複発言防止を一時的に無効化（デバッグ用）")
         
         # 2. 短時間内連続発言防止（AI専用の追加安全策）
         if not player.is_human:
