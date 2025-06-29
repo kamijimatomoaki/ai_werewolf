@@ -164,6 +164,7 @@ export function AnimatedPlayerCard({
       case 'werewolf': return '🐺';
       case 'seer': return '🔮';
       case 'bodyguard': return '🛡️';
+      case 'madman': return '🎭';
       case 'villager': return '👤';
       default: return '❓';
     }
@@ -174,6 +175,7 @@ export function AnimatedPlayerCard({
       case 'werewolf': return 'bg-red-500';
       case 'seer': return 'bg-purple-500';
       case 'bodyguard': return 'bg-blue-500';
+      case 'madman': return 'bg-purple-600';
       case 'villager': return 'bg-green-500';
       default: return 'bg-gray-500';
     }

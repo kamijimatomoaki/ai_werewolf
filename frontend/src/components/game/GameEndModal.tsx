@@ -52,6 +52,7 @@ const RoleIcon = ({ role }: { role: string }) => {
     werewolf: { icon: '🐺', color: 'text-red-400', bgColor: 'bg-red-900/30' },
     seer: { icon: '🔮', color: 'text-blue-400', bgColor: 'bg-blue-900/30' },
     bodyguard: { icon: '🛡️', color: 'text-green-400', bgColor: 'bg-green-900/30' },
+    madman: { icon: '🎭', color: 'text-purple-400', bgColor: 'bg-purple-900/30' },
     villager: { icon: '👤', color: 'text-gray-400', bgColor: 'bg-gray-900/30' }
   };
   
@@ -103,6 +104,7 @@ export default function GameEndModal({ roomId, isOpen, onClose, onBackToLobby }:
       werewolf: '人狼',
       seer: '占い師',
       bodyguard: 'ボディガード',
+      madman: '狂人',
       villager: '村人'
     };
     return roleNames[role as keyof typeof roleNames] || role;

@@ -1085,16 +1085,16 @@ def api_health_check():
 
 # --- Game Logic & CRUD Operations ---
 def get_role_config(player_count: int) -> List[str]:
-    # 🔧 バランス調整版役職構成（全人数でボディガード含む）
+    # 🔧 バランス調整版役職構成（狂人追加でより戦略的に）
     configs: Dict[int, List[str]] = {
-        5: ['werewolf', 'werewolf', 'seer', 'bodyguard', 'villager'],              # 人狼2：村人3（占1+護1+村1）
-        6: ['werewolf', 'werewolf', 'seer', 'bodyguard', 'villager', 'villager'], # 人狼2：村人4（占1+護1+村2）
-        7: ['werewolf', 'werewolf', 'seer', 'bodyguard', 'villager', 'villager', 'villager'], # 人狼2：村人5（占1+護1+村3）
-        8: ['werewolf', 'werewolf', 'werewolf', 'seer', 'bodyguard', 'villager', 'villager', 'villager'], # 人狼3：村人5（占1+護1+村3）
-        9: ['werewolf', 'werewolf', 'werewolf', 'seer', 'bodyguard', 'villager', 'villager', 'villager', 'villager'], # 人狼3：村人6（占1+護1+村4）
-        10: ['werewolf', 'werewolf', 'werewolf', 'seer', 'bodyguard', 'villager', 'villager', 'villager', 'villager', 'villager'], # 人狼3：村人7（占1+護1+村5）
-        11: ['werewolf', 'werewolf', 'werewolf', 'werewolf', 'seer', 'bodyguard', 'villager', 'villager', 'villager', 'villager', 'villager'], # 人狼4：村人7（占1+護1+村5）
-        12: ['werewolf', 'werewolf', 'werewolf', 'werewolf', 'seer', 'bodyguard', 'villager', 'villager', 'villager', 'villager', 'villager', 'villager'] # 人狼4：村人8（占1+護1+村6）
+        5: ['werewolf', 'madman', 'seer', 'villager', 'villager'],                # 人狼1+狂人1：村人3（占1+村2）- バランス重視
+        6: ['werewolf', 'werewolf', 'madman', 'seer', 'bodyguard', 'villager'],  # 人狼2+狂人1：村人3（占1+護1+村1）
+        7: ['werewolf', 'werewolf', 'madman', 'seer', 'bodyguard', 'villager', 'villager'], # 人狼2+狂人1：村人4（占1+護1+村2）
+        8: ['werewolf', 'werewolf', 'werewolf', 'madman', 'seer', 'bodyguard', 'villager', 'villager'], # 人狼3+狂人1：村人4（占1+護1+村2）
+        9: ['werewolf', 'werewolf', 'werewolf', 'madman', 'seer', 'bodyguard', 'villager', 'villager', 'villager'], # 人狼3+狂人1：村人5（占1+護1+村3）
+        10: ['werewolf', 'werewolf', 'werewolf', 'madman', 'seer', 'bodyguard', 'villager', 'villager', 'villager', 'villager'], # 人狼3+狂人1：村人6（占1+護1+村4）
+        11: ['werewolf', 'werewolf', 'werewolf', 'werewolf', 'madman', 'seer', 'bodyguard', 'villager', 'villager', 'villager', 'villager'], # 人狼4+狂人1：村人6（占1+護1+村4）
+        12: ['werewolf', 'werewolf', 'werewolf', 'werewolf', 'madman', 'seer', 'bodyguard', 'villager', 'villager', 'villager', 'villager', 'villager'] # 人狼4+狂人1：村人7（占1+護1+村5）
     }
     return configs.get(player_count, ['villager'] * player_count)
 
@@ -2075,30 +2075,36 @@ def process_night_actions(db: Session, room_id: uuid.UUID) -> Dict[str, Any]:
     return results
 
 def check_game_end_condition(db: Session, room_id: uuid.UUID) -> Dict[str, Any]:
-    """ゲーム終了条件をチェック"""
+    """ゲーム終了条件をチェック（狂人含む）"""
     db_room = get_room(db, room_id)
     if not db_room:
         return {'game_over': False}
     
     living_players = [p for p in db_room.players if p.is_alive]
     living_werewolves = [p for p in living_players if p.role == 'werewolf']
+    living_madmen = [p for p in living_players if p.role == 'madman']
     living_villagers = [p for p in living_players if p.role in ['villager', 'seer', 'bodyguard']]
     
+    # 人狼陣営：人狼 + 狂人
+    living_werewolf_team = living_werewolves + living_madmen
+    
     if len(living_werewolves) == 0:
-        # 村人陣営の勝利
+        # 村人陣営の勝利（人狼が全滅）
         create_game_log(db, room_id, db_room.status, "game_end", content="村人陣営の勝利！全ての人狼が排除されました。")
         return {
             'game_over': True,
             'winner': 'villagers',
-            'message': '村人陣営の勝利！全ての人狼が排除されました。'
+            'winner_faction': '村人陣営',
+            'victory_message': '村人陣営の勝利！全ての人狼が排除されました。'
         }
-    elif len(living_werewolves) >= len(living_villagers):
-        # 人狼陣営の勝利
-        create_game_log(db, room_id, db_room.status, "game_end", content="人狼陣営の勝利！人狼の数が村人と同数以上になりました。")
+    elif len(living_werewolf_team) >= len(living_villagers):
+        # 人狼陣営の勝利（人狼+狂人の数が村人と同数以上）
+        create_game_log(db, room_id, db_room.status, "game_end", content="人狼陣営の勝利！人狼陣営の数が村人陣営と同数以上になりました。")
         return {
             'game_over': True,
             'winner': 'werewolves',
-            'message': '人狼陣営の勝利！人狼の数が村人と同数以上になりました。'
+            'winner_faction': '人狼陣営',
+            'victory_message': '人狼陣営の勝利！人狼陣営の数が村人陣営と同数以上になりました。'
         }
     
     return {'game_over': False}
@@ -2120,9 +2126,9 @@ def get_detailed_game_result(db: Session, room_id: uuid.UUID) -> GameResult:
     for player in room.players:
         is_winner = False
         if basic_result['game_over']:
-            if basic_result['winner'] == 'werewolves' and player.role == 'werewolf':
+            if basic_result['winner'] == 'werewolves' and player.role in ['werewolf', 'madman']:
                 is_winner = True
-            elif basic_result['winner'] == 'villagers' and player.role in ['villager', 'seer']:
+            elif basic_result['winner'] == 'villagers' and player.role in ['villager', 'seer', 'bodyguard']:
                 is_winner = True
         
         players.append(GameResultPlayer(
