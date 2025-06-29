@@ -2178,6 +2178,12 @@ def get_detailed_game_result(db: Session, room_id: uuid.UUID) -> GameResult:
 async def get_ai_speech_context(room_id: uuid.UUID, ai_player_id: uuid.UUID, day_number: int, db: Session) -> list:
     """　AI発言コンテキストを安全に取得　"""
     try:
+        # 🔍 詳細なデバッグログ
+        logger.info(f"🔍 get_ai_speech_context called:")
+        logger.info(f"🔍 - room_id: {room_id}")
+        logger.info(f"🔍 - ai_player_id: {ai_player_id}")
+        logger.info(f"🔍 - day_number: {day_number}")
+        
         # このAIプレイヤーの今日の発言回数をチェック
         ai_speech_count = db.query(GameLog).filter(
             GameLog.room_id == room_id,
@@ -2186,17 +2192,17 @@ async def get_ai_speech_context(room_id: uuid.UUID, ai_player_id: uuid.UUID, day
             GameLog.actor_player_id == ai_player_id
         ).count()
         
-        logger.info(f"AI speech count check: player={ai_player_id}, day={day_number}, count={ai_speech_count}")
+        logger.info(f"🔍 AI speech count check: player={ai_player_id}, day={day_number}, count={ai_speech_count}")
         
         # 初回発言の場合は空のコンテキストを返す（1日目のみ）
         if ai_speech_count == 0 and day_number == 1:
-            logger.info(f"First speech of Day 1 detected for AI {ai_player_id} - returning empty context")
+            logger.info(f"🔍 First speech of Day 1 detected for AI {ai_player_id} - returning empty context")
             return []
         
         # 🔧 修正: 2日目以降の初回発言でも現在の日の情報のみを提供
         # 存在しない前日情報を参照させないため、現在の状況に集中させる
         if ai_speech_count == 0:
-            logger.info(f"First speech of Day {day_number} detected for AI {ai_player_id} - providing current day context only")
+            logger.info(f"🔍 First speech of Day {day_number} detected for AI {ai_player_id} - providing current day context only")
             
             # 現在の日の状況のみを提供（混乱を避けるため）
             current_day_info = []
@@ -2207,30 +2213,40 @@ async def get_ai_speech_context(room_id: uuid.UUID, ai_player_id: uuid.UUID, day
                     'content': f"{day_number}日目の議論が始まりました。",
                     'timestamp': datetime.now(timezone.utc)
                 })
+                logger.info(f"🔍 Added system message for day {day_number}")
             
             return current_day_info
         
         # 既に発言済みの場合は既存の発言履歴を取得
+        logger.info(f"🔍 Fetching speech logs for room {room_id}, day {day_number}")
         recent_logs = db.query(GameLog).filter(
             GameLog.room_id == room_id,
             GameLog.day_number == day_number,
             GameLog.event_type == "speech"
         ).order_by(GameLog.created_at.asc()).all()
         
+        logger.info(f"🔍 Found {len(recent_logs)} speech logs")
+        
         recent_messages = []
-        for log in recent_logs:
+        for i, log in enumerate(recent_logs):
+            logger.info(f"🔍 Processing log {i+1}: actor_id={log.actor_player_id}, content_preview={log.content[:50] if log.content else 'None'}...")
             if log.actor:
                 recent_messages.append({
                     'speaker': log.actor.character_name,
                     'content': log.content or '',
                     'timestamp': log.created_at
                 })
+                logger.info(f"🔍 Added message from {log.actor.character_name}")
+            else:
+                logger.warning(f"🔍 Log {i+1} has no actor: log_id={log.log_id}")
         
-        logger.info(f"Speech context prepared: {len(recent_messages)} messages for AI {ai_player_id}")
+        logger.info(f"🔍 Speech context prepared: {len(recent_messages)} messages for AI {ai_player_id}")
         return recent_messages
         
     except Exception as e:
-        logger.error(f"Error getting AI speech context: {e}")
+        logger.error(f"🔍 Error getting AI speech context: {e}")
+        import traceback
+        logger.error(f"🔍 Full traceback: {traceback.format_exc()}")
         # エラー時は安全に空のコンテキストを返す
         return []
 
@@ -2412,8 +2428,19 @@ async def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid
             logger.info(f"✅ Root agent tools available: {getattr(root_agent, 'tools_available', 'Unknown')}")
             # プレイヤー情報を準備（ペルソナ未設定の場合はデフォルト）
             persona = ai_player.character_persona
+            
+            # 🔍 ペルソナ情報の詳細ログ出力（デバッグ用）
+            logger.info(f"🎭 PERSONA DEBUG for {ai_player.character_name}:")
+            logger.info(f"🎭 - Raw persona type: {type(persona)}")
+            logger.info(f"🎭 - Raw persona content: {persona}")
+            logger.info(f"🎭 - Player role: {ai_player.role}")
+            logger.info(f"🎭 - Player is_alive: {ai_player.is_alive}")
+            
             if not persona:
                 persona = f"私は{ai_player.character_name}です。冷静に分析して判断します。"
+                logger.info(f"🎭 - Using default persona: {persona}")
+            else:
+                logger.info(f"🎭 - Using stored persona")
                 
             player_info = {
                 'name': ai_player.character_name,
@@ -2421,6 +2448,9 @@ async def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid
                 'is_alive': ai_player.is_alive,
                 'persona': persona
             }
+            
+            # 🔍 player_info確認ログ
+            logger.info(f"🎭 Final player_info: {player_info}")
             
             # ゲーム情報を準備
             game_context = {
@@ -2439,6 +2469,14 @@ async def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid
             # AI発言コンテキストの完全管理
             recent_messages = await get_ai_speech_context(room_id, ai_player.player_id, room.day_number, db)
             logger.info(f"AI speech context prepared for {ai_player.character_name}: {len(recent_messages)} messages")
+            
+            # 🔍 コンテキストメッセージの詳細ログ（デバッグ用）
+            logger.info(f"🗨️ CONTEXT DEBUG for {ai_player.character_name}:")
+            for i, msg in enumerate(recent_messages):
+                logger.info(f"🗨️ Message {i+1}: Speaker={msg.get('speaker', 'Unknown')}, Content={msg.get('content', '')[:100]}...")
+                logger.info(f"🗨️ Message {i+1} timestamp: {msg.get('timestamp', 'Unknown')}")
+            if not recent_messages:
+                logger.info(f"🗨️ No recent messages found for context")
             
             # AI発言生成前のデバッグ情報
             logger.info(f"=== AI SPEECH GENERATION START ===")
