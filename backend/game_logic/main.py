@@ -1314,10 +1314,10 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
             # 初回ラウンドの場合：全ての今日の発言をカウント
             current_round_speech_count = len(current_round_speeches)
         
-        # 重複発言チェック：完全に無効化（デバッグ用）
+        # 重複発言チェック：1ラウンドに1回まで厳格に制限
         if current_round_speech_count >= 1:
-            logger.info(f"📝 発言履歴: {player.character_name} は現在のラウンド{db_room.current_round}で既に{current_round_speech_count}回発言済み")
-            logger.info(f"🔧 重複発言防止は完全に無効化されています（デバッグ用）")
+            logger.warning(f"🚫 重複発言防止: {player.character_name} は現在のラウンド{db_room.current_round}で既に{current_round_speech_count}回発言済み")
+            raise HTTPException(status_code=400, detail=f"Player {player.character_name} has already spoken {current_round_speech_count} times in round {db_room.current_round}")
         
         # 2. 短時間内連続発言防止（AI専用の追加安全策）
         if not player.is_human:
@@ -2047,10 +2047,12 @@ def process_night_actions(db: Session, room_id: uuid.UUID) -> Dict[str, Any]:
                 protected = other_bodyguards[0]  # 他のボディガードを護衛
             else:
                 protected = strategic_target_selection(bodyguard, alive_players, "protect")  # 戦略的最終選択
-            create_game_log(db, room_id, "night", "protect", 
+            # 🔒 秘匿情報: ボディガードの護衛は一般ログに表示されない
+            create_game_log(db, room_id, "night", "protection_secret", 
                           actor_player_id=bodyguard.player_id,
-                          content=f"protected {protected.character_name}")
-            results['protection'] = f"{bodyguard.character_name}が{protected.character_name}を守りました"
+                          content=f"PRIVATE: {bodyguard.character_name} protected {protected.character_name}")
+            # 結果には含めない（秘匿情報）
+            logger.info(f"🔒 秘匿護衛実行: {bodyguard.character_name} -> {protected.character_name}")
     
     # 占い師の占い（手動システムに移行済み）
     # 占い師は専用エンドポイント /api/rooms/{room_id}/seer_investigate を使用
