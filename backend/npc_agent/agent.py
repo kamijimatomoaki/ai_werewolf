@@ -798,30 +798,51 @@ class RootAgent:
         persona = player_info.get('persona', {})
         persona_info = ""
         
+        # 🔍 ペルソナ処理デバッグログ追加
+        print(f"[DEBUG] _build_tool_enhanced_prompt: Processing persona for {player_info.get('name')}")
+        print(f"[DEBUG] Persona type: {type(persona)}")
+        print(f"[DEBUG] Persona content: {persona}")
+        
         if persona:
             if isinstance(persona, str):
+                # 🔧 文字列形式のペルソナ処理を強化
                 persona_info = f"""# あなたの詳細なペルソナ設定
 {persona}
 
-【最重要】話し方とキャラクター維持の指示:
-上記のペルソナ設定に記載された話し方、語尾、口調、方言、キャッチフレーズなどの全ての特徴を100%維持して発言してください。
+【🚨 絶対厳守】キャラクター維持命令:
+上記のペルソナ設定に記載された話し方、語尾、口調、方言、キャッチフレーズなどの全ての特徴を100%完璧に維持して発言してください。
 設定されたキャラクターの個性を完全に反映してください。
+他のキャラクターの口調や設定を絶対に使用してはいけません。
 """
+                print(f"[DEBUG] Using string persona for {player_info.get('name')}")
+                
             elif isinstance(persona, dict):
+                # 🔧 辞書形式のペルソナ処理を強化
                 speech_style = persona.get('speech_style', '普通の話し方')
+                personality = persona.get('personality', '不明')
+                background = persona.get('background', '不明')
+                
                 persona_info = f"""# あなたの詳細なペルソナ設定
 - 年齢: {persona.get('age', '不明')}歳
 - 性別: {persona.get('gender', '不明')}
-- 性格: {persona.get('personality', '不明')}
+- 性格: {personality}
 - 話し方: {speech_style}
-- 背景: {persona.get('background', '不明')}
+- 背景: {background}
 
-【最重要】話し方の指示:
+【🚨 絶対厳守】キャラクター維持命令:
 {speech_style}で一貫して発言してください。
 語尾や口調、方言、キャッチフレーズなどの特徴を必ず維持してください。
+他のキャラクターの口調（「でござる」「なんでやねん」「ナリ」など）を絶対に使用してはいけません。
+あなたの性格「{personality}」に合った発言をしてください。
 """
+                print(f"[DEBUG] Using dict persona for {player_info.get('name')}: speech_style={speech_style}")
+                
             else:
                 persona_info = f"# あなたの名前: {player_info.get('name', '不明')}\n"
+                print(f"[DEBUG] Using default persona for {player_info.get('name')}")
+        else:
+            persona_info = f"# あなたの名前: {player_info.get('name', '不明')}\n"
+            print(f"[DEBUG] No persona provided for {player_info.get('name')}")
         
         # 他のプレイヤー情報を抽出
         other_players = [p['name'] for p in game_context.get('all_players', []) 
@@ -838,6 +859,11 @@ class RootAgent:
 - 陣営: {'人狼' if player_info.get('role') == 'werewolf' else '村人'}
 
 【🚨 絶対遵守ルール 🚨】
+🔥 **役職厳守命令**: あなたの役職は「{player_info.get('role', '不明')}」です。
+- この役職以外の能力や行動は絶対に使用してはいけません
+- 他の役職の能力を持っているかのような発言は禁止です
+- 占い結果、護衛結果などは自分の役職でない限り発言してはいけません
+
 {self._build_role_specific_rules(player_info.get('role'))}
 
 ## 🚨 必須ルール（絶対遵守）
@@ -869,11 +895,16 @@ class RootAgent:
 
 # 生存プレイヤー: {', '.join(other_players[:5])}  
 
-【重要制限】
-- プロフィール情報を「発言」として言及禁止
-- 実際のゲーム内発言のみを根拠に使用
-- 存在しない発言の引用禁止
-- 自分の真の役職は絶対秘密
+【🚨 重要制限 🚨】
+🚫 **存在しない発言への言及絶対禁止**:
+- まだ発言していないプレイヤーの発言を引用してはいけません
+- 実際にゲーム内で発言された内容のみを根拠に使用してください
+- プロフィール情報を「発言」として言及することを禁止します
+- 「○○さんが言った」と言及する場合は、実際の発言ログを確認してください
+
+🔒 **役職情報の秘匿**:
+- 自分の真の役職（特に人狼）は絶対に秘密にしてください
+- 他のプレイヤーの役職を知っているかのような発言は禁止です
 
 発言は500文字以内で、ゲーム進行に貢献する内容にしてください。
 """
