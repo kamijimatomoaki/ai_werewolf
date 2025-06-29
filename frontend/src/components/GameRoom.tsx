@@ -14,6 +14,7 @@ import VotingPanel from '@/components/game/VotingPanel';
 import GameLog from '@/components/game/GameLog';
 import PhaseTransition from '@/components/game/PhaseTransition';
 import GameSummary from '@/components/game/GameSummary';
+import GameEndModal from '@/components/game/GameEndModal';
 import { usePhaseTransition } from '@/hooks/useAnimations';
 import { RoomInfo, PlayerInfo, GameLogInfo } from '@/types/api';
 
@@ -34,6 +35,7 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
   const [connectionWarningShown, setConnectionWarningShown] = useState(false);
   const [autoProgressInProgress, setAutoProgressInProgress] = useState(false);
   const [showSummary, setShowSummary] = useState(false);
+  const [showGameEndModal, setShowGameEndModal] = useState(false);
   const [fetchRoomDataDebounceRef, setFetchRoomDataDebounceRef] = useState<NodeJS.Timeout | null>(null);
   
   // フェーズ遷移アニメーション
@@ -57,6 +59,11 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
       
       setRoom(roomData);
       setLogs(logsData);
+      
+      // ゲーム終了チェック
+      if (roomData.status === 'finished' && !showGameEndModal) {
+        setShowGameEndModal(true);
+      }
       
       // プレイヤーID同期チェック（自動修正機能付き）
       if (currentPlayerId && playerName && roomData.players) {
@@ -815,6 +822,18 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
         roomId={roomId}
         isOpen={showSummary}
         onClose={() => setShowSummary(false)}
+      />
+
+      {/* ゲーム終了モーダル */}
+      <GameEndModal
+        roomId={roomId}
+        isOpen={showGameEndModal}
+        onClose={() => setShowGameEndModal(false)}
+        onBackToLobby={() => {
+          setShowGameEndModal(false);
+          clearRoomSession();
+          onBackToLobby();
+        }}
       />
     </div>
   );

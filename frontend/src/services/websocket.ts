@@ -25,9 +25,10 @@ class WebSocketService {
   private serverUrl: string = this.getWebSocketUrl();
   private connectionStatus: ConnectionStatus = 'disconnected';
   private reconnectAttempts: number = 0;
-  private maxReconnectAttempts: number = 5;
-  private reconnectDelay: number = 1000; // 初期遅延時間（ミリ秒）
+  private maxReconnectAttempts: number = 10; // 最大再接続回数を増加
+  private reconnectDelay: number = 2000; // 初期遅延時間（2秒）
   private maxReconnectDelay: number = 30000; // 最大遅延時間（30秒）
+  private connectionHealthCheck: NodeJS.Timeout | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private heartbeatInterval: NodeJS.Timeout | null = null;
   private connectionListeners: ((status: ConnectionStatus) => void)[] = [];
@@ -83,6 +84,7 @@ class WebSocketService {
           this.setConnectionStatus('connected');
           this.reconnectAttempts = 0; // 再接続試行回数をリセット
           this.startHeartbeat();
+          this.startConnectionHealthCheck();
           
           // 部屋に再参加
           if (this.currentRoomId) {
@@ -108,6 +110,7 @@ class WebSocketService {
           console.log('WebSocket disconnected:', reason);
           this.setConnectionStatus('disconnected');
           this.stopHeartbeat();
+          this.stopConnectionHealthCheck();
           
           // 自動再接続を試行（サーバー側から切断された場合）
           if (reason === 'io server disconnect') {
@@ -140,6 +143,7 @@ class WebSocketService {
   disconnect() {
     this.clearReconnectTimer();
     this.stopHeartbeat();
+    this.stopConnectionHealthCheck();
     
     if (this.socket) {
       this.socket.disconnect();
@@ -184,12 +188,39 @@ class WebSocketService {
     }
   }
 
+  // 接続健全性チェック機能
+  private startConnectionHealthCheck() {
+    this.stopConnectionHealthCheck();
+    this.connectionHealthCheck = setInterval(() => {
+      if (this.socket && this.connectionStatus === 'connected') {
+        // 接続が生きているかチェック
+        if (!this.socket.connected) {
+          console.warn('Connection lost detected by health check');
+          this.setConnectionStatus('disconnected');
+          this.scheduleReconnect();
+        }
+      }
+    }, 15000); // 15秒間隔でチェック
+  }
+
+  private stopConnectionHealthCheck() {
+    if (this.connectionHealthCheck) {
+      clearInterval(this.connectionHealthCheck);
+      this.connectionHealthCheck = null;
+    }
+  }
+
   // ハートビート開始
   private startHeartbeat() {
     this.stopHeartbeat();
     this.heartbeatInterval = setInterval(() => {
       if (this.socket?.connected) {
         this.socket.emit('ping');
+      } else if (this.connectionStatus === 'connected') {
+        // 接続状態が不整合の場合は修正
+        console.warn('Connection state inconsistency detected in heartbeat');
+        this.setConnectionStatus('disconnected');
+        this.scheduleReconnect();
       }
     }, 30000); // 30秒ごとにping送信
   }

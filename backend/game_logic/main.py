@@ -3493,6 +3493,93 @@ async def get_game_summary(room_id: uuid.UUID, db: Session = Depends(get_db)):
         logger.error(f"Failed to generate game summary for room {room_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to generate game summary")
 
+@app.get("/api/rooms/{room_id}/game_result", summary="ゲーム結果と役職開示を取得")
+async def get_game_result(room_id: uuid.UUID, db: Session = Depends(get_db)):
+    """ゲーム終了時の詳細な結果と全プレイヤーの役職を開示する"""
+    try:
+        room = get_room(db, room_id)
+        if not room:
+            raise HTTPException(status_code=404, detail="Room not found")
+        
+        # ゲーム終了チェック
+        game_end_result = check_game_end_condition(db, room_id)
+        
+        if not game_end_result['game_over']:
+            raise HTTPException(status_code=400, detail="Game is not finished yet")
+        
+        # 全プレイヤーの役職情報を開示
+        players_with_roles = []
+        for player in room.players:
+            player_info = {
+                "player_id": str(player.player_id),
+                "character_name": player.character_name,
+                "role": player.role,
+                "is_alive": player.is_alive,
+                "is_human": player.is_human,
+                "faction": "人狼陣営" if player.role == "werewolf" else "村人陣営",
+                "is_winner": False
+            }
+            
+            # 勝利判定
+            if game_end_result['winner'] == 'werewolves' and player.role == 'werewolf':
+                player_info['is_winner'] = True
+            elif game_end_result['winner'] == 'villagers' and player.role in ['villager', 'seer', 'bodyguard']:
+                player_info['is_winner'] = True
+            
+            players_with_roles.append(player_info)
+        
+        # ゲーム統計を生成
+        total_players = len(room.players)
+        human_players = len([p for p in room.players if p.is_human])
+        ai_players = len([p for p in room.players if not p.is_human])
+        werewolves = len([p for p in room.players if p.role == 'werewolf'])
+        villagers = len([p for p in room.players if p.role in ['villager', 'seer', 'bodyguard']])
+        
+        # ゲームログから重要なイベントを抽出
+        important_events = []
+        logs = get_game_logs(db, room_id)
+        for log in logs:
+            if log.event_type in ['execution', 'attack', 'game_end', 'seer_result']:
+                important_events.append({
+                    "day": log.day_number,
+                    "phase": log.phase,
+                    "event_type": log.event_type,
+                    "content": log.content,
+                    "timestamp": log.created_at.isoformat()
+                })
+        
+        # LLMで詳細なゲームサマリーを生成
+        game_summary = await generate_game_end_summary_llm(room, game_end_result, players_with_roles, important_events)
+        
+        return {
+            "room_id": str(room_id),
+            "game_result": {
+                "game_over": True,
+                "winner": game_end_result['winner'],
+                "winner_faction": "人狼陣営" if game_end_result['winner'] == 'werewolves' else "村人陣営",
+                "victory_message": game_end_result['message'],
+                "final_day": room.day_number,
+                "total_days": room.day_number
+            },
+            "players": players_with_roles,
+            "game_statistics": {
+                "total_players": total_players,
+                "human_players": human_players,
+                "ai_players": ai_players,
+                "werewolves_count": werewolves,
+                "villagers_count": villagers
+            },
+            "important_events": important_events,
+            "game_summary": game_summary,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get game result for room {room_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to get game result")
+
 @app.post("/api/rooms/{room_id}/auto_progress", summary="ゲームの自動進行")
 async def auto_progress(room_id: uuid.UUID, db: Session = Depends(get_db)):
     """AIプレイヤーのターンを自動で進行させる"""
@@ -3709,6 +3796,68 @@ async def generate_game_summary_llm(room, logs, alive_players, dead_players):
         logger.error(f"LLM summary generation failed: {e}")
         # フォールバック用の基本サマリー
         return f"{room.day_number}日目の{room.status}フェーズです。生存者{len(alive_players)}人、死亡者{len(dead_players)}人の状況で、ゲームが進行中です。"
+
+async def generate_game_end_summary_llm(room, game_result, players_with_roles, important_events):
+    """ゲーム終了時の詳細なLLMサマリーを生成する"""
+    try:
+        if not GOOGLE_PROJECT_ID:
+            return "ゲーム終了。詳細なサマリー機能は現在利用できません。"
+        
+        # プレイヤー情報を整理
+        winners = [p for p in players_with_roles if p['is_winner']]
+        losers = [p for p in players_with_roles if not p['is_winner']]
+        werewolves = [p for p in players_with_roles if p['role'] == 'werewolf']
+        villagers = [p for p in players_with_roles if p['role'] in ['villager', 'seer', 'bodyguard']]
+        
+        # 重要なイベントを整理
+        key_events = []
+        for event in important_events[-5:]:  # 最新5件
+            key_events.append(f"- {event['day']}日目: {event['content']}")
+        
+        # LLMプロンプト作成
+        prompt = f"""
+人狼ゲームが終了しました。以下の情報を基に、プレイヤーにとって有益で興味深いゲーム総括を日本語で作成してください。
+
+## ゲーム結果
+- 勝利陣営: {game_result['winner_faction']}
+- 勝利理由: {game_result['message']}
+- ゲーム期間: {room.day_number}日間
+
+## プレイヤー構成
+### 勝利者 ({len(winners)}人)
+{chr(10).join([f"- {p['character_name']} ({p['role']}, {'人間' if p['is_human'] else 'AI'})" for p in winners])}
+
+### 敗北者 ({len(losers)}人)
+{chr(10).join([f"- {p['character_name']} ({p['role']}, {'人間' if p['is_human'] else 'AI'})" for p in losers])}
+
+## 陣営構成
+- 人狼陣営: {len(werewolves)}人 ({', '.join([p['character_name'] for p in werewolves])})
+- 村人陣営: {len(villagers)}人 ({', '.join([p['character_name'] for p in villagers])})
+
+## 重要な出来事
+{chr(10).join(key_events) if key_events else "- 特別な出来事は記録されていません"}
+
+## 指示
+以下の要素を含む400文字以内の総括を作成してください：
+1. ゲームの流れと戦略的なポイント
+2. 勝敗の決定的要因
+3. 印象的だったプレイヤーの行動
+4. 各陣営の戦略の成功・失敗点
+
+プレイヤーのゲーム体験を称賛し、次回への意欲を高める内容にしてください。
+"""
+        
+        vertexai.init(project=GOOGLE_PROJECT_ID, location=GOOGLE_LOCATION)
+        model = GenerativeModel("gemini-1.5-flash")
+        response = model.generate_content(prompt)
+        
+        return response.text.strip()
+        
+    except Exception as e:
+        logger.error(f"Game end LLM summary generation failed: {e}")
+        # フォールバック用の基本サマリー
+        winner_faction = "人狼陣営" if game_result['winner'] == 'werewolves' else "村人陣営"
+        return f"{room.day_number}日間の激戦が終了し、{winner_faction}が勝利しました。{game_result['message']} 素晴らしいゲームでした！"
 
 # --- Helper Functions ---
 def get_players_in_room(db: Session, room_id: uuid.UUID) -> List[Player]:
