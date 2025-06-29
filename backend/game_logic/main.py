@@ -1253,7 +1253,8 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
         if not db_room:
             raise HTTPException(status_code=404, detail="Room not found")
         if db_room.status != 'day_discussion':
-            raise HTTPException(status_code=400, detail="Not in discussion phase.")
+            logger.error(f"🚫 発言拒否: ゲームステータス '{db_room.status}' は議論フェーズではありません")
+            raise HTTPException(status_code=400, detail=f"Not in discussion phase. Current status: {db_room.status}")
 
         if not db_room.turn_order or db_room.current_turn_index is None:
             raise HTTPException(status_code=500, detail="Game turn order not initialized.")
@@ -1269,12 +1270,20 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
         if turn_order[current_index] != str(player_id):
             current_player = get_player(db, uuid.UUID(turn_order[current_index]))
             current_name = current_player.character_name if current_player else "不明"
-            raise HTTPException(status_code=403, detail=f"It's not your turn. Current turn: {current_name}")
+            logger.error(f"🚫 ターン違反: プレイヤー {player_id} は現在のターンではありません。現在のターン: {current_name} (index: {current_index})")
+            raise HTTPException(status_code=403, detail=f"It's not your turn. Current turn: {current_name} (index: {current_index})")
 
         # 🚫 強化された重複発言防止システム
         player = get_player(db, player_id)
         if not player:
+            logger.error(f"🚫 プレイヤー不存在: プレイヤーID {player_id} が見つかりません")
             raise HTTPException(status_code=404, detail="Player not found")
+        
+        # デバッグ用：現在のゲーム状態を詳細にログ出力
+        logger.info(f"🎯 発言開始: プレイヤー {player.character_name} (ID: {player_id})")
+        logger.info(f"🎯 ゲーム状態: status={db_room.status}, day={db_room.day_number}, round={db_room.current_round}")
+        logger.info(f"🎯 ターン状態: current_index={current_index}, turn_order={turn_order}")
+        logger.info(f"🎯 現在のターン: {turn_order[current_index] if current_index < len(turn_order) else 'INVALID'}")
         
         # 1. 現在のラウンドでの発言チェック（最も厳密）
         current_round_speeches = db.query(GameLog).filter(
@@ -1305,12 +1314,10 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
             # 初回ラウンドの場合：全ての今日の発言をカウント
             current_round_speech_count = len(current_round_speeches)
         
-        # 重複発言チェック：1ラウンドに1回まで（ただし、デバッグモードでは警告のみ）
+        # 重複発言チェック：完全に無効化（デバッグ用）
         if current_round_speech_count >= 1:
-            logger.warning(f"🚫 重複発言警告: {player.character_name} は現在のラウンド{db_room.current_round}で既に{current_round_speech_count}回発言済み")
-            # デバッグ目的で一時的に無効化：AIが発言できないのを防ぐため
-            # raise HTTPException(status_code=400, detail=f"Player {player.character_name} has already spoken {current_round_speech_count} times in round {db_room.current_round}")
-            logger.info(f"🔧 重複発言防止を一時的に無効化（デバッグ用）")
+            logger.info(f"📝 発言履歴: {player.character_name} は現在のラウンド{db_room.current_round}で既に{current_round_speech_count}回発言済み")
+            logger.info(f"🔧 重複発言防止は完全に無効化されています（デバッグ用）")
         
         # 2. 短時間内連続発言防止（AI専用の追加安全策）
         if not player.is_human:
@@ -1326,10 +1333,12 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
                     created_at = created_at.replace(tzinfo=timezone.utc)
                 time_since_last = datetime.now(timezone.utc) - created_at
                 
-                # 最後の発言から5秒以内の場合は連続発言防止
-                if time_since_last.total_seconds() < 5:
+                # 最後の発言から1秒以内の場合は連続発言防止（緩和版）
+                if time_since_last.total_seconds() < 1:
                     logger.warning(f"🚫 AI短時間連続発言防止: {player.character_name} は{time_since_last.total_seconds():.1f}秒前に発言したばかり")
                     raise HTTPException(status_code=400, detail=f"AI player {player.character_name} spoke too recently ({time_since_last.total_seconds():.1f}s ago)")
+                else:
+                    logger.info(f"✅ AI発言許可: {player.character_name} の前回発言から{time_since_last.total_seconds():.1f}秒経過")
         
         # 3. ログ詳細記録（デバッグ用）
         logger.info(f"✅ 発言許可: {player.character_name} (ラウンド{db_room.current_round}, 発言回数: {current_round_speech_count})")
