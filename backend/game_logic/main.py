@@ -581,6 +581,7 @@ app.add_middleware(
 # --- Background Task for Auto Game Progression ---
 game_loop_task = None
 pool_monitor_task = None
+room_cleanup_task = None
 
 async def connection_pool_monitor():
     """データベース接続プール使用率の継続監視"""
@@ -700,6 +701,84 @@ async def game_loop_monitor():
         
         # Wait 2 seconds before next check (faster for vote processing)
         await asyncio.sleep(1)  # 2秒から1秒に短縮
+
+async def room_cleanup_monitor():
+    """古い部屋の自動削除・クリーンアップ機能"""
+    logger.info("Starting room cleanup monitor...")
+    
+    while True:
+        db = None
+        try:
+            # 1時間ごとに実行
+            await asyncio.sleep(3600)  # 1時間 = 3600秒
+            
+            # Get database session with timeout protection
+            try:
+                db = SessionLocal()
+                db.execute(text("SET statement_timeout = '30s'"))
+                
+                # 24時間以上活動がない部屋を検索
+                cutoff_time = datetime.now(timezone.utc) - timedelta(hours=24)
+                old_rooms = db.query(Room).filter(
+                    Room.last_activity < cutoff_time
+                ).all()
+                
+                if old_rooms:
+                    logger.info(f"Found {len(old_rooms)} old rooms to cleanup")
+                    
+                    for room in old_rooms:
+                        try:
+                            # 削除対象の部屋情報をログ出力
+                            logger.info(f"Cleaning up room {room.room_id}: status={room.status}, "
+                                      f"last_activity={room.last_activity}, "
+                                      f"player_count={len(room.players)}")
+                            
+                            # 関連するプレイヤーを削除
+                            players_deleted = db.query(Player).filter(Player.room_id == room.room_id).count()
+                            db.query(Player).filter(Player.room_id == room.room_id).delete()
+                            
+                            # 関連するゲームログを削除
+                            logs_deleted = db.query(GameLog).filter(GameLog.room_id == room.room_id).count()
+                            db.query(GameLog).filter(GameLog.room_id == room.room_id).delete()
+                            
+                            # 関連する投票記録を削除
+                            votes_deleted = db.query(Vote).filter(Vote.room_id == room.room_id).count()
+                            db.query(Vote).filter(Vote.room_id == room.room_id).delete()
+                            
+                            # 部屋を削除
+                            db.delete(room)
+                            
+                            # 変更をコミット
+                            db.commit()
+                            
+                            logger.info(f"Successfully cleaned up room {room.room_id}: "
+                                      f"deleted {players_deleted} players, "
+                                      f"{logs_deleted} logs, "
+                                      f"{votes_deleted} votes")
+                            
+                        except Exception as room_error:
+                            logger.error(f"Error cleaning up room {room.room_id}: {room_error}")
+                            # ロールバックして続行
+                            db.rollback()
+                            continue
+                else:
+                    logger.info("No old rooms found for cleanup")
+                    
+            except Exception as db_error:
+                logger.error(f"Database error in room cleanup monitor: {db_error}")
+                if db:
+                    db.rollback()
+                continue
+                
+        except Exception as e:
+            logger.error(f"Room cleanup monitor error: {e}")
+        finally:
+            # Ensure database session is always closed
+            if db:
+                try:
+                    db.close()
+                except Exception as close_error:
+                    logger.error(f"Error closing database session in room cleanup: {close_error}")
 
 async def delayed_ai_progression(room_id: uuid.UUID, delay_seconds: float):
     """Schedule AI progression after a delay"""
@@ -965,7 +1044,7 @@ async def check_and_progress_ai_turns(room_id: uuid.UUID, db: Session):
 @app.on_event("startup")
 async def startup_event():
     """Initialize background tasks on application startup"""
-    global game_loop_task, pool_monitor_task
+    global game_loop_task, pool_monitor_task, room_cleanup_task
     logger.info("Starting application startup tasks...")
     
     # Start the game loop monitor task
@@ -975,11 +1054,15 @@ async def startup_event():
     # Start the connection pool monitor task
     pool_monitor_task = asyncio.create_task(connection_pool_monitor())
     logger.info("Database connection pool monitor started")
+    
+    # Start the room cleanup monitor task
+    room_cleanup_task = asyncio.create_task(room_cleanup_monitor())
+    logger.info("Room cleanup monitor started")
 
 @app.on_event("shutdown") 
 async def shutdown_event():
     """Clean up background tasks on application shutdown"""
-    global game_loop_task, pool_monitor_task
+    global game_loop_task, pool_monitor_task, room_cleanup_task
     logger.info("Shutting down application...")
     
     # Cancel game loop monitor
@@ -997,6 +1080,14 @@ async def shutdown_event():
             await pool_monitor_task
         except asyncio.CancelledError:
             logger.info("Connection pool monitor task cancelled successfully")
+    
+    # Cancel room cleanup monitor
+    if room_cleanup_task:
+        room_cleanup_task.cancel()
+        try:
+            await room_cleanup_task
+        except asyncio.CancelledError:
+            logger.info("Room cleanup monitor task cancelled successfully")
 
 # --- グローバル例外ハンドラー ---
 @app.exception_handler(HTTPException)
@@ -1641,7 +1732,15 @@ def update_player_persona(db: Session, player_id: uuid.UUID, persona: dict) -> O
 
 # 【修正】公開部屋のみを取得するようにフィルタを追加
 def get_rooms(db: Session, skip: int = 0, limit: int = 100) -> List[Room]:
-    return db.query(Room).filter(Room.is_private == False).order_by(Room.created_at.desc()).offset(skip).limit(limit).all()
+    """アクティブな部屋のみを取得（古い部屋の非表示対応）"""
+    # 1時間以内に活動があった部屋、または待機中の部屋のみ表示
+    active_threshold = datetime.now(timezone.utc) - timedelta(hours=1)
+    
+    return db.query(Room).filter(
+        Room.is_private == False,
+        # 待機中の部屋は常に表示、それ以外は1時間以内の活動があるもののみ表示
+        (Room.status == 'waiting') | (Room.last_activity >= active_threshold)
+    ).order_by(Room.created_at.desc()).offset(skip).limit(limit).all()
 
 def get_room(db: Session, room_id: uuid.UUID) -> Optional[Room]:
     return db.query(Room).options(joinedload(Room.players)).filter(Room.room_id == room_id).first()
