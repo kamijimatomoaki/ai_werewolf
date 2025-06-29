@@ -7,6 +7,7 @@ import { useWebSocket } from '@/hooks/useWebSocket';
 import ConnectionStatus from '@/components/ConnectionStatus';
 import SeerPanel from '@/components/game/SeerPanel';
 import BodyguardPanel from '@/components/game/BodyguardPanel';
+import WerewolfPanel from '@/components/game/WerewolfPanel';
 import PlayerList from '@/components/game/PlayerList';
 import GameControls from '@/components/game/GameControls';
 import VotingPanel from '@/components/game/VotingPanel';
@@ -135,8 +136,8 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
         roomData.current_turn_index !== undefined) {
       
       // インデックス範囲チェック
-      if (roomData.current_turn_index >= roomData.turn_order.length) {
-        console.error(`Invalid turn index: ${roomData.current_turn_index} >= ${roomData.turn_order.length}`);
+      if (roomData.current_turn_index >= (roomData.turn_order?.length || 0)) {
+        console.error(`Invalid turn index: ${roomData.current_turn_index} >= ${roomData.turn_order?.length || 0}`);
         // 自動修復を試行
         setAutoProgressInProgress(true);
         setTimeout(async () => {
@@ -187,7 +188,7 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
           try {
             // Check if AI player is still current after longer wait (backend should have processed by now)
             const currentRoomData = await apiService.getRoom(roomId);
-            const stillCurrentPlayer = currentRoomData.turn_order[currentRoomData.current_turn_index] === currentPlayerId;
+            const stillCurrentPlayer = currentRoomData.turn_order?.[currentRoomData.current_turn_index || 0] === currentPlayerId;
             
             let fallbackTriggered = false;
             if (stillCurrentPlayer && currentRoomData.status === roomData.status) {
@@ -527,7 +528,7 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
     if (!room?.turn_order || 
         room.current_turn_index === undefined || 
         room.current_turn_index < 0 || 
-        room.current_turn_index >= room.turn_order.length) {
+        room.current_turn_index >= (room.turn_order?.length || 0)) {
       console.log('getCurrentSpeaker: Invalid turn state');
       return null;
     }
@@ -573,7 +574,7 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
     if (!room?.turn_order || 
         room.current_turn_index === undefined ||
         room.current_turn_index < 0 ||
-        room.current_turn_index >= room.turn_order.length ||
+        room.current_turn_index >= (room.turn_order?.length || 0) ||
         !currentPlayerId) {
       console.log('isMyTurn: Invalid state', {
         hasTurnOrder: !!room?.turn_order,
@@ -614,6 +615,12 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
                                   currentPlayer?.role === 'bodyguard' && 
                                   currentPlayer?.is_alive && 
                                   currentPlayerId;
+
+  // 人狼UIを表示するかどうか
+  const shouldShowWerewolfPanel = room?.status === 'night' && 
+                                 currentPlayer?.role === 'werewolf' && 
+                                 currentPlayer?.is_alive && 
+                                 currentPlayerId;
 
   return (
     <div className="max-w-6xl mx-auto p-6 bg-gray-900 text-white min-h-screen">
@@ -756,8 +763,18 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
             />
           )}
 
+          {/* 人狼UI（夜フェーズ） */}
+          {shouldShowWerewolfPanel && (
+            <WerewolfPanel
+              roomId={roomId}
+              playerId={currentPlayerId}
+              isNightPhase={true}
+              className="mb-4"
+            />
+          )}
+
           {/* 夜フェーズUI（管理者用） */}
-          {room.status === 'night' && !shouldShowSeerPanel && !shouldShowBodyguardPanel && currentPlayer?.is_human && (
+          {room.status === 'night' && !shouldShowSeerPanel && !shouldShowBodyguardPanel && !shouldShowWerewolfPanel && currentPlayer?.is_human && (
             <div className="mb-4 p-4 bg-blue-900 border border-blue-700 rounded-lg">
               <h3 className="font-semibold mb-3 text-blue-200">夜フェーズ</h3>
               <p className="text-blue-300 mb-4">人狼が活動する時間です...</p>

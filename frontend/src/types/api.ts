@@ -1,6 +1,7 @@
 // API型定義ファイル - バックエンドのFastAPIサービスとの連携用
 
 export interface PersonaOutput {
+  name?: string;
   gender: string;
   age: number;
   personality: string;

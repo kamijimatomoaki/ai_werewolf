@@ -9,6 +9,7 @@ export interface UseWebSocketReturn {
   reconnect: () => Promise<void>;
   connect: (serverUrl?: string) => Promise<void>;
   disconnect: () => void;
+  socket: any; // Socket.IO クライアントインスタンス
 }
 
 /**
@@ -77,5 +78,6 @@ export function useWebSocket(autoConnect: boolean = true, serverUrl?: string): U
     reconnect,
     connect,
     disconnect,
+    socket: websocketService.getSocket(),
   };
 }

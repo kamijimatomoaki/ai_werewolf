@@ -317,6 +317,10 @@ class WebSocketService {
   getMaxReconnectAttempts(): number {
     return this.maxReconnectAttempts;
   }
+
+  getSocket(): Socket | null {
+    return this.socket;
+  }
 }
 
 // シングルトンインスタンスをエクスポート

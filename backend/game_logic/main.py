@@ -1271,27 +1271,69 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
             current_name = current_player.character_name if current_player else "不明"
             raise HTTPException(status_code=403, detail=f"It's not your turn. Current turn: {current_name}")
 
-        # 🚫 AI連続発言防止チェック（現在のターンでの重複発言チェック）
+        # 🚫 強化された重複発言防止システム
         player = get_player(db, player_id)
-        if player and not player.is_human:
-            # 同じAIプレイヤーが短時間内に連続発言していないかチェック
+        if not player:
+            raise HTTPException(status_code=404, detail="Player not found")
+        
+        # 1. 現在のラウンドでの発言チェック（最も厳密）
+        current_round_speeches = db.query(GameLog).filter(
+            GameLog.room_id == room_id,
+            GameLog.phase == "day_discussion",
+            GameLog.event_type == "speech",
+            GameLog.day_number == db_room.day_number,
+            GameLog.actor_player_id == player_id,
+            GameLog.content.notlike('%ラウンド%が開始%')  # ラウンド開始メッセージを除外
+        ).all()
+        
+        # 現在のラウンド開始時刻を取得
+        current_round_start = db.query(GameLog).filter(
+            GameLog.room_id == room_id,
+            GameLog.day_number == db_room.day_number,
+            GameLog.event_type == "round_start",
+            GameLog.content.like(f"%ラウンド{db_room.current_round}%")
+        ).order_by(GameLog.created_at.desc()).first()
+        
+        # 現在のラウンドでの発言をカウント
+        current_round_speech_count = 0
+        if current_round_start:
+            current_round_speech_count = len([
+                speech for speech in current_round_speeches 
+                if speech.created_at > current_round_start.created_at
+            ])
+        else:
+            # 初回ラウンドの場合：全ての今日の発言をカウント
+            current_round_speech_count = len(current_round_speeches)
+        
+        # 重複発言チェック：1ラウンドに1回まで
+        if current_round_speech_count >= 1:
+            logger.warning(f"🚫 重複発言防止: {player.character_name} は現在のラウンド{db_room.current_round}で既に{current_round_speech_count}回発言済み")
+            raise HTTPException(status_code=400, detail=f"Player {player.character_name} has already spoken {current_round_speech_count} times in round {db_room.current_round}")
+        
+        # 2. 短時間内連続発言防止（AI専用の追加安全策）
+        if not player.is_human:
             recent_speech = db.query(GameLog).filter(
                 GameLog.room_id == room_id,
-                GameLog.day_number == db_room.day_number,
                 GameLog.event_type == "speech",
                 GameLog.actor_player_id == player_id
             ).order_by(GameLog.created_at.desc()).first()
             
             if recent_speech:
-                # 最後の発言から5秒以内の場合は連続発言防止
-                # timezone対応: created_atがnaiveな場合はUTCとして扱う
                 created_at = recent_speech.created_at
                 if created_at.tzinfo is None:
                     created_at = created_at.replace(tzinfo=timezone.utc)
                 time_since_last = datetime.now(timezone.utc) - created_at
+                
+                # 最後の発言から5秒以内の場合は連続発言防止
                 if time_since_last.total_seconds() < 5:
-                    logger.warning(f"🚫 AI連続発言防止: {player.character_name} は最近発言したばかり")
-                    raise HTTPException(status_code=400, detail=f"AI player {player.character_name} spoke too recently")
+                    logger.warning(f"🚫 AI短時間連続発言防止: {player.character_name} は{time_since_last.total_seconds():.1f}秒前に発言したばかり")
+                    raise HTTPException(status_code=400, detail=f"AI player {player.character_name} spoke too recently ({time_since_last.total_seconds():.1f}s ago)")
+        
+        # 3. ログ詳細記録（デバッグ用）
+        logger.info(f"✅ 発言許可: {player.character_name} (ラウンド{db_room.current_round}, 発言回数: {current_round_speech_count})")
+        if current_round_start:
+            logger.info(f"🔍 ラウンド開始時刻: {current_round_start.created_at}")
+        logger.info(f"🔍 今日の総発言数: {len(current_round_speeches)}")
 
         # 発言を記録
         create_game_log(db, room_id, "day_discussion", "speech", actor_player_id=player_id, content=statement)
@@ -1857,7 +1899,13 @@ async def check_night_actions_completion(db: Session, room_id: uuid.UUID) -> boo
             Player.is_alive == True
         ).all()
         
-        # 今夜の占い・護衛アクションが実行済みかチェック
+        alive_werewolves = db.query(Player).filter(
+            Player.room_id == room_id,
+            Player.role == 'werewolf',
+            Player.is_alive == True
+        ).all()
+        
+        # 今夜の占い・護衛・攻撃アクションが実行済みかチェック
         night_logs = db.query(GameLog).filter(
             GameLog.room_id == room_id,
             GameLog.day_number == db_room.day_number,
@@ -1876,10 +1924,17 @@ async def check_night_actions_completion(db: Session, room_id: uuid.UUID) -> boo
             bodyguard_actions = [log for log in night_logs if log.event_type == "protect"]
             bodyguard_completed = len(bodyguard_actions) >= len(alive_bodyguards)
         
-        logger.info(f"Night actions check for room {room_id}: seers={len(alive_seers)}, seer_completed={seer_completed}, bodyguards={len(alive_bodyguards)}, bodyguard_completed={bodyguard_completed}")
+        # 人狼の攻撃対象選択完了チェック
+        werewolf_completed = True
+        if alive_werewolves:
+            # 人狼は全体で1つの攻撃対象を選択すればよい
+            werewolf_actions = [log for log in night_logs if log.event_type == "attack_target"]
+            werewolf_completed = len(werewolf_actions) >= 1
+        
+        logger.info(f"Night actions check for room {room_id}: seers={len(alive_seers)}, seer_completed={seer_completed}, bodyguards={len(alive_bodyguards)}, bodyguard_completed={bodyguard_completed}, werewolves={len(alive_werewolves)}, werewolf_completed={werewolf_completed}")
         
         # すべてのアクションが完了している場合、朝フェーズに移行
-        if seer_completed and bodyguard_completed:
+        if seer_completed and bodyguard_completed and werewolf_completed:
             logger.info(f"All night actions completed for room {room_id}, transitioning to day")
             # 夜のアクションを処理して朝フェーズに移行
             results = process_night_actions(db, room_id)
@@ -1907,19 +1962,34 @@ def process_night_actions(db: Session, room_id: uuid.UUID) -> Dict[str, Any]:
     villagers = [p for p in db_room.players if p.role in ['villager', 'seer', 'bodyguard'] and p.is_alive]
     
     if werewolves and villagers:
-        # 知性的な襲撃ターゲット選択
-        # 優先順位: 1) 占い師 2) ボディガード 3) 村人
-        seers = [p for p in villagers if p.role == 'seer']
-        bodyguards = [p for p in villagers if p.role == 'bodyguard']
-        normal_villagers = [p for p in villagers if p.role == 'villager']
+        # 手動で選択された攻撃対象をチェック
+        attack_target_log = db.query(GameLog).filter(
+            GameLog.room_id == room_id,
+            GameLog.day_number == db_room.day_number,
+            GameLog.phase == "night",
+            GameLog.event_type == "attack_target"
+        ).first()
         
-        if seers:
-            target = seers[0]  # 占い師を最優先狙い
-        elif bodyguards:
-            target = bodyguards[0]  # ボディガードを次点狙い
-        else:
-            # 戦略的な村人選択（ランダムの代わりに戦略的フォールバック）
-            target = strategic_target_selection(werewolves[0], normal_villagers, "attack")
+        target = None
+        if attack_target_log:
+            # 手動選択された対象を取得
+            target_name = attack_target_log.content.split("targeted ")[1].split(" for attack")[0]
+            target = next((p for p in villagers if p.character_name == target_name), None)
+        
+        if not target:
+            # 手動選択がない場合は自動選択（AIプレイヤー用）
+            # 優先順位: 1) 占い師 2) ボディガード 3) 村人
+            seers = [p for p in villagers if p.role == 'seer']
+            bodyguards = [p for p in villagers if p.role == 'bodyguard']
+            normal_villagers = [p for p in villagers if p.role == 'villager']
+            
+            if seers:
+                target = seers[0]  # 占い師を最優先狙い
+            elif bodyguards:
+                target = bodyguards[0]  # ボディガードを次点狙い
+            else:
+                # 戦略的な村人選択（ランダムの代わりに戦略的フォールバック）
+                target = strategic_target_selection(werewolves[0], normal_villagers, "attack")
         
         # ボディガードの守りをチェック
         protection_log = db.query(GameLog).filter(
@@ -2943,9 +3013,9 @@ async def get_available_targets(player_id: uuid.UUID, db: Session = Depends(get_
     if not player:
         raise HTTPException(status_code=404, detail="Player not found")
     
-    # 占い師とボディガードのみ許可
-    if player.role not in ['seer', 'bodyguard']:
-        raise HTTPException(status_code=403, detail="Only seers and bodyguards can use this endpoint")
+    # 占い師、ボディガード、人狼のみ許可
+    if player.role not in ['seer', 'bodyguard', 'werewolf']:
+        raise HTTPException(status_code=403, detail="Only seers, bodyguards, and werewolves can use this endpoint")
     
     if not player.is_alive:
         raise HTTPException(status_code=403, detail="Dead players cannot perform night actions")
@@ -2973,6 +3043,14 @@ async def get_available_targets(player_id: uuid.UUID, db: Session = Depends(get_
             'targets': [PlayerInfo.model_validate(p) for p in available_targets],
             'can_protect': True,
             'action_type': 'protect'
+        }
+    elif player.role == 'werewolf':
+        # 人狼は村人陣営のみを攻撃対象とする
+        villager_targets = [p for p in available_targets if p.role in ['villager', 'seer', 'bodyguard']]
+        return {
+            'targets': [PlayerInfo.model_validate(p) for p in villager_targets],
+            'can_attack': True,
+            'action_type': 'attack'
         }
 
 @app.post("/api/rooms/{room_id}/seer_investigate", summary="占い師の調査実行")
@@ -3122,6 +3200,84 @@ async def bodyguard_protect(
         'success': True
     }
 
+@app.post("/api/rooms/{room_id}/werewolf_attack", summary="人狼の攻撃実行")
+async def werewolf_attack(
+    room_id: uuid.UUID, 
+    attacker_id: str = Query(...),
+    target_data: dict = Body(...),
+    db: Session = Depends(get_db)
+):
+    """人狼が特定の対象を攻撃する"""
+    try:
+        attacker_uuid = uuid.UUID(attacker_id)
+        target_player_id = uuid.UUID(target_data['target_player_id'])
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid UUID format")
+    
+    # 攻撃者の検証
+    attacker = db.query(Player).filter(Player.player_id == attacker_uuid).first()
+    if not attacker:
+        raise HTTPException(status_code=404, detail="Attacker not found")
+    
+    if attacker.role != 'werewolf':
+        raise HTTPException(status_code=403, detail="Only werewolves can attack")
+    
+    if not attacker.is_alive:
+        raise HTTPException(status_code=403, detail="Dead players cannot attack")
+    
+    # 対象の検証
+    target = db.query(Player).filter(Player.player_id == target_player_id).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="Target not found")
+    
+    if not target.is_alive:
+        raise HTTPException(status_code=400, detail="Cannot attack dead players")
+    
+    if target.role == 'werewolf':
+        raise HTTPException(status_code=400, detail="Cannot attack fellow werewolves")
+    
+    # 部屋とフェーズの検証
+    room = db.query(Room).filter(Room.room_id == room_id).first()
+    if not room or room.status != 'night':
+        raise HTTPException(status_code=400, detail="Attacks only available during night phase")
+    
+    # 同じ夜に既に攻撃を実行していないかチェック
+    existing_attack = db.query(GameLog).filter(
+        GameLog.room_id == room_id,
+        GameLog.day_number == room.day_number,
+        GameLog.phase == "night",
+        GameLog.event_type == "attack_target",
+        GameLog.actor_player_id == attacker.player_id
+    ).first()
+    
+    if existing_attack:
+        raise HTTPException(status_code=400, detail="You have already attacked someone tonight")
+    
+    # 攻撃実行ログを記録（ただし実際の結果は夜フェーズ終了時に処理）
+    create_game_log(db, room_id, "night", "attack_target", 
+                  actor_player_id=attacker.player_id,
+                  content=f"targeted {target.character_name} for attack")
+    
+    db.commit()
+    
+    # 🔧 攻撃後の夜フェーズ自動進行チェック
+    try:
+        if await check_night_actions_completion(db, room_id):
+            logger.info(f"All night actions completed, auto-progressing from night phase for room {room_id}")
+            # 2秒の遅延を追加してフロントエンドの安定性を向上
+            await asyncio.sleep(2)
+            await sio.emit('complete_game_state', get_room_dict(db, room_id), room=str(room_id))
+    except Exception as e:
+        logger.error(f"Error in night actions completion check: {e}")
+    
+    # 人狼に結果を返す
+    return {
+        'attacker': attacker.character_name,
+        'target': target.character_name,
+        'message': f"{target.character_name}を今夜の襲撃対象に選択しました",
+        'success': True
+    }
+
 @app.post("/api/rooms/{room_id}/transition_to_vote", summary="投票フェーズに移行")
 async def transition_to_vote(room_id: uuid.UUID, db: Session = Depends(get_db)):
     """議論フェーズから投票フェーズに手動で移行する"""
@@ -3249,6 +3405,80 @@ async def generate_persona(player_id: uuid.UUID, persona_input: PersonaInput, db
     except Exception as e:
         logger.error(f"Persona generation failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to generate persona: {str(e)}")
+
+@app.get("/api/rooms/{room_id}/summary", summary="ゲーム状況サマリーを取得")
+async def get_game_summary(room_id: uuid.UUID, db: Session = Depends(get_db)):
+    """現在のゲーム状況のLLM生成サマリーを取得する"""
+    try:
+        room = get_room(db, room_id)
+        if not room:
+            raise HTTPException(status_code=404, detail="Room not found")
+        
+        # ゲームログを取得
+        logs = get_game_logs(db, room_id)
+        
+        # プレイヤー状況を分析
+        alive_players = [p for p in room.players if p.is_alive]
+        dead_players = [p for p in room.players if not p.is_alive]
+        
+        player_status = {
+            "生存者": [
+                {
+                    "name": p.character_name,
+                    "type": "人間" if p.is_human else "AI"
+                } for p in alive_players
+            ],
+            "死亡者": [
+                {
+                    "name": p.character_name,
+                    "type": "人間" if p.is_human else "AI"
+                } for p in dead_players
+            ]
+        }
+        
+        # 日ごとの活動履歴を集計
+        daily_activities = {}
+        for log in logs:
+            day_key = f"{log.day_number}日目" if hasattr(log, 'day_number') and log.day_number else "1日目"
+            if day_key not in daily_activities:
+                daily_activities[day_key] = {
+                    "発言数": 0,
+                    "投票数": 0,
+                    "重要イベント": []
+                }
+            
+            if log.event_type == "speak":
+                daily_activities[day_key]["発言数"] += 1
+            elif log.event_type == "vote":
+                daily_activities[day_key]["投票数"] += 1
+            elif log.event_type in ["execution", "attack", "protection", "divination"]:
+                if log.content:
+                    daily_activities[day_key]["重要イベント"].append(log.content)
+        
+        # LLMを使って状況サマリーを生成
+        llm_summary = await generate_game_summary_llm(room, logs, alive_players, dead_players)
+        
+        return {
+            "room_id": str(room_id),
+            "day_number": room.day_number,
+            "current_phase": room.status,
+            "summary": {
+                "llm_summary": llm_summary,
+                "player_status": player_status,
+                "daily_activities": daily_activities,
+                "current_phase": {
+                    "day": room.day_number,
+                    "phase": room.status,
+                    "round": getattr(room, 'current_round', None)
+                }
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to generate game summary for room {room_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to generate game summary")
 
 @app.post("/api/rooms/{room_id}/auto_progress", summary="ゲームの自動進行")
 async def auto_progress(room_id: uuid.UUID, db: Session = Depends(get_db)):
@@ -3419,6 +3649,53 @@ async def auto_progress_logic(room_id: uuid.UUID, db: Session) -> dict:
     
     return {"auto_progressed": False, "message": f"Not in a phase for auto-progression. Current status: {room.status}"}
 
+async def generate_game_summary_llm(room, logs, alive_players, dead_players):
+    """LLMを使ってゲーム状況サマリーを生成する"""
+    try:
+        if not GOOGLE_PROJECT_ID:
+            return "現在LLMサマリー機能は利用できません。ゲーム状況を手動で確認してください。"
+        
+        # 最近のイベントを抽出（最大10件）
+        recent_events = []
+        for log in logs[-10:]:
+            if log.content:
+                recent_events.append(f"- {log.content}")
+        
+        # プレイヤー状況をまとめる
+        alive_summary = f"生存者: {len(alive_players)}人 ({len([p for p in alive_players if p.is_human])}人の人間, {len([p for p in alive_players if not p.is_human])}人のAI)"
+        dead_summary = f"死亡者: {len(dead_players)}人" if dead_players else "死亡者: なし"
+        
+        # LLMプロンプト作成
+        prompt = f"""
+人狼ゲームの現在の状況について、プレイヤーにとって有用な戦略的サマリーを日本語で生成してください。
+
+## ゲーム情報
+- 現在: {room.day_number}日目 ({room.status})
+- {alive_summary}
+- {dead_summary}
+
+## 最近の出来事
+{chr(10).join(recent_events) if recent_events else "- まだ重要な出来事はありません"}
+
+## 指示
+以下の要素を含む簡潔なサマリーを200文字以内で作成してください：
+1. 現在の状況の要約
+2. 生存プレイヤーの状況
+3. 戦略的な観点やゲームの流れ
+
+サマリーは客観的で、プレイヤーの役職を推測したり暴露したりしないように注意してください。
+"""
+        
+        vertexai.init(project=GOOGLE_PROJECT_ID, location=GOOGLE_LOCATION)
+        model = GenerativeModel("gemini-1.5-flash")
+        response = model.generate_content(prompt)
+        
+        return response.text.strip()
+        
+    except Exception as e:
+        logger.error(f"LLM summary generation failed: {e}")
+        # フォールバック用の基本サマリー
+        return f"{room.day_number}日目の{room.status}フェーズです。生存者{len(alive_players)}人、死亡者{len(dead_players)}人の状況で、ゲームが進行中です。"
 
 # --- Helper Functions ---
 def get_players_in_room(db: Session, room_id: uuid.UUID) -> List[Player]:
