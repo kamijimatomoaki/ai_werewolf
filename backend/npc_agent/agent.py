@@ -751,15 +751,16 @@ class RootAgent:
                     speech_style = ""
         
         # ペルソナに基づいたフォールバック発言を生成
-        if 'でござる' in speech_style:
+        # 注意: 実際のキャラクターのペルソナを反映させたフォールバック発言を使用
+        if speech_style and ('侍' in speech_style or '武士' in speech_style):
             fallback_speeches = [
                 "少し考えさせてくだされ。",
-                "状況を整理している途中でござる。",
-                "もう少し様子を見ますでござる。",
-                "慎重に判断したいと思うでござる。",
+                "状況を整理している途中じゃ。",
+                "もう少し様子を見申す。",
+                "慎重に判断したいと思う。",
                 "皆の意見を聞かせてくだされ。"
             ]
-        elif 'なんでやねん' in speech_style or '関西弁' in speech_style:
+        elif speech_style and ('関西' in speech_style or '大阪' in speech_style):
             fallback_speeches = [
                 "ちょっと考えさせてもらうわ。",
                 "状況を整理しとるとこやねん。",
@@ -842,7 +843,7 @@ class RootAgent:
 【🚨 絶対厳守】キャラクター維持命令:
 {speech_style}で一貫して発言してください。
 語尾や口調、方言、キャッチフレーズなどの特徴を必ず維持してください。
-他のキャラクターの口調（「でござる」「なんでやねん」「ナリ」など）を絶対に使用してはいけません。
+他のキャラクターの口調や語尾を絶対に使用してはいけません。
 あなたの性格「{personality}」に合った発言をしてください。
 """
                 print(f"[DEBUG] Using dict persona for {player_info.get('name')}: speech_style={speech_style}")
@@ -1058,20 +1059,21 @@ class RootAgent:
                     speech_style = ""
         
         # ペルソナ別のフォールバック発言を生成
-        if 'でござる' in speech_style:
+        # 注意: プレイヤーの実際のペルソナを確認してからフォールバック発言を選択
+        if speech_style and ('侍' in speech_style or '武士' in speech_style):
             fallback_speeches = {
                 'villager': [
-                    "情報を整理して冷静に判断するでござる。",
+                    "情報を整理して冷静に判断いたす。",
                     "疑わしい点があれば聞かせてくだされ。",
-                    "皆で協力して真実を見つけるでござる。"
+                    "皆で協力して真実を見つけませぬか。"
                 ],
                 'werewolf': [
-                    "慎重に考えたいと思うでござる。",
+                    "慎重に考えたいと思う。",
                     "皆の意見を聞かせてくだされ。",
-                    "状況を整理してみるでござる。"
+                    "状況を整理してみよう。"
                 ]
             }
-        elif 'なんでやねん' in speech_style or '関西弁' in speech_style:
+        elif speech_style and ('関西' in speech_style or '大阪' in speech_style):
             fallback_speeches = {
                 'villager': [
                     "情報を整理して冷静に判断せなあかんな。",
@@ -1519,7 +1521,7 @@ class RootAgent:
 - 自己紹介や性格表現
 - 投票や議論に関する発言
 - 【重要】プレイヤーのペルソナ（方言、口調、キャラクター性）は絶対に保持する
-- 【重要】キャラクター固有の語尾や口癖（〜でござる、なんでやねん、〜ナリ、〜だよ！等）は削除しない
+- 【重要】キャラクター固有の語尾や口癖は削除しない（プレイヤーの実際のペルソナを確認して適用）
 - 【重要】関西弁、江戸弁、特殊な語尾は標準語に変換しない
 
 【元の発言】

@@ -2594,15 +2594,19 @@ async def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid
         logger.info(f"🚀 AI agent system selection logic: root_agent={root_agent is not None}, PROJECT_ID_OK={bool(GOOGLE_PROJECT_ID)}, LOCATION_OK={bool(GOOGLE_LOCATION)}")
         
         # 🔧 root_agentの再初期化処理（発言失敗対策）
-        if not root_agent and GOOGLE_PROJECT_ID and GOOGLE_LOCATION:
-            logger.warning("⚠️ root_agent is None, attempting re-initialization...")
+        if (not root_agent or getattr(root_agent, 'fallback_mode', True)) and GOOGLE_PROJECT_ID and GOOGLE_LOCATION:
+            logger.warning("⚠️ root_agent is None or in fallback mode, attempting re-initialization...")
             try:
                 from npc_agent.agent import RootAgent
-                root_agent = RootAgent()
-                logger.info("✅ root_agent successfully re-initialized")
+                new_root_agent = RootAgent()
+                if new_root_agent and not getattr(new_root_agent, 'fallback_mode', True):
+                    root_agent = new_root_agent
+                    logger.info("✅ root_agent successfully re-initialized")
+                else:
+                    logger.warning("⚠️ New root_agent is also in fallback mode")
             except Exception as reinit_error:
                 logger.error(f"❌ Failed to re-initialize root_agent: {reinit_error}")
-                root_agent = None
+                # root_agent = None  # 既存のエージェントを保持してフォールバックモードで続行
         
         # 高度なAIエージェントシステムが利用可能な場合
         if root_agent and GOOGLE_PROJECT_ID and GOOGLE_LOCATION:
@@ -2684,7 +2688,7 @@ async def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid
                     asyncio.create_task(asyncio.to_thread(
                         root_agent.generate_speech, player_info, game_context, recent_messages
                     )), 
-                    timeout=30.0  # 30秒に延長（Cloud Run環境での接続不安定性を考慮）
+                    timeout=15.0  # 15秒に短縮（迅速なフォールバック）
                 )
                 logger.info(f"✅ AI agent system response: {speech}")
                 logger.info(f"📏 Speech length: {len(speech) if speech else 0} characters")
@@ -2700,13 +2704,19 @@ async def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid
                 logger.error(f"Player name: {ai_player.character_name if ai_player else 'None'}")
                 logger.error(f"Game phase: {room.status if room else 'None'}")
                 
-                # エラータイプに応じた詳細処理
+                # エラータイプに応じた詳細処理とroot_agentリセット
                 if "timeout" in str(agent_error).lower():
                     logger.error("⏰ AI agent system timed out")
+                    # タイムアウト時はroot_agentをリセット
+                    root_agent = None
                 elif "quota" in str(agent_error).lower() or "rate" in str(agent_error).lower():
                     logger.error("🚫 AI service quota/rate limit exceeded")
+                    # クォータ制限時は短時間待機後にリセット
+                    root_agent = None
                 elif "connection" in str(agent_error).lower():
                     logger.error("🌐 AI service connection error")
+                    # 接続エラー時はroot_agentをリセット
+                    root_agent = None
                 else:
                     logger.error("🔧 Other AI agent system error")
                 
