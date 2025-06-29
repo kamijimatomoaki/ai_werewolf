@@ -29,12 +29,13 @@ export default function GameControls({
   const [isSpeaking, setIsSpeaking] = useState(false);
 
   // 現在のプレイヤーが人間かどうかを判定（複数の方法で検索）
-  let myPlayerInfo = allPlayers.find(p => p.player_id === currentPlayerId);
+  const safePlayers = allPlayers || [];
+  let myPlayerInfo = safePlayers.find(p => p.player_id === currentPlayerId);
   
   // Player ID一致で見つからない場合、プレイヤー名で検索（フォールバック）
   if (!myPlayerInfo && currentPlayerId) {
     // 現在のプレイヤー情報から名前を取得（currentPlayerから推測）
-    const humanPlayers = allPlayers.filter(p => p.is_human);
+    const humanPlayers = safePlayers.filter(p => p.is_human);
     if (humanPlayers.length === 1) {
       // 人間プレイヤーが1人だけの場合、それが自分
       myPlayerInfo = humanPlayers[0];

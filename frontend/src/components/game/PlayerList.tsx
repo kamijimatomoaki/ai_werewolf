@@ -31,7 +31,8 @@ export default function PlayerList({
 
   // プレイヤーリストが更新された時にステガーアニメーションを開始
   useEffect(() => {
-    const playerIds = players.map(p => p.player_id);
+    const safePlayer = players || [];
+    const playerIds = safePlayer.map(p => p.player_id);
     showItems(playerIds, 100); // 100msずつずらしてアニメーション
   }, [players, showItems]);
 
@@ -55,7 +56,7 @@ export default function PlayerList({
   };
 
   const handleBulkGeneratePersona = async () => {
-    const unsetPersonaPlayers = players.filter(p => !p.character_persona); // 全プレイヤー対象
+    const unsetPersonaPlayers = (players || []).filter(p => !p.character_persona); // 全プレイヤー対象
     
     try {
       // 全プレイヤーを順次生成（並列だとAPI制限に引っかかる可能性があるため）
@@ -82,18 +83,19 @@ export default function PlayerList({
     }
   };
 
-  const canStartGame = gameStatus === 'waiting' && players.length === totalPlayers;
-  const hasUnsetPersonas = players.some(p => !p.character_persona); // 全プレイヤー（人間含む）をチェック
+  const safePlayers = players || [];
+  const canStartGame = gameStatus === 'waiting' && safePlayers.length === totalPlayers;
+  const hasUnsetPersonas = safePlayers.some(p => !p.character_persona); // 全プレイヤー（人間含む）をチェック
 
   return (
     <div className="p-4 bg-gray-800/70 border border-gray-600/50 rounded-lg backdrop-blur-sm">
       <h2 className="text-xl font-semibold mb-4 text-white">
-        プレイヤー ({players.length}/{totalPlayers})
+        プレイヤー ({safePlayers.length}/{totalPlayers})
       </h2>
       
       {/* プレイヤー一覧 */}
       <div className="space-y-3">
-        {players.map((player, index) => (
+        {safePlayers.map((player, index) => (
           <AnimatedPlayerCard
             key={player.player_id}
             isEliminated={!player.is_alive}

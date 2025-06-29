@@ -54,7 +54,8 @@ export default function VotingPanel({
   };
 
   // 投票可能なプレイヤー（自分以外の生存者）
-  const votableTargets = players.filter(p => p.is_alive && p.player_id !== currentPlayerId);
+  const safePlayers = players || [];
+  const votableTargets = safePlayers.filter(p => p.is_alive && p.player_id !== currentPlayerId);
 
   return (
     <div className="p-4 bg-red-900/20 border border-red-500/50 rounded-lg backdrop-blur-sm">
