@@ -2534,6 +2534,8 @@ def generate_safe_fallback_speech(ai_player, room) -> str:
 
 async def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid.UUID, emergency_skip: bool = False) -> str:
     """AIプレイヤーの発言を生成（AIエージェント使用・緊急スキップ対応）"""
+    global root_agent
+    
     # 超堅牢なフォールバック用の発言リスト
     ULTRA_SAFE_FALLBACK_SPEECHES = [
         "状況を確認しています。",
@@ -2592,7 +2594,6 @@ async def generate_ai_speech(db: Session, room_id: uuid.UUID, ai_player_id: uuid
         logger.info(f"🚀 AI agent system selection logic: root_agent={root_agent is not None}, PROJECT_ID_OK={bool(GOOGLE_PROJECT_ID)}, LOCATION_OK={bool(GOOGLE_LOCATION)}")
         
         # 🔧 root_agentの再初期化処理（発言失敗対策）
-        global root_agent
         if not root_agent and GOOGLE_PROJECT_ID and GOOGLE_LOCATION:
             logger.warning("⚠️ root_agent is None, attempting re-initialization...")
             try:
