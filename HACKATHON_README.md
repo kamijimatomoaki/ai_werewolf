@@ -150,7 +150,6 @@ AIエージェントは以下の流れで人間らしい発言を生成します
 ### フロントエンド技術スタック
 - **React + TypeScript**: 型安全なコンポーネント開発
 - **Socket.IO Client**: リアルタイム双方向通信
-- **HeroUI + Tailwind CSS**: モダンなUIコンポーネント
 - **Vite**: 高速ビルドシステム
 
 ### バックエンド技術スタック
@@ -159,23 +158,60 @@ AIエージェントは以下の流れで人間らしい発言を生成します
 - **SQLAlchemy + PostgreSQL**: スケーラブルORMデータベース
 - **Google Vertex AI**: Gemini 1.5 FlashでAIエージェント統合
 
-### データベース設計
-```sql
--- ゲーム状態の永続化
-CREATE TABLE rooms (
-    id UUID PRIMARY KEY,
-    status VARCHAR(20),
-    current_phase VARCHAR(20),
-    created_at TIMESTAMP
-);
-
-CREATE TABLE players (
-    id UUID PRIMARY KEY,
-    room_id UUID REFERENCES rooms(id),
-    role VARCHAR(20),
-    is_ai BOOLEAN,
-    persona JSONB  -- AI用パーソナリティ設定
-);
+## データフロー図
+```mermaid
+sequenceDiagram
+    participant U as User (Web Client)
+    participant F as Frontend (React)
+    participant B as Backend (FastAPI)
+    participant AI as AI Agent
+    participant V as Vertex AI
+    participant DB as PostgreSQL
+    
+    Note over U,DB: ゲーム開始フロー
+    
+    U->>F: ゲーム参加要求
+    F->>B: WebSocket接続 & 参加API
+    B->>DB: プレイヤー情報保存
+    B->>AI: AIプレイヤー生成要求
+    AI->>V: ペルソナ初期化
+    V-->>AI: ペルソナ設定完了
+    AI-->>B: AIプレイヤー準備完了
+    B-->>F: ゲーム状態更新 (WebSocket)
+    F-->>U: ゲーム画面表示
+    
+    Note over U,DB: ゲームプレイフロー
+    
+    loop ゲームターン
+        U->>F: 発言入力
+        F->>B: 発言送信 (WebSocket)
+        B->>DB: 発言保存
+        B-->>F: 全員に発言通知
+        F-->>U: 発言表示
+        
+        B->>AI: AI発言トリガー
+        AI->>V: 文脈分析 & 発言生成
+        V-->>AI: AI発言テキスト
+        AI->>B: AI発言送信
+        B->>DB: AI発言保存
+        B-->>F: AI発言通知
+        F-->>U: AI発言表示
+        
+        Note over B: フェーズ進行判定
+        B->>B: ターン終了チェック
+        alt フェーズ変更
+            B->>DB: ゲーム状態更新
+            B-->>F: フェーズ変更通知
+            F-->>U: 画面遷移
+        end
+    end
+    
+    Note over U,DB: ゲーム終了フロー
+    
+    B->>B: 勝利条件判定
+    B->>DB: ゲーム結果保存
+    B-->>F: ゲーム終了通知
+    F-->>U: 結果画面表示
 ```
 
 ## 📊 技術的成果・実装結果
