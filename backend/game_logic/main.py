@@ -1447,12 +1447,10 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
         current_round = db_room.current_round or 1
         player_total_speeches = len(player_day_speeches)
         
-        # 重要: 各ラウンドで1回まで発言可能
-        # ラウンド1で1回発言後、ラウンド2で追加1回発言可能
-        expected_max_speeches = current_round  # ラウンド数と同じ回数まで累積発言可能
+        # 🔧 修正: 現在のラウンドでの発言制限チェック
+        # このプレイヤーの現在ラウンドでの発言回数を計算
         
-        # 現在のラウンドで既に発言済みかチェック（より正確な方法）
-        # 全プレイヤーの発言数から現在ラウンドの発言を判定
+        # 全プレイヤーの今日の発言を時系列で取得
         all_today_speeches = db.query(GameLog).filter(
             GameLog.room_id == room_id,
             GameLog.phase == "day_discussion",
@@ -1460,25 +1458,28 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
             GameLog.day_number == db_room.day_number
         ).order_by(GameLog.created_at).all()
         
-        # 生存プレイヤーリストを取得
+        # 生存プレイヤー数を取得
         alive_players = [p for p in db_room.players if p.is_alive]
         alive_count = len(alive_players)
         
-        # この発言が何番目の発言か（0-indexed）
-        player_speech_order = [s for s in all_today_speeches if s.actor_player_id == player_id]
-        player_speech_in_this_round = len(player_speech_order) % alive_count
+        # このプレイヤーの発言一覧を取得
+        player_speeches = [s for s in all_today_speeches if s.actor_player_id == player_id]
         
-        # 各ラウンドで1回まで：現在ラウンドでまだ発言していないことを確認
-        if player_total_speeches >= expected_max_speeches:
-            logger.warning(f"🚫 発言制限: {player.character_name} は既に今日{player_total_speeches}回発言済み（ラウンド{current_round}の最大: {expected_max_speeches}）")
-            logger.info(f"🔍 詳細: day={db_room.day_number}, round={current_round}, total_speeches={player_total_speeches}, expected_max={expected_max_speeches}")
+        # 現在のラウンドでこのプレイヤーが既に発言したかチェック
+        # ラウンド1: 0回目の発言, ラウンド2: 1回目の発言, ラウンド3: 2回目の発言
+        expected_speech_index_for_current_round = current_round - 1
+        player_speeches_in_current_round = len(player_speeches) > expected_speech_index_for_current_round
+        
+        if player_speeches_in_current_round:
+            logger.warning(f"🚫 発言制限: {player.character_name} は既にラウンド{current_round}で発言済み（累計{len(player_speeches)}回）")
+            logger.info(f"🔍 詳細: day={db_room.day_number}, round={current_round}, player_speeches={len(player_speeches)}, expected_index={expected_speech_index_for_current_round}")
             raise HTTPException(status_code=400, detail=f"Player {player.character_name} has reached speech limit for current game state")
         
         # 2. AI連続発言防止は削除（LLMの発言生成速度に依存させる）
         
         # 3. ログ詳細記録（デバッグ用）
-        logger.info(f"✅ 発言許可: {player.character_name} (ラウンド{current_round}, 今日の発言回数: {player_total_speeches})")
-        logger.info(f"🔍 今日の総発言数: {player_total_speeches}/{expected_max_speeches}")
+        logger.info(f"✅ 発言許可: {player.character_name} (ラウンド{current_round}, 累計発言回数: {len(player_speeches)})")
+        logger.info(f"🔍 発言インデックス: {len(player_speeches)} (期待値: {expected_speech_index_for_current_round}以下)")
 
         # 発言を記録
         create_game_log(db, room_id, "day_discussion", "speech", actor_player_id=player_id, content=statement)
