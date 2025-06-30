@@ -1465,11 +1465,9 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
         # このプレイヤーの発言一覧を取得
         player_speeches = [s for s in all_today_speeches if s.actor_player_id == player_id]
         
-        # 緊急回避策: 1日1人一回発言制限（2ラウンド目以降エラー回避）
-        if len(player_speeches) >= 1:
-            logger.warning(f"🚫 発言制限: {player.character_name} は既に今日発言済み（累計{len(player_speeches)}回）")
-            logger.info(f"🔍 詳細: day={db_room.day_number}, round={current_round}, player_speeches={len(player_speeches)}")
-            raise HTTPException(status_code=400, detail=f"Player {player.character_name} has already spoken today")
+        # 発言制限を大幅緩和: ゲーム進行を優先（制限チェックを無効化）
+        # 旧制限: 1日1人一回 → 新制限: 制限なし（ゲーム安定性優先）
+        logger.info(f"✅ 発言許可: {player.character_name} (累計発言回数: {len(player_speeches)}回) - 制限緩和により許可")
         
         # 2. AI連続発言防止は削除（LLMの発言生成速度に依存させる）
         
@@ -1487,28 +1485,14 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
             logger.warning(f"Failed to update auto-summary for room {room_id}: {e}")
             # サマリー更新失敗はゲーム進行を止めない
         
-        # 1日1人一回制限：未発言の生存プレイヤーを探す
-        next_index = current_index
-        found_unspoken_player = False
+        # 制限緩和：シンプルなターン進行（次の生存プレイヤーに移行）
+        next_index = find_next_alive_player_safe(db, room_id, current_index)
         
-        # 全プレイヤーをチェックして未発言の生存プレイヤーを見つける
-        for i in range(len(turn_order)):
-            check_index = (current_index + 1 + i) % len(turn_order)
-            check_player_id = turn_order[check_index]
-            check_player = get_player(db, uuid.UUID(check_player_id))
-            
-            if check_player and check_player.is_alive:
-                # このプレイヤーが今日発言済みかチェック
-                check_speeches = player_speech_counts.get(check_player_id, 0)
-                if check_speeches == 0:  # 未発言
-                    next_index = check_index
-                    found_unspoken_player = True
-                    logger.info(f"🎯 NEXT PLAYER FOUND: {check_player.character_name} (index={next_index}, unspoken)")
-                    break
-        
-        if not found_unspoken_player:
-            logger.info(f"🎯 NO UNSPOKEN PLAYERS: All alive players have spoken today")
-            next_index = current_index  # 現在のインデックスを維持
+        # 🔍 ターン進行デバッグログ
+        logger.info(f"🎯 TURN PROGRESSION: room_id={room_id}, from_index={current_index} to_index={next_index}")
+        if next_index < len(turn_order):
+            next_player = get_player(db, uuid.UUID(turn_order[next_index]))
+            logger.info(f"🎯 NEXT PLAYER: {next_player.character_name if next_player else 'Unknown'} (is_human={next_player.is_human if next_player else 'Unknown'})")
         
         # ターン進行
         db_room.current_turn_index = next_index
@@ -1542,11 +1526,12 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
                 player_id_str = str(speech.actor_player_id)
                 player_speech_counts[player_id_str] = player_speech_counts.get(player_id_str, 0) + 1
         
-        # 緊急回避策: 1日1人一回発言制限に合わせた完了判定
+        # 制限緩和：ラウンド別発言管理に復帰
         current_round_speakers = set()
         for player_id_str in alive_player_ids:
             speech_count = player_speech_counts.get(player_id_str, 0)
-            if speech_count >= 1:  # 1日1人一回発言
+            # 現在のラウンドで発言済みのプレイヤーをカウント
+            if speech_count >= current_round:
                 current_round_speakers.add(player_id_str)
         
         round_completed = len(current_round_speakers) >= len(alive_player_ids)
@@ -1560,12 +1545,46 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
         if round_completed:
             logger.info(f"✅ Round {db_room.current_round} completed. All {len(alive_player_ids)} alive players spoke.")
             
-            # 緊急回避策: 1日1人一回制限に合わせて1ラウンドで投票フェーズへ移行
-            db_room.status = "day_vote"
-            db_room.current_turn_index = 0
-            create_game_log(db, room_id, "day_discussion", "phase_transition", 
-                          content=f"議論終了（全員発言完了）。投票フェーズに移行します。")
-            logger.info(f"🗳️ Discussion phase completed. All players spoke. Moving to voting phase.")
+            # 3ラウンド完了で投票フェーズへ移行
+            if db_room.current_round >= 3:
+                db_room.status = "day_vote"
+                db_room.current_turn_index = 0
+                create_game_log(db, room_id, "day_discussion", "phase_transition", 
+                              content=f"議論終了（{db_room.current_round}ラウンド完了）。投票フェーズに移行します。")
+                logger.info(f"🗳️ Discussion phase completed after {db_room.current_round} rounds. Moving to voting phase.")
+            else:
+                # 次のラウンドに進む
+                db_room.current_round += 1
+                # ターンオーダーを最初の生存プレイヤーにリセット
+                first_alive_index = None
+                for i, pid in enumerate(turn_order):
+                    player = get_player(db, uuid.UUID(pid))
+                    if player and player.is_alive:
+                        first_alive_index = i
+                        break
+                
+                if first_alive_index is not None:
+                    db_room.current_turn_index = first_alive_index
+                    first_player = get_player(db, uuid.UUID(turn_order[first_alive_index]))
+                    logger.info(f"🔄 Round {db_room.current_round} started - first player: {first_player.character_name} (index={first_alive_index})")
+                else:
+                    logger.error(f"⚠️ No alive players found for round {db_room.current_round}")
+                    db_room.current_turn_index = 0
+                
+                # 重複防止：同じラウンドのround_startメッセージが既に存在するかチェック
+                existing_round_start = db.query(GameLog).filter(
+                    GameLog.room_id == room_id,
+                    GameLog.day_number == db_room.day_number,
+                    GameLog.event_type == "round_start",
+                    GameLog.content.like(f"%ラウンド{db_room.current_round}が開始%")
+                ).first()
+                
+                if not existing_round_start:
+                    create_game_log(db, room_id, "day_discussion", "round_start", 
+                                  content=f"ラウンド{db_room.current_round}が開始されました。")
+                    logger.info(f"✅ Round {db_room.current_round} start message created")
+                else:
+                    logger.info(f"⚠️ Round {db_room.current_round} start message already exists, skipping duplicate")
         
         # 最終活動時間を更新（自動クローズ用）
         db_room.last_activity = datetime.now(timezone.utc)
@@ -3810,7 +3829,7 @@ async def auto_progress_logic(room_id: uuid.UUID, db: Session) -> dict:
             logger.info(f"🤖 AUTO-PROGRESS: AI speech generation started for {current_player.character_name}")
             logger.info(f"🤖 TURN STATE: room_id={room_id}, current_turn_index={room.current_turn_index}, player_id={current_player_id}")
             
-            # 1日1人一回制限：AI発言前の事前チェック
+            # 発言制限緩和：AI発言前チェックを無効化（ゲーム進行優先）
             player_day_speeches = db.query(GameLog).filter(
                 GameLog.room_id == room_id,
                 GameLog.phase == "day_discussion",
@@ -3819,9 +3838,7 @@ async def auto_progress_logic(room_id: uuid.UUID, db: Session) -> dict:
                 GameLog.actor_player_id == current_player_id
             ).count()
             
-            if player_day_speeches >= 1:
-                logger.info(f"🤖 AI ALREADY SPOKE: {current_player.character_name} has already spoken today ({player_day_speeches} times), skipping")
-                return {"auto_progressed": False, "message": "AI player already spoke today"}
+            logger.info(f"🤖 AI SPEECH ALLOWED: {current_player.character_name} has spoken {player_day_speeches} times today - proceeding with speech generation")
             
             # AIの発言を生成
             try:
