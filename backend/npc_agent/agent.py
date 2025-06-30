@@ -1554,15 +1554,21 @@ class RootAgent:
             if len(speech) < 50:
                 return speech
             
-            # プレイヤーのペルソナ情報を取得
+            # プレイヤーのペルソナ情報を取得（関西弁情報は除去）
             persona_info = ""
             if hasattr(self, 'player') and self.player:
+                # 話し方から関西弁関連の記述を除去
+                speech_style = getattr(self.player, 'speech_style', '')
+                if speech_style and any(kansai_word in speech_style for kansai_word in ['関西', '大阪', 'やで', 'ねん', 'やん']):
+                    speech_style = "丁寧で標準的な話し方"
+                
                 persona_info = f"""
 【プレイヤーのペルソナ情報】
-- 名前: {self.player.character_name}
-- 性格: {self.player.personality}
-- 話し方: {self.player.speech_style}
-- 背景: {self.player.background}
+- 名前: {getattr(self.player, 'character_name', '不明')}
+- 性格: {getattr(self.player, 'personality', '不明')}
+- 話し方: {speech_style}
+- 背景: {getattr(self.player, 'background', '不明')}
+注意: 話し方は標準語の丁寧語で統一してください。
 """
             
             cleaning_prompt = f"""以下のAIプレイヤーの発言から、技術的な説明や内部処理に関する記述を除去し、自然な人狼ゲームの発言に整形してください。
@@ -1574,21 +1580,25 @@ class RootAgent:
 - 括弧内のシステム的な説明
 - プログラミングに関する言及
 - 分析ツールや処理に関する説明
+- 関西弁や方言（「やで」「ねん」「やん」「わい」「せや」「なんや」等）
 
 【保持すべき要素】
 - ゲームに関する推理や考察
 - 他プレイヤーへの質問や意見
 - 自己紹介や性格表現
 - 投票や議論に関する発言
-- 【重要】プレイヤーのペルソナ（方言、口調、キャラクター性）は絶対に保持する
-- 【重要】キャラクター固有の語尾や口癖は削除しない（プレイヤーの実際のペルソナを確認して適用）
-- 【重要】関西弁、江戸弁、特殊な語尾は標準語に変換しない
+
+【重要な言語指示】
+- 必ず標準語（丁寧語）で出力してください
+- 関西弁や方言は一切使用しないでください
+- 「です」「ます」調の丁寧な話し方にしてください
+- キャラクターの性格は保持しつつ、言葉遣いは標準語にしてください
 
 【元の発言】
 {speech}
 
 【整形後の発言】
-（自然で簡潔な人狼ゲームの発言として出力してください。キャラクターの口調や方言は必ず維持してください。500文字以内。）"""
+（標準語の丁寧な言葉遣いで、自然で簡潔な人狼ゲームの発言として出力してください。500文字以内。）"""
 
             simple_model = GenerativeModel("gemini-1.5-flash")
             response = generate_content_with_timeout(simple_model, cleaning_prompt, timeout_seconds=8)
