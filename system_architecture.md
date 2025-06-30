@@ -545,9 +545,7 @@ graph TB
     end
     
     %% Network flow
-    USERS --> WAF
-    WAF --> LB
-    LB --> FRONTEND
+    USERS -->FRONTEND
     FRONTEND -.->|Private Network| BACKEND
     BACKEND -.->|Private Network| AISERVICE
     
