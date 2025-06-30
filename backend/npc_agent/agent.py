@@ -1456,7 +1456,7 @@ class RootAgent:
 """
 
     def _clean_speech_content(self, speech: str) -> str:
-        """AI発言からツール関連の内部情報を除去"""
+        """AI発言からツール関連の内部情報を除去し、関西弁を標準語に変換"""
         import re
         
         # 基本的な正規表現フィルタリング
@@ -1477,6 +1477,9 @@ class RootAgent:
         for pattern in tool_label_patterns:
             cleaned_speech = re.sub(pattern, '', cleaned_speech, flags=re.MULTILINE)
         
+        # 🔧 関西弁フィルタリング（強制的に標準語に変換）
+        cleaned_speech = self._convert_kansai_to_standard(cleaned_speech)
+        
         # LLMを使った追加の整形処理
         cleaned_speech = self._llm_clean_speech(cleaned_speech)
         
@@ -1487,6 +1490,60 @@ class RootAgent:
         cleaned_speech = cleaned_speech.strip()
         
         return cleaned_speech
+    
+    def _convert_kansai_to_standard(self, speech: str) -> str:
+        """関西弁を標準語に強制変換"""
+        import re
+        
+        # 関西弁パターンの辞書（関西弁 -> 標準語）
+        kansai_patterns = [
+            (r'やで\b', 'です'),
+            (r'やん\b', 'じゃないか'),
+            (r'ねん\b', 'のです'),
+            (r'へん\b', 'ない'),
+            (r'おる\b', 'いる'),
+            (r'しとる\b', 'している'),
+            (r'きとる\b', 'ている'),
+            (r'やから\b', 'だから'),
+            (r'さかい\b', 'ので'),
+            (r'まっせ\b', 'ますよ'),
+            (r'でんな\b', 'ですね'),
+            (r'どや\b', 'どうですか'),
+            (r'ほんま\b', '本当に'),
+            (r'なんや\b', 'なんですか'),
+            (r'せや\b', 'そうです'),
+            (r'わい\b', '私は'),
+            (r'あかん\b', 'だめ'),
+            (r'ちゃう\b', '違う'),
+            (r'おもろい\b', '面白い'),
+            (r'めっちゃ\b', 'とても'),
+            (r'えらい\b', 'とても'),
+            (r'ようけ\b', 'たくさん'),
+            (r'かなん\b', '困る'),
+            (r'いらう\b', '触る'),
+            (r'ほかす\b', '捨てる'),
+            (r'なおす\b', '片付ける'),
+            (r'だんない\b', '大丈夫'),
+            (r'しんどい\b', '疲れた'),
+            (r'ぼちぼち\b', 'そろそろ'),
+            (r'よう\b', 'よく'),
+            (r'やっぱし\b', 'やっぱり'),
+            (r'はよ\b', 'はやく'),
+            (r'いけず\b', '意地悪'),
+            (r'しょーもない\b', 'つまらない'),
+            (r'てんごな\b', '変な'),
+            (r'でかい\b', '大きい'),
+            (r'ちっさい\b', '小さい'),
+            (r'ええ\b', 'いい'),
+            (r'あかん\b', 'いけない'),
+        ]
+        
+        converted = speech
+        for kansai, standard in kansai_patterns:
+            converted = re.sub(kansai, standard, converted)
+        
+        print(f"[DEBUG] Kansai conversion: '{speech}' -> '{converted}'")
+        return converted
     
     def _llm_clean_speech(self, speech: str) -> str:
         """LLMを使って発言を自然に整形"""
