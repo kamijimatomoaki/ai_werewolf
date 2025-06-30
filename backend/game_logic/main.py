@@ -1357,8 +1357,17 @@ def start_game_logic(db: Session, room_id: uuid.UUID) -> Room:
     roles = get_role_config(player_count)
     random.shuffle(roles)
     
-    player_ids = [p.player_id for p in players]
-    random.shuffle(player_ids)
+    # ホストを最初のターンにして、他はランダム
+    host_player = next((p for p in players if p.is_host), None)
+    if host_player:
+        other_players = [p for p in players if not p.is_host]
+        random.shuffle(other_players)
+        player_ids = [host_player.player_id] + [p.player_id for p in other_players]
+        logger.info(f"🎯 HOST FIRST TURN: {host_player.character_name} will start the game")
+    else:
+        player_ids = [p.player_id for p in players]
+        random.shuffle(player_ids)
+        logger.info("🎯 NO HOST FOUND: Using random turn order")
     
     for player, role in zip(players, roles):
         player.role = role
