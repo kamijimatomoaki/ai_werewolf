@@ -330,15 +330,16 @@ class RootAgent:
     """複数のエージェントを統合するルートエージェント（ツール使用対応）"""
     
     def __init__(self):
-        global vertex_ai_initialized
         print("[DEBUG] RootAgent initialization starting...")
         
         # 基本設定
         self.model = None
         self.tools_available = False
         self.fallback_mode = True
+        self.recent_speeches = []  # 🔧 recent_speeches を初期化してエラーを防止
         
         # Vertex AI初期化状態をチェック
+        global vertex_ai_initialized
         if not vertex_ai_initialized:
             print("[WARNING] Vertex AI not initialized, using fallback mode")
         else:
@@ -426,24 +427,29 @@ class RootAgent:
             # 基本疑惑度（中程度から開始）
             suspicion_level = 5
             
-            # 発言量による調整（発言が少ない=疑わしい）
-            speech_count = len([log for log in self.recent_speeches 
-                              if log.get('speaker') == player])
-            if speech_count < 2:
-                suspicion_level += 2  # 発言少ない=疑いUp
-            elif speech_count > 5:
-                suspicion_level -= 1  # 発言多い=疑いDown
-            
-            # 投票パターンによる調整
-            # (実際の投票データがあれば更に詳細な分析可能)
-            if "投票" in evaluation_criteria and player in self.recent_speeches:
-                # 投票に関する発言の一貫性をチェック
-                player_speeches = [log for log in self.recent_speeches 
-                                 if log.get('speaker') == player]
-                if len(player_speeches) > 0:
-                    last_speech = player_speeches[-1].get('content', '')
-                    if any(word in last_speech for word in ['疑わしい', '人狼', '怪しい']):
-                        suspicion_level -= 1  # 積極的に疑いを表明=疑いDown
+            # 🔧 recent_speeches が利用可能な場合のみ分析を実行
+            if hasattr(self, 'recent_speeches') and self.recent_speeches:
+                # 発言量による調整（発言が少ない=疑わしい）
+                speech_count = len([log for log in self.recent_speeches 
+                                  if log.get('speaker') == player])
+                if speech_count < 2:
+                    suspicion_level += 2  # 発言少ない=疑いUp
+                elif speech_count > 5:
+                    suspicion_level -= 1  # 発言多い=疑いDown
+                
+                # 投票パターンによる調整
+                # (実際の投票データがあれば更に詳細な分析可能)
+                if "投票" in evaluation_criteria and player in self.recent_speeches:
+                    # 投票に関する発言の一貫性をチェック
+                    player_speeches = [log for log in self.recent_speeches 
+                                     if log.get('speaker') == player]
+                    if len(player_speeches) > 0:
+                        last_speech = player_speeches[-1].get('content', '')
+                        if any(word in last_speech for word in ['疑わしい', '人狼', '怪しい']):
+                            suspicion_level -= 1  # 積極的に疑いを表明=疑いDown
+            else:
+                # recent_speeches が利用できない場合の基本的な判定
+                suspicion_level += random.randint(-1, 1)  # 軽微なランダム要素
             
             # ランダム要素を最小限に（±1のバリエーション）
             suspicion_level += random.randint(-1, 1)
@@ -468,21 +474,32 @@ class RootAgent:
         """発言履歴取得ツールの実装（PostgreSQL CloudSQL連携）"""
         try:
             # データベースセッションを取得
-            from game_logic.main import SessionLocal, Player, get_player_speech_history
+            from game_logic.main import SessionLocal, Player, get_player_speech_history, get_room
             
             db = SessionLocal()
             try:
                 # room_idをUUIDに変換
                 room_uuid = uuid.UUID(room_id)
                 
-                # プレイヤー名からプレイヤーIDを取得
+                # 🔧 現在のルームの存在確認
+                room = get_room(db, room_uuid)
+                if not room:
+                    return f"ルーム '{room_id}' が見つかりません。"
+                
+                # 🔧 プレイヤー名からプレイヤーIDを取得（現在のルーム内に限定）
                 player_id = None
                 if player_name:
-                    player = db.query(Player).filter(Player.character_name == player_name).first()
+                    # 現在のルーム内のプレイヤーのみを対象にする
+                    player = None
+                    for p in room.players:
+                        if p.character_name == player_name:
+                            player = p
+                            break
+                    
                     if player:
                         player_id = player.player_id
                     else:
-                        return f"プレイヤー '{player_name}' が見つかりません。"
+                        return f"プレイヤー '{player_name}' が現在のルームに見つかりません。"
                 
                 # 発言履歴を取得
                 speech_logs = get_player_speech_history(
@@ -493,9 +510,19 @@ class RootAgent:
                     limit=30  # 分析用に十分な数を取得
                 )
                 
+                # 🔧 発言履歴のroom_id検証を追加
+                validated_logs = []
+                for log in speech_logs:
+                    if log.get('room_id') == room_id:
+                        validated_logs.append(log)
+                    else:
+                        print(f"[WARNING] Found speech from different room: expected {room_id}, got {log.get('room_id')}")
+                
                 # 発言履歴が空の場合
-                if not speech_logs:
+                if not validated_logs:
                     return f"発言履歴が見つかりません（プレイヤー: {player_name or '全員'}, 日数: {day_number or '全期間'}）"
+                
+                speech_logs = validated_logs
                 
                 # 発言履歴を分析して結果を生成
                 if player_name:
@@ -668,6 +695,21 @@ class RootAgent:
     def generate_speech(self, player_info: Dict, game_context: Dict, recent_messages: List[Dict]) -> str:
         """【高速化版】Function Callingを全面的に採用した発言生成"""
         print(f"[DEBUG] RootAgent.generate_speech (v2) called for {player_info.get('name', 'unknown')}")
+        
+        # 🔧 現在のルームのみのメッセージに絞り込み（データ汚染防止）
+        room_id = game_context.get('room_id')
+        if room_id and recent_messages:
+            filtered_messages = []
+            for msg in recent_messages:
+                msg_room_id = msg.get('room_id')
+                if msg_room_id == room_id or not msg_room_id:
+                    filtered_messages.append(msg)
+                else:
+                    print(f"[WARNING] Filtered out cross-room message: {msg_room_id} != {room_id}")
+            self.recent_speeches = filtered_messages
+            recent_messages = filtered_messages
+        else:
+            self.recent_speeches = recent_messages or []
         
         # 緊急フォールバックモードかチェック
         if getattr(self, 'fallback_mode', False) or self.model is None:
@@ -1312,13 +1354,23 @@ class RootAgent:
         
         # フォールバック: 従来のrecent_messagesも使用（緊急時・補完用）
         if recent_messages:
-            context_parts.append("# 最新の議論")
-            for msg in recent_messages[-2:]:  # 最新2件に削減（コスト効率化）
-                speaker = msg.get('speaker', '不明')
-                content = msg.get('content', '')
-                if len(content) > 100:  # 長すぎる発言は要約
-                    content = content[:100] + "..."
-                context_parts.append(f"- {speaker}: {content}")
+            # 🔧 recent_messagesのroom_id検証を追加
+            validated_messages = []
+            for msg in recent_messages:
+                msg_room_id = msg.get('room_id')
+                if msg_room_id == room_id or not msg_room_id:  # room_idが一致するか未設定の場合
+                    validated_messages.append(msg)
+                else:
+                    print(f"[WARNING] Filtered out message from different room: expected {room_id}, got {msg_room_id}")
+            
+            if validated_messages:
+                context_parts.append("# 最新の議論")
+                for msg in validated_messages[-2:]:  # 最新2件に削減（コスト効率化）
+                    speaker = msg.get('speaker', '不明')
+                    content = msg.get('content', '')
+                    if len(content) > 100:  # 長すぎる発言は要約
+                        content = content[:100] + "..."
+                    context_parts.append(f"- {speaker}: {content}")
         
         return "\n".join(context_parts)
     
