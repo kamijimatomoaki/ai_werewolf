@@ -762,11 +762,11 @@ class RootAgent:
             ]
         elif speech_style and ('関西' in speech_style or '大阪' in speech_style):
             fallback_speeches = [
-                "少し考えさせてもらいます。",
-                "状況を整理している最中です。",
-                "もう少し様子を見ます。",
-                "慎重に判断したいと思います。",
-                "皆の意見を聞かせてください。"
+                "少し考えさせてもらいまっせ。",
+                "状況を整理してる最中やで。",
+                "もうちょい様子見しますわ。",
+                "慎重に判断したいと思うねん。",
+                "みんなの意見聞かせてもらえる？"
             ]
         elif speech_style and 'ナリ' in speech_style:
             fallback_speeches = [
@@ -1076,14 +1076,14 @@ class RootAgent:
         elif speech_style and ('関西' in speech_style or '大阪' in speech_style):
             fallback_speeches = {
                 'villager': [
-                    "情報を整理して冷静に判断します。",
-                    "疑わしい点があれば教えてください。",
-                    "皆で協力して真実を見つけましょう。"
+                    "情報整理して冷静に判断しますわ。",
+                    "怪しい点あったら教えてもらえる？",
+                    "みんなで協力して真実見つけまひょ。"
                 ],
                 'werewolf': [
-                    "慎重に考えたいと思います。",
-                    "皆の意見を聞かせてください。",
-                    "状況を整理してみます。"
+                    "慎重に考えたいと思いますねん。",
+                    "みんなの意見聞かせてもらえるかな？",
+                    "状況整理してみますわ。"
                 ]
             }
         elif speech_style and 'ナリ' in speech_style:

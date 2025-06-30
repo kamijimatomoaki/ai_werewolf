@@ -1434,9 +1434,9 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
         logger.info(f"🎯 ターン状態: current_index={current_index}, turn_order={turn_order}")
         logger.info(f"🎯 現在のターン: {turn_order[current_index] if current_index < len(turn_order) else 'INVALID'}")
         
-        # 🔧 簡潔で確実な重複発言チェック
+        # 🔧 修正された発言制限チェック
         # 現在のラウンドでのプレイヤーの発言数を直接カウント
-        player_round_speeches = db.query(GameLog).filter(
+        player_day_speeches = db.query(GameLog).filter(
             GameLog.room_id == room_id,
             GameLog.phase == "day_discussion",
             GameLog.event_type == "speech",
@@ -1444,19 +1444,18 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
             GameLog.actor_player_id == player_id
         ).all()
         
-        # ターン順序に基づく発言制限（より安全な方法）
-        # 現在のラウンドでの発言回数 = (総発言数) % (プレイヤー数)
+        # ターン順序に基づく発言制限（修正版）
         alive_players_count = len([p for p in db_room.players if p.is_alive])
-        expected_speeches_per_round = alive_players_count
         
-        # 現在のラウンドで期待される最大発言数
-        max_speeches_current_round = db_room.current_round
+        # 各プレイヤーは各ラウンドで1回まで発言可能
+        # つまり、現在のラウンド数以上の発言はできない
+        max_speeches_allowed = db_room.current_round
         
         # このプレイヤーの発言回数が上限を超えているかチェック
-        if len(player_round_speeches) >= max_speeches_current_round:
-            logger.warning(f"🚫 重複発言防止: {player.character_name} は既に{len(player_round_speeches)}回発言済み（上限: {max_speeches_current_round}）")
+        if len(player_day_speeches) >= max_speeches_allowed:
+            logger.warning(f"🚫 重複発言防止: {player.character_name} は既に{len(player_day_speeches)}回発言済み（上限: {max_speeches_allowed}）")
             # 詳細な状況をログ出力
-            logger.info(f"🔍 詳細: day={db_room.day_number}, round={db_room.current_round}, player_speeches={len(player_round_speeches)}")
+            logger.info(f"🔍 詳細: day={db_room.day_number}, round={db_room.current_round}, player_speeches={len(player_day_speeches)}")
             raise HTTPException(status_code=400, detail=f"Player {player.character_name} has reached speech limit for current game state")
         
         # 2. 短時間内連続発言防止（AI専用の追加安全策）
@@ -1481,8 +1480,8 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
                     logger.info(f"✅ AI発言許可: {player.character_name} の前回発言から{time_since_last.total_seconds():.1f}秒経過")
         
         # 3. ログ詳細記録（デバッグ用）
-        logger.info(f"✅ 発言許可: {player.character_name} (ラウンド{db_room.current_round}, 発言回数: {len(player_round_speeches)})")
-        logger.info(f"🔍 今日の総発言数: {len(player_round_speeches)}")
+        logger.info(f"✅ 発言許可: {player.character_name} (ラウンド{db_room.current_round}, 発言回数: {len(player_day_speeches)})")
+        logger.info(f"🔍 今日の総発言数: {len(player_day_speeches)}")
 
         # 発言を記録
         create_game_log(db, room_id, "day_discussion", "speech", actor_player_id=player_id, content=statement)
@@ -2500,11 +2499,13 @@ def generate_safe_fallback_speech(ai_player, room) -> str:
     """AIプレイヤーのペルソナに基づいた安全なフォールバック発言を生成"""
     try:
         # ペルソナ情報を取得
-        persona = ai_player.character_persona or ""
+        persona = ai_player.character_persona
         role = ai_player.role
-        day_number = room.day_number
         
-        # ペルソナ情報を確認（口調の強制変換は行わない）
+        # ペルソナの口調情報を取得
+        speech_style = ""
+        if persona and hasattr(persona, 'speech_style'):
+            speech_style = persona.speech_style or ""
         
         # 役職と状況に応じたベース発言を生成
         if role == 'werewolf':
@@ -2532,8 +2533,22 @@ def generate_safe_fallback_speech(ai_player, room) -> str:
                 "疑わしい点があれば教えてください。"
             ]
         
-        # ペルソナに基づいて自然な発言を選択（例示文による変換は行わない）
-        adjusted_speech = random.choice(base_speeches)
+        # ペルソナの口調に基づいて発言を調整
+        selected_speech = random.choice(base_speeches)
+        
+        # 口調の適用（基本的な変換のみ）
+        if speech_style and '関西' in speech_style:
+            # 関西弁への変換
+            adjusted_speech = selected_speech.replace("ます。", "ますわ。").replace("です。", "やで。").replace("ください。", "てもらえる？")
+        elif speech_style and 'だよ' in speech_style:
+            # カジュアルな口調への変換
+            adjusted_speech = selected_speech.replace("ます。", "よ。").replace("です。", "だよ。").replace("ください。", "て。")
+        elif speech_style and ('ナリ' in speech_style or '古風' in speech_style):
+            # 古風な口調への変換
+            adjusted_speech = selected_speech.replace("ます。", "申す。").replace("です。", "である。").replace("ください。", "くだされ。")
+        else:
+            # デフォルトは標準語のまま
+            adjusted_speech = selected_speech
         
         return adjusted_speech
         

@@ -9,6 +9,7 @@ interface GameControlsProps {
   currentRound?: number;
   onSpeak: (statement: string) => Promise<void>;
   onStartGame?: () => Promise<void>;
+  onRefresh?: () => Promise<void>;
   isLoading?: boolean;
   currentPlayerId?: string | null;
   allPlayers?: PlayerInfo[];
@@ -21,6 +22,7 @@ export default function GameControls({
   currentRound,
   onSpeak,
   onStartGame,
+  onRefresh,
   isLoading = false,
   currentPlayerId,
   allPlayers = []
@@ -204,10 +206,10 @@ export default function GameControls({
                 </div>
               </div>
               <button
-                onClick={() => window.location.reload()}
+                onClick={onRefresh || (() => window.location.reload())}
                 className="w-full px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded transition-colors text-sm"
               >
-                ページを更新
+                更新
               </button>
             </div>
           </div>
