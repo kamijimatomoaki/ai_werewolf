@@ -24,11 +24,17 @@
 
 ## 🚀 技術的特徴・イノベーション
 
-### 1. 高度なAIエージェント技術
-- **Google Vertex AI (Gemini)** を活用した自然言語処理
-- 各AIプレイヤーが独自のペルソナ・戦略を持つ
-- 人間らしい推理・会話パターンの実装
-- リアルタイムでの状況判断・戦略変更
+### 1. 高度なマルチエージェントAIシステム
+- **Google Vertex AI (Gemini 1.5 Flash)** を活用した自然言語処理
+- **5つの専門AIエージェント**による戦略的協調システム
+  - **質問エージェント**: 情報収集と推理に特化
+  - **告発エージェント**: 疑惑提起と告発に特化  
+  - **サポートエージェント**: 味方支援と信頼構築に特化
+  - **カミングアウトエージェント**: 役職公開戦略に特化
+  - **発言履歴エージェント**: 過去発言分析に特化
+- **統合戦略エンジン**: 5エージェントからの提案を統合し最適発言を選択
+- **役職別戦略**: 村人・人狼・占い師・ボディガード・狂人の5役職それぞれに特化した戦略
+- **動的戦略変更**: ゲーム進行（序盤・中盤・終盤）に応じた戦略適応
 
 ### 2. リアルタイム多人数同期システム
 - **WebSocket (Socket.IO)** による瞬時同期
@@ -50,11 +56,12 @@
 
 ## 🎮 ゲーム仕様
 
-### 対応役職
-- **村人**: 議論と投票で人狼を見つけ出す
-- **人狼**: 村人を装い夜に襲撃を行う
-- **占い師**: 毎夜一人の正体を調べられる
-- **ボディガード**: 毎夜一人を人狼の襲撃から守る
+### 対応役職（5役職完全実装）
+- **村人**: 議論と投票で人狼を見つけ出す基本役職
+- **人狼**: 村人を装い夜に襲撃を行う敵対役職
+- **占い師**: 毎夜一人の正体を調べられる重要役職
+- **ボディガード**: 毎夜一人を人狼の襲撃から守る護衛役職
+- **狂人**: 人狼陣営だが人狼が誰かは知らない撹乱役職
 
 ### ゲームフロー
 1. **昼フェーズ**: 全員で議論（3ラウンド制）
@@ -78,6 +85,137 @@
 - **社会的AIの実践**: 人間社会に溶け込むAIの研究プラットフォーム
 - **多エージェント協調**: 複数AIの連携・競争システム
 - **自然言語理解**: 文脈を理解した高度な会話AI
+
+## 🤖 AIエージェントシステム詳細
+
+### マルチエージェント協調アーキテクチャ
+
+本プロジェクトの核心技術は、複数の専門AIエージェントが連携する**マルチエージェント戦略システム**です。
+
+#### 5つの専門エージェント構成
+
+```python
+# 1. 質問エージェント (Question Agent)
+class QuestionAgent:
+    """情報収集と推理に特化したエージェント"""
+    - 他プレイヤーの役職特定のための質問生成
+    - 発言パターンや行動の一貫性チェック
+    - 村人側: 人狼特定のための鋭い質問
+    - 人狼側: 村人同士の対立を煽る質問
+
+# 2. 告発エージェント (Accuse Agent)  
+class AccuseAgent:
+    """疑惑提起と告発に特化したエージェント"""
+    - 疑わしいプレイヤーへの論理的告発
+    - 発言の矛盾や不自然な擁護の指摘
+    - 村人側: 人狼の行動パターン告発
+    - 人狼側: 真役職者への積極的告発
+
+# 3. サポートエージェント (Support Agent)
+class SupportAgent:
+    """味方支援と信頼構築に特化したエージェント"""
+    - 同陣営プレイヤーの擁護と信頼構築
+    - 建設的な議論の促進と対立緩和
+    - 村人側: 確実な村人の擁護
+    - 人狼側: 間接的支援と信頼獲得
+
+# 4. カミングアウトエージェント (Coming Out Agent)
+class ComingOutAgent:
+    """役職公開戦略に特化したエージェント"""
+    - 役職公開のタイミング最適化
+    - 真役職の信憑性向上・偽役職演出
+    - 村人側: 真証明による信頼獲得
+    - 人狼側: 偽装による村人撹乱
+
+# 5. 発言履歴エージェント (Speech History Agent)
+class SpeechHistoryAgent:
+    """過去発言分析に特化したエージェント"""
+    - プレイヤーの発言パターン詳細分析
+    - 発言の一貫性・矛盾点特定
+    - 役職推理のための証拠収集
+```
+
+#### 統合戦略エンジン
+
+```python
+class StrategicIntegrationEngine:
+    """5エージェントからの提案を統合し最適発言を選択"""
+    
+    def integrate_strategies(self, game_context):
+        # 各エージェントから戦略提案を収集
+        proposals = {
+            'question': question_agent.propose(context),
+            'accuse': accuse_agent.propose(context),
+            'support': support_agent.propose(context),
+            'coming_out': coming_out_agent.propose(context),
+            'history': speech_history_agent.analyze(context)
+        }
+        
+        # ゲーム状況に応じた重み付け評価
+        weights = self.calculate_priority_weights(
+            game_phase=context.phase,  # 序盤/中盤/終盤
+            role=context.my_role,      # 自分の役職
+            survival_rate=context.alive_count,
+            discussion_flow=context.current_topic
+        )
+        
+        # 最適戦略の選択と発言生成
+        return self.select_optimal_strategy(proposals, weights)
+```
+
+### 役職別AI戦略マトリックス
+
+| 役職 | 序盤戦略 | 中盤戦略 | 終盤戦略 | 特殊能力活用 |
+|------|----------|----------|----------|--------------|
+| **村人** | 情報収集・関係構築 | 積極的推理・立場明確化 | 決定的投票・勝負発言 | 投票による人狼特定 |
+| **人狼** | 潜伏・信頼獲得 | 偽情報流布・対立煽動 | 生存重視・最終勝負 | 夜襲撃・偽装工作 |
+| **占い師** | 慎重な真証明 | 調査結果公開・信頼構築 | 確定情報による指揮 | 夜占い・真証明 |
+| **ボディガード** | 潜伏・観察 | 重要人物特定 | 護衛対象明確化 | 夜護衛・真証明 |
+| **狂人** | 偽占い師準備 | 対抗CO・混乱誘発 | 人狼支援・撹乱継続 | 偽装・村人混乱 |
+
+### AI学習・適応システム
+
+```python
+class AdaptiveLearningSystem:
+    """ゲーム進行に応じたAI戦略の動的調整"""
+    
+    def adapt_strategy(self, game_history):
+        # プレイヤー行動パターン学習
+        player_patterns = self.analyze_player_behaviors(game_history)
+        
+        # 発言効果測定
+        speech_effectiveness = self.measure_speech_impact(game_history)
+        
+        # 戦略成功率分析
+        strategy_success_rates = self.calculate_strategy_success(game_history)
+        
+        # 次回戦略調整
+        return self.adjust_future_strategies(
+            player_patterns, 
+            speech_effectiveness, 
+            strategy_success_rates
+        )
+```
+
+### 自然言語生成の高度化
+
+```python
+class NaturalLanguageProcessor:
+    """人間らしい発言生成システム"""
+    
+    def generate_human_like_speech(self, strategy_content):
+        # 関西弁フィルタリング（40+パターン）
+        cleaned_text = self.remove_kansai_dialect(strategy_content)
+        
+        # 敬語・丁寧語変換
+        polite_text = self.convert_to_polite_form(cleaned_text)
+        
+        # 自然な感情表現追加
+        emotional_text = self.add_emotional_nuance(polite_text)
+        
+        # 文字数制限（500文字）
+        return self.optimize_length(emotional_text)
+```
 
 ## 🛠 技術アーキテクチャ
 

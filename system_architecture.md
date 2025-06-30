@@ -1,5 +1,274 @@
 # AI人狼オンライン - システムアーキテクチャ図
 
+## アプリケーション構成図
+
+```mermaid
+graph TB
+    subgraph "ユーザー層"
+        USER1[プレイヤー1<br/>人間ユーザー]
+        USER2[プレイヤー2<br/>人間ユーザー]
+        USER3[観戦者<br/>リアルタイム視聴]
+    end
+    
+    subgraph "AI人狼オンライン アプリケーション"
+        subgraph "フロントエンド (React SPA)"
+            GAMEROOM[ゲームルーム画面<br/>GameRoom.tsx]
+            ROOMLIST[ルーム一覧画面<br/>RoomList.tsx]
+            
+            subgraph "ゲームコンポーネント"
+                PLAYERLIST[プレイヤーリスト<br/>PlayerList.tsx]
+                VOTINGPANEL[投票パネル<br/>VotingPanel.tsx]
+                GAMELOG[ゲームログ<br/>GameLog.tsx]
+                ROLESPANEL[役職パネル群<br/>SeerPanel.tsx<br/>WerewolfPanel.tsx<br/>BodyguardPanel.tsx]
+            end
+            
+            subgraph "リアルタイム通信"
+                WEBSOCKET[WebSocketフック<br/>useWebSocket.ts]
+                SOCKETIO[Socket.IO Client<br/>リアルタイム同期]
+            end
+        end
+        
+        subgraph "バックエンド (FastAPI)"
+            MAINAPI[メインAPI<br/>main.py]
+            
+            subgraph "ゲームロジック"
+                ROOMMANAGER[ルーム管理<br/>Room Creation/Join]
+                GAMEENGINE[ゲームエンジン<br/>Phase Management]
+                VOTELOGIC[投票処理<br/>Vote Counting]
+                ROLELOGIC[役職処理<br/>Seer/Bodyguard Actions]
+            end
+            
+            subgraph "WebSocket通信"
+                SOCKETSERVER[Socket.IO Server<br/>リアルタイム通信]
+                EVENTHANDLER[イベントハンドラー<br/>speak/vote/action]
+            end
+        end
+        
+        subgraph "AIエージェントシステム"
+            AIMANAGER[AI管理システム<br/>agent.py]
+            
+            subgraph "5つの専門エージェント"
+                QUESTIONAI[質問エージェント<br/>情報収集・推理]
+                ACCUSEAI[告発エージェント<br/>疑惑提起・告発]
+                SUPPORTAI[サポートエージェント<br/>味方支援・信頼構築]
+                COMINGOUTAI[COエージェント<br/>役職公開戦略]
+                HISTORYAI[履歴エージェント<br/>発言分析]
+            end
+            
+            STRATEGICENGINE[統合戦略エンジン<br/>最適発言選択]
+            NLPROCESSOR[自然言語処理<br/>発言生成・清浄化]
+        end
+    end
+    
+    subgraph "外部AI・データサービス"
+        VERTEXAI[Google Vertex AI<br/>Gemini 1.5 Flash<br/>自然言語生成]
+        DATABASE[(PostgreSQL<br/>ゲーム状態<br/>プレイヤーデータ<br/>会話履歴)]
+        REDIS[(Redis Cache<br/>セッション管理<br/>リアルタイム状態)]
+    end
+    
+    %% ユーザー接続
+    USER1 --> GAMEROOM
+    USER2 --> ROOMLIST
+    USER3 --> GAMEROOM
+    
+    %% フロントエンド内部接続
+    GAMEROOM --> PLAYERLIST
+    GAMEROOM --> VOTINGPANEL
+    GAMEROOM --> GAMELOG
+    GAMEROOM --> ROLESPANEL
+    GAMEROOM --> WEBSOCKET
+    WEBSOCKET --> SOCKETIO
+    
+    %% フロントエンド-バックエンド接続
+    SOCKETIO <--> SOCKETSERVER
+    ROOMLIST --> MAINAPI
+    
+    %% バックエンド内部接続
+    MAINAPI --> ROOMMANAGER
+    MAINAPI --> GAMEENGINE
+    SOCKETSERVER --> EVENTHANDLER
+    EVENTHANDLER --> VOTELOGIC
+    EVENTHANDLER --> ROLELOGIC
+    GAMEENGINE --> AIMANAGER
+    
+    %% AIエージェント内部接続
+    AIMANAGER --> QUESTIONAI
+    AIMANAGER --> ACCUSEAI
+    AIMANAGER --> SUPPORTAI
+    AIMANAGER --> COMINGOUTAI
+    AIMANAGER --> HISTORYAI
+    
+    QUESTIONAI --> STRATEGICENGINE
+    ACCUSEAI --> STRATEGICENGINE
+    SUPPORTAI --> STRATEGICENGINE
+    COMINGOUTAI --> STRATEGICENGINE
+    HISTORYAI --> STRATEGICENGINE
+    
+    STRATEGICENGINE --> NLPROCESSOR
+    NLPROCESSOR --> VERTEXAI
+    
+    %% データ接続
+    MAINAPI --> DATABASE
+    MAINAPI --> REDIS
+    AIMANAGER --> DATABASE
+    SOCKETSERVER --> REDIS
+    
+    %% スタイリング
+    classDef userStyle fill:#e1f5fe,stroke:#0277bd,stroke-width:2px
+    classDef frontendStyle fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    classDef backendStyle fill:#e8f5e8,stroke:#388e3c,stroke-width:2px
+    classDef aiStyle fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    classDef dataStyle fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    
+    class USER1,USER2,USER3 userStyle
+    class GAMEROOM,ROOMLIST,PLAYERLIST,VOTINGPANEL,GAMELOG,ROLESPANEL,WEBSOCKET,SOCKETIO frontendStyle
+    class MAINAPI,ROOMMANAGER,GAMEENGINE,VOTELOGIC,ROLELOGIC,SOCKETSERVER,EVENTHANDLER backendStyle
+    class AIMANAGER,QUESTIONAI,ACCUSEAI,SUPPORTAI,COMINGOUTAI,HISTORYAI,STRATEGICENGINE,NLPROCESSOR aiStyle
+    class VERTEXAI,DATABASE,REDIS dataStyle
+```
+
+## ゲームフロー構成図
+
+```mermaid
+graph LR
+    subgraph "1. ゲーム開始フロー"
+        A1[ルーム作成] --> A2[プレイヤー参加]
+        A2 --> A3[AI生成]
+        A3 --> A4[ゲーム開始]
+    end
+    
+    subgraph "2. 昼フェーズ (3ラウンド制)"
+        B1[ラウンド1発言] --> B2[ラウンド2発言]
+        B2 --> B3[ラウンド3発言]
+        B3 --> B4[投票フェーズ]
+    end
+    
+    subgraph "3. 投票・処刑フェーズ"
+        C1[全員投票] --> C2[得票集計]
+        C2 --> C3[最多票者処刑]
+        C3 --> C4[勝利判定]
+    end
+    
+    subgraph "4. 夜フェーズ"
+        D1[人狼襲撃] --> D2[占い師占い]
+        D2 --> D3[ボディガード護衛]
+        D3 --> D4[結果反映]
+    end
+    
+    subgraph "5. AI意思決定フロー"
+        E1[状況分析] --> E2[5エージェント提案]
+        E2 --> E3[統合エンジン評価]
+        E3 --> E4[最適戦略選択]
+        E4 --> E5[自然言語生成]
+    end
+    
+    A4 --> B1
+    B4 --> C1
+    C4 --> D1
+    C4 --> GAMEEND[ゲーム終了]
+    D4 --> B1
+    
+    %% AI処理の並行実行
+    B1 -.-> E1
+    B2 -.-> E1
+    B3 -.-> E1
+    D1 -.-> E1
+    
+    E5 -.-> B1
+    E5 -.-> B2
+    E5 -.-> B3
+    E5 -.-> D1
+    
+    classDef gameflowStyle fill:#e8f5e8,stroke:#4caf50,stroke-width:2px
+    classDef aiflowStyle fill:#fff3e0,stroke:#ff9800,stroke-width:2px
+    
+    class A1,A2,A3,A4,B1,B2,B3,B4,C1,C2,C3,C4,D1,D2,D3,D4,GAMEEND gameflowStyle
+    class E1,E2,E3,E4,E5 aiflowStyle
+```
+
+## データモデル構成図
+
+```mermaid
+erDiagram
+    ROOMS {
+        uuid id PK
+        string name
+        string status
+        string current_phase
+        int current_day
+        int current_round
+        timestamp created_at
+        json settings
+    }
+    
+    PLAYERS {
+        uuid id PK
+        uuid room_id FK
+        string name
+        string role
+        boolean is_ai
+        boolean is_alive
+        json persona
+        timestamp joined_at
+    }
+    
+    SPEECHES {
+        uuid id PK
+        uuid player_id FK
+        uuid room_id FK
+        int day
+        int round
+        text content
+        timestamp created_at
+    }
+    
+    VOTES {
+        uuid id PK
+        uuid voter_id FK
+        uuid target_id FK
+        uuid room_id FK
+        int day
+        timestamp created_at
+    }
+    
+    NIGHT_ACTIONS {
+        uuid id PK
+        uuid player_id FK
+        uuid room_id FK
+        string action_type
+        uuid target_id FK
+        int day
+        timestamp created_at
+    }
+    
+    AI_STRATEGIES {
+        uuid id PK
+        uuid player_id FK
+        string agent_type
+        json strategy_data
+        float confidence_score
+        timestamp created_at
+    }
+    
+    GAME_LOGS {
+        uuid id PK
+        uuid room_id FK
+        string event_type
+        json event_data
+        timestamp created_at
+    }
+    
+    ROOMS ||--o{ PLAYERS : "contains"
+    PLAYERS ||--o{ SPEECHES : "makes"
+    PLAYERS ||--o{ VOTES : "casts"
+    PLAYERS ||--o{ NIGHT_ACTIONS : "performs"
+    PLAYERS ||--o{ AI_STRATEGIES : "uses"
+    ROOMS ||--o{ SPEECHES : "logs"
+    ROOMS ||--o{ VOTES : "tracks"
+    ROOMS ||--o{ NIGHT_ACTIONS : "records"
+    ROOMS ||--o{ GAME_LOGS : "maintains"
+```
+
 ## 全体システム構成図
 
 ```mermaid
