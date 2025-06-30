@@ -14,9 +14,9 @@
 - **課題**: 初心者が経験者に圧倒され、楽しめない・続かない問題
 - **解決策**: AIプレイヤーが多様な戦略レベルで参加し、バランスの取れたゲーム環境を提供
 
-#### 3. 言語・文化の壁
-- **課題**: 国際的なプレイヤー間でのコミュニケーション障壁
-- **解決策**: 多言語対応AIエージェントが自然な会話で橋渡し役を担当
+#### 3. エンターテインメント業界でのAI活用の遅れ
+- **課題**: 従来のゲームではAIは単純なNPCとして扱われ、人間との対等な協力・競争関係が実現されていない
+- **解決策**: 高度なAIエージェントが人間と同等のプレイヤーとして参加し、新たなエンターテインメント体験を創出
 
 #### 4. 24時間対応の需要
 - **課題**: 深夜・早朝など人の少ない時間帯にゲームが成立しない
@@ -38,8 +38,7 @@
 
 ### 2. リアルタイム多人数同期システム
 - **WebSocket (Socket.IO)** による瞬時同期
-- 最大8人の同時プレイ対応
-- 観戦者のリアルタイムチャット機能
+- 単一ゲームルーム内での安定したプレイ体験
 - サーバー負荷分散による安定性確保
 
 ### 3. 拡張性のあるマイクロサービス設計
@@ -50,7 +49,6 @@
 
 ### 4. 直感的なゲーム体験設計
 - モダンUIライブラリ (HeroUI) による美麗なインターフェース
-- フェーズ遷移アニメーション
 - リアルタイム投票・議論システム
 - モバイル・デスクトップ完全対応
 
@@ -71,20 +69,20 @@
 
 ## 💡 ビジネス価値・社会的インパクト
 
-### 1. 教育分野への応用
-- **論理的思考力**: 推理・議論を通じた思考力向上
-- **コミュニケーション能力**: 人とAIとの対話スキル向上
-- **デジタルリテラシー**: AI時代に必要な人機協働体験
+### 1. オンラインゲーム参加障壁の解消
+- **人数不足問題の根本解決**: AIによる即座な補完で24時間ゲーム成立可能
+- **初心者支援**: 多様なAI戦略レベルによる学習・成長環境の提供
+- **アクセシビリティ向上**: 時間・場所・経験を問わない参加機会の創出
 
-### 2. エンターテインメント産業
-- **新しいゲーム体験**: 人とAIの共創による新ジャンル創出
-- **アクセシビリティ向上**: 時間・人数制約の解消
-- **コミュニティ形成**: 多様なプレイヤーの包摂
+### 2. エンターテインメント業界のAI革新
+- **新ジャンル創出**: 人とAIの対等な協力・競争による未体験のゲーム体験
+- **AI共創エンターテインメント**: 従来のNPCを超えた知的エージェントとの社会的交流
+- **産業構造変革**: AI技術を活用した次世代エンターテインメントプラットフォーム
 
-### 3. AI研究・開発分野
-- **社会的AIの実践**: 人間社会に溶け込むAIの研究プラットフォーム
-- **多エージェント協調**: 複数AIの連携・競争システム
-- **自然言語理解**: 文脈を理解した高度な会話AI
+### 3. AI社会実装の先進事例
+- **人機協働社会の実験場**: 人とAIが対等に参加する社会システムの実証
+- **マルチエージェント技術**: 複数AI協調システムの実用化による技術的ブレークスルー
+- **自然言語AI**: 戦略的思考と感情表現を兼ね備えた高度な会話AIの社会実装
 
 ## 🤖 AIエージェントシステム詳細
 
@@ -94,74 +92,38 @@
 
 #### 5つの専門エージェント構成
 
-```python
-# 1. 質問エージェント (Question Agent)
-class QuestionAgent:
-    """情報収集と推理に特化したエージェント"""
-    - 他プレイヤーの役職特定のための質問生成
-    - 発言パターンや行動の一貫性チェック
-    - 村人側: 人狼特定のための鋭い質問
-    - 人狼側: 村人同士の対立を煽る質問
+**1. 質問エージェント (Question Agent)**
+- 情報収集と推理に特化
+- 他プレイヤーの役職特定のための質問生成
+- 村人側：人狼特定、人狼側：村人同士の対立煽動
 
-# 2. 告発エージェント (Accuse Agent)  
-class AccuseAgent:
-    """疑惑提起と告発に特化したエージェント"""
-    - 疑わしいプレイヤーへの論理的告発
-    - 発言の矛盾や不自然な擁護の指摘
-    - 村人側: 人狼の行動パターン告発
-    - 人狼側: 真役職者への積極的告発
+**2. 告発エージェント (Accuse Agent)**  
+- 疑惑提起と告発に特化
+- 発言の矛盾や不自然な擁護の指摘
+- 村人側：人狼の行動パターン告発、人狼側：真役職者への積極的告発
 
-# 3. サポートエージェント (Support Agent)
-class SupportAgent:
-    """味方支援と信頼構築に特化したエージェント"""
-    - 同陣営プレイヤーの擁護と信頼構築
-    - 建設的な議論の促進と対立緩和
-    - 村人側: 確実な村人の擁護
-    - 人狼側: 間接的支援と信頼獲得
+**3. サポートエージェント (Support Agent)**
+- 味方支援と信頼構築に特化
+- 建設的な議論の促進と対立緩和
+- 村人側：確実な村人の擁護、人狼側：間接的支援と信頼獲得
 
-# 4. カミングアウトエージェント (Coming Out Agent)
-class ComingOutAgent:
-    """役職公開戦略に特化したエージェント"""
-    - 役職公開のタイミング最適化
-    - 真役職の信憑性向上・偽役職演出
-    - 村人側: 真証明による信頼獲得
-    - 人狼側: 偽装による村人撹乱
+**4. カミングアウトエージェント (Coming Out Agent)**
+- 役職公開戦略に特化
+- 役職公開のタイミング最適化
+- 村人側：真証明による信頼獲得、人狼側：偽装による村人撹乱
 
-# 5. 発言履歴エージェント (Speech History Agent)
-class SpeechHistoryAgent:
-    """過去発言分析に特化したエージェント"""
-    - プレイヤーの発言パターン詳細分析
-    - 発言の一貫性・矛盾点特定
-    - 役職推理のための証拠収集
-```
+**5. 発言履歴エージェント (Speech History Agent)**
+- 過去発言分析に特化
+- プレイヤーの発言パターン詳細分析
+- 発言の一貫性・矛盾点特定による役職推理
 
 #### 統合戦略エンジン
 
-```python
-class StrategicIntegrationEngine:
-    """5エージェントからの提案を統合し最適発言を選択"""
-    
-    def integrate_strategies(self, game_context):
-        # 各エージェントから戦略提案を収集
-        proposals = {
-            'question': question_agent.propose(context),
-            'accuse': accuse_agent.propose(context),
-            'support': support_agent.propose(context),
-            'coming_out': coming_out_agent.propose(context),
-            'history': speech_history_agent.analyze(context)
-        }
-        
-        # ゲーム状況に応じた重み付け評価
-        weights = self.calculate_priority_weights(
-            game_phase=context.phase,  # 序盤/中盤/終盤
-            role=context.my_role,      # 自分の役職
-            survival_rate=context.alive_count,
-            discussion_flow=context.current_topic
-        )
-        
-        # 最適戦略の選択と発言生成
-        return self.select_optimal_strategy(proposals, weights)
-```
+5つの専門エージェントからの提案を統合し、最適な発言を選択するシステム：
+
+1. **戦略提案収集**: 各エージェントから現在状況に対する戦略提案を収集
+2. **重み付け評価**: ゲームフェーズ・役職・生存状況・議論の流れに応じて重み計算
+3. **最適戦略選択**: 最も効果的な戦略を選択し、自然な発言として生成
 
 ### 役職別AI戦略マトリックス
 
@@ -173,91 +135,28 @@ class StrategicIntegrationEngine:
 | **ボディガード** | 潜伏・観察 | 重要人物特定 | 護衛対象明確化 | 夜護衛・真証明 |
 | **狂人** | 偽占い師準備 | 対抗CO・混乱誘発 | 人狼支援・撹乱継続 | 偽装・村人混乱 |
 
-### AI学習・適応システム
+### 発言生成・処理システム
 
-```python
-class AdaptiveLearningSystem:
-    """ゲーム進行に応じたAI戦略の動的調整"""
-    
-    def adapt_strategy(self, game_history):
-        # プレイヤー行動パターン学習
-        player_patterns = self.analyze_player_behaviors(game_history)
-        
-        # 発言効果測定
-        speech_effectiveness = self.measure_speech_impact(game_history)
-        
-        # 戦略成功率分析
-        strategy_success_rates = self.calculate_strategy_success(game_history)
-        
-        # 次回戦略調整
-        return self.adjust_future_strategies(
-            player_patterns, 
-            speech_effectiveness, 
-            strategy_success_rates
-        )
-```
+AIエージェントは以下の流れで人間らしい発言を生成します：
 
-### 自然言語生成の高度化
-
-```python
-class NaturalLanguageProcessor:
-    """人間らしい発言生成システム"""
-    
-    def generate_human_like_speech(self, strategy_content):
-        # 関西弁フィルタリング（40+パターン）
-        cleaned_text = self.remove_kansai_dialect(strategy_content)
-        
-        # 敬語・丁寧語変換
-        polite_text = self.convert_to_polite_form(cleaned_text)
-        
-        # 自然な感情表現追加
-        emotional_text = self.add_emotional_nuance(polite_text)
-        
-        # 文字数制限（500文字）
-        return self.optimize_length(emotional_text)
-```
+1. **状況分析**: 現在のゲーム状況・プレイヤー関係・役職情報を総合分析
+2. **戦略選択**: 5つの専門エージェントから最適な戦略を統合エンジンが選択
+3. **言語生成**: Google Vertex AIを活用して自然な日本語発言を生成
+4. **品質管理**: 関西弁除去・敬語変換・文字数制限により発言品質を確保
 
 ## 🛠 技術アーキテクチャ
 
 ### フロントエンド技術スタック
-```typescript
-// React + TypeScript による型安全な開発
-interface GameState {
-  phase: 'day' | 'voting' | 'night';
-  players: Player[];
-  currentRound: number;
-}
-
-// リアルタイム状態管理
-const useWebSocket = () => {
-  const [gameState, setGameState] = useState<GameState>();
-  // Socket.IO による双方向通信
-};
-```
+- **React + TypeScript**: 型安全なコンポーネント開発
+- **Socket.IO Client**: リアルタイム双方向通信
+- **HeroUI + Tailwind CSS**: モダンなUIコンポーネント
+- **Vite**: 高速ビルドシステム
 
 ### バックエンド技術スタック
-```python
-# FastAPI + SQLAlchemy による高性能API
-from fastapi import FastAPI, WebSocket
-from sqlalchemy.orm import Session
-
-@app.websocket("/ws/{room_id}")
-async def websocket_endpoint(websocket: WebSocket, room_id: str):
-    # リアルタイム通信ハンドリング
-    pass
-
-# Vertex AI との統合
-from vertexai.generative_models import GenerativeModel
-
-class AIAgent:
-    def __init__(self, persona: str):
-        self.model = GenerativeModel("gemini-1.5-flash")
-        self.persona = persona
-    
-    async def generate_speech(self, context: GameContext) -> str:
-        # 文脈を理解した発言生成
-        pass
-```
+- **FastAPI**: 高性能非同期WebAPIフレームワーク
+- **Socket.IO Server**: WebSocketリアルタイム通信サーバー
+- **SQLAlchemy + PostgreSQL**: スケーラブルORMデータベース
+- **Google Vertex AI**: Gemini 1.5 FlashでAIエージェント統合
 
 ### データベース設計
 ```sql
@@ -281,32 +180,33 @@ CREATE TABLE players (
 ## 📊 技術的成果・実装結果
 
 ### パフォーマンス指標
-- **リアルタイム応答**: WebSocket通信で100ms以下のレイテンシ
 - **AI応答速度**: Vertex API最適化により平均3-5秒で発言生成
-- **同時接続**: Cloud Run環境で最大100同時セッション対応
+- **ゲーム安定性**: 単一ルーム内で安定した8人プレイ対応
 - **可用性**: 99.9%のアップタイム達成（Cloud Run自動スケーリング）
 
 ### AI品質評価
 - **発言自然度**: 人間らしい推理・感情表現の実装
 - **戦略多様性**: 5種類の異なるAIペルソナによる多彩な戦略
 - **適応性**: ゲーム状況に応じた動的戦略変更
-- **言語品質**: 関西弁などの方言処理を含む自然な日本語
+- **言語品質**: 関西弁除去処理を含む自然な日本語
 
 ### ユーザビリティ
 - **直感的操作**: ワンクリックでゲーム参加・観戦
 - **レスポンシブ対応**: モバイル・タブレット・デスクトップ完全対応
 - **アクセシビリティ**: 色覚多様性・視覚障害者対応
-- **多言語準備**: 英語・中国語展開のための基盤実装
 
 ## 🌟 将来展望・拡張性
 
 ### 短期目標 (3-6ヶ月)
+- **観戦システム強化**: リアルタイムチャット機能とスペクテイターモード改善
+- **フェーズ遷移アニメーション**: ゲーム進行の視覚的体験向上
 - **AIペルソナ拡張**: 10種類以上の多様なキャラクター追加
 - **トーナメント機能**: ランキング・大会システム実装
 - **モバイルアプリ**: iOS/Android ネイティブアプリ開発
-- **多言語対応**: 英語・中国語・韓国語サポート
 
 ### 中期目標 (6-12ヶ月)
+- **同時マルチプレイ対応**: 複数ゲームルームの並行実行とスケーリング
+- **多言語対応**: 英語・中国語・韓国語サポート
 - **カスタムAI**: ユーザーが独自AIを訓練・設定可能
 - **VR/AR対応**: 仮想空間での没入型人狼体験
 - **教育パッケージ**: 学校・企業向け論理思考教育プログラム
@@ -332,7 +232,7 @@ CREATE TABLE players (
 
 ### 社会的差別化
 1. **人機共創**: 人とAIが対等に参加する新しい社会実験
-2. **国際性**: 言語・文化の壁を超えたコミュニケーション
+2. **技術革新**: AIエージェント技術のエンターテインメント応用
 3. **アクセシビリティ**: 時間・場所・能力を問わない参加可能性
 
 このプロジェクトは、単なるゲームを超えて、AI時代における人とマシンの新しい関係性を探求する実験的プラットフォームです。技術革新、社会的価値、ビジネス性を兼ね備えた、次世代のデジタルエンターテインメントの可能性を示しています。
