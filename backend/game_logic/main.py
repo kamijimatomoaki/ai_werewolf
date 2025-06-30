@@ -2504,17 +2504,7 @@ def generate_safe_fallback_speech(ai_player, room) -> str:
         role = ai_player.role
         day_number = room.day_number
         
-        # ペルソナから話し方を抽出
-        speech_style = ""
-        if persona and isinstance(persona, str):
-            if 'でござる' in persona:
-                speech_style = 'samurai'
-            elif 'なんでやねん' in persona or '関西弁' in persona:
-                speech_style = 'kansai' 
-            elif 'ナリ' in persona:
-                speech_style = 'nari'
-            elif 'だよ' in persona:
-                speech_style = 'energetic'
+        # ペルソナ情報を確認（口調の強制変換は行わない）
         
         # 役職と状況に応じたベース発言を生成
         if role == 'werewolf':
@@ -2542,23 +2532,8 @@ def generate_safe_fallback_speech(ai_player, room) -> str:
                 "疑わしい点があれば教えてください。"
             ]
         
-        # 話し方に応じて発言を調整
-        base_speech = random.choice(base_speeches)
-        
-        if speech_style == 'samurai':
-            # でござる調
-            adjusted_speech = base_speech.replace('です。', 'でござる。').replace('ます。', 'まする。').replace('しましょう。', 'しましょうぞ。')
-        elif speech_style == 'kansai':
-            # 関西弁
-            adjusted_speech = base_speech.replace('です。', 'や。').replace('ます。', 'まっせ。').replace('しましょう。', 'しよか。')
-        elif speech_style == 'nari':
-            # ナリ調
-            adjusted_speech = base_speech.replace('です。', 'ナリ。').replace('ます。', 'ナリ。').replace('しましょう。', 'するナリ。')
-        elif speech_style == 'energetic':
-            # だよ調
-            adjusted_speech = base_speech.replace('です。', 'だよ！').replace('ます。', 'よ！').replace('しましょう。', 'しよう！')
-        else:
-            adjusted_speech = base_speech
+        # ペルソナに基づいて自然な発言を選択（例示文による変換は行わない）
+        adjusted_speech = random.choice(base_speeches)
         
         return adjusted_speech
         

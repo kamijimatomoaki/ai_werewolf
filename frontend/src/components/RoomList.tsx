@@ -162,9 +162,16 @@ export default function RoomList({ onRoomJoin, onSpectatorJoin }: RoomListProps)
     }
   };
 
-  // 初期化時に部屋一覧を取得
+  // 初期化時に部屋一覧を取得 + 自動更新機能
   useEffect(() => {
     fetchRooms();
+    
+    // 30秒ごとに部屋一覧を自動更新（古い部屋の非表示対応）
+    const interval = setInterval(() => {
+      fetchRooms();
+    }, 30000);
+    
+    return () => clearInterval(interval);
   }, []);
 
   // ステータスに応じた色を返す
