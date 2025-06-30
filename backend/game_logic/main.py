@@ -1434,8 +1434,8 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
         logger.info(f"🎯 ターン状態: current_index={current_index}, turn_order={turn_order}")
         logger.info(f"🎯 現在のターン: {turn_order[current_index] if current_index < len(turn_order) else 'INVALID'}")
         
-        # 🔧 修正された発言制限チェック
-        # 現在のラウンドでのプレイヤーの発言数を直接カウント
+        # 🔧 正しい発言制限チェック - 現在のラウンドでの発言のみチェック
+        # 今日のこのプレイヤーの全発言を取得
         player_day_speeches = db.query(GameLog).filter(
             GameLog.room_id == room_id,
             GameLog.phase == "day_discussion",
@@ -1444,25 +1444,23 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
             GameLog.actor_player_id == player_id
         ).all()
         
-        # ターン順序に基づく発言制限（修正版）
-        alive_players_count = len([p for p in db_room.players if p.is_alive])
-        
-        # 各プレイヤーは各ラウンドで1回まで発言可能
-        # つまり、現在のラウンド数以上の発言はできない
-        max_speeches_allowed = db_room.current_round
+        # ターン制限：プレイヤーは現在のラウンド数まで発言可能
+        # ラウンド1: 1回まで、ラウンド2: 2回まで、ラウンド3: 3回まで
+        current_round = db_room.current_round or 1
+        max_speeches_allowed = current_round
+        player_speech_count = len(player_day_speeches)
         
         # このプレイヤーの発言回数が上限を超えているかチェック
-        if len(player_day_speeches) >= max_speeches_allowed:
-            logger.warning(f"🚫 重複発言防止: {player.character_name} は既に{len(player_day_speeches)}回発言済み（上限: {max_speeches_allowed}）")
-            # 詳細な状況をログ出力
-            logger.info(f"🔍 詳細: day={db_room.day_number}, round={db_room.current_round}, player_speeches={len(player_day_speeches)}")
+        if player_speech_count >= max_speeches_allowed:
+            logger.warning(f"🚫 発言制限: {player.character_name} は既に{player_speech_count}回発言済み（ラウンド{current_round}の上限: {max_speeches_allowed}）")
+            logger.info(f"🔍 詳細: day={db_room.day_number}, round={current_round}, speeches={player_speech_count}/{max_speeches_allowed}")
             raise HTTPException(status_code=400, detail=f"Player {player.character_name} has reached speech limit for current game state")
         
         # 2. AI連続発言防止は削除（LLMの発言生成速度に依存させる）
         
         # 3. ログ詳細記録（デバッグ用）
-        logger.info(f"✅ 発言許可: {player.character_name} (ラウンド{db_room.current_round}, 発言回数: {len(player_day_speeches)})")
-        logger.info(f"🔍 今日の総発言数: {len(player_day_speeches)}")
+        logger.info(f"✅ 発言許可: {player.character_name} (ラウンド{current_round}, 発言回数: {player_speech_count})")
+        logger.info(f"🔍 今日の総発言数: {player_speech_count}/{max_speeches_allowed}")
 
         # 発言を記録
         create_game_log(db, room_id, "day_discussion", "speech", actor_player_id=player_id, content=statement)
@@ -1500,7 +1498,7 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
         
         # 🔧 重複コード削除済み - 上記のシンプルな発言チェックを使用
         
-        # 🔧 簡潔なラウンド完了判定
+        # 🔧 正確なラウンド完了判定
         # 現在の日の全発言を取得
         all_day_speeches = db.query(GameLog).filter(
             GameLog.room_id == room_id,
@@ -1509,16 +1507,25 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
             GameLog.day_number == db_room.day_number
         ).all()
         
-        # 現在のラウンドで発言したプレイヤーを特定
-        current_round_speakers = set()
+        # 各プレイヤーの発言回数をカウント
+        player_speech_counts = {}
         for speech in all_day_speeches:
             if speech.actor_player_id:
-                current_round_speakers.add(str(speech.actor_player_id))
+                player_id_str = str(speech.actor_player_id)
+                player_speech_counts[player_id_str] = player_speech_counts.get(player_id_str, 0) + 1
         
-        round_completed = len(current_round_speakers & alive_player_ids) >= len(alive_player_ids)
+        # 現在のラウンドが完了したかチェック：全生存プレイヤーが現在のラウンド回数分発言しているか
+        current_round_speakers = set()
+        for player_id_str in alive_player_ids:
+            speech_count = player_speech_counts.get(player_id_str, 0)
+            if speech_count >= db_room.current_round:
+                current_round_speakers.add(player_id_str)
+        
+        round_completed = len(current_round_speakers) >= len(alive_player_ids)
         
         logger.info(f"🎯 ROUND STATUS: round={db_room.current_round}, current_speakers={len(current_round_speakers)}, "
                    f"alive_players={len(alive_player_ids)}, completed={round_completed}")
+        logger.info(f"🎯 SPEECH COUNTS: {[(get_player(db, uuid.UUID(pid)).character_name, player_speech_counts.get(pid, 0)) for pid in alive_player_ids if get_player(db, uuid.UUID(pid))]}")
         logger.info(f"🎯 CURRENT ROUND SPEAKERS: {[get_player(db, uuid.UUID(pid)).character_name for pid in current_round_speakers if get_player(db, uuid.UUID(pid))]}")
         
         # ラウンド完了チェック：全ての生存プレイヤーが発言した場合
