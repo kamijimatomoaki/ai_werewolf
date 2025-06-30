@@ -1465,11 +1465,11 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
         # このプレイヤーの発言一覧を取得
         player_speeches = [s for s in all_today_speeches if s.actor_player_id == player_id]
         
-        # ラウンド別発言制限チェック - 各ラウンドで1回まで発言可能（1日最大3回）
-        if len(player_speeches) >= current_round:
-            logger.warning(f"🚫 発言制限: {player.character_name} は既にラウンド{current_round}で発言済み（累計{len(player_speeches)}回）")
+        # 緊急回避策: 1日1人一回発言制限（2ラウンド目以降エラー回避）
+        if len(player_speeches) >= 1:
+            logger.warning(f"🚫 発言制限: {player.character_name} は既に今日発言済み（累計{len(player_speeches)}回）")
             logger.info(f"🔍 詳細: day={db_room.day_number}, round={current_round}, player_speeches={len(player_speeches)}")
-            raise HTTPException(status_code=400, detail=f"Player {player.character_name} has already spoken in round {current_round}")
+            raise HTTPException(status_code=400, detail=f"Player {player.character_name} has already spoken today")
         
         # 2. AI連続発言防止は削除（LLMの発言生成速度に依存させる）
         
@@ -1528,11 +1528,11 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
                 player_id_str = str(speech.actor_player_id)
                 player_speech_counts[player_id_str] = player_speech_counts.get(player_id_str, 0) + 1
         
-        # 現在のラウンドが完了したかチェック：全生存プレイヤーが現在ラウンド分発言しているか
+        # 緊急回避策: 1日1人一回発言制限に合わせた完了判定
         current_round_speakers = set()
         for player_id_str in alive_player_ids:
             speech_count = player_speech_counts.get(player_id_str, 0)
-            if speech_count >= db_room.current_round:  # 各ラウンドで1回ずつ発言
+            if speech_count >= 1:  # 1日1人一回発言
                 current_round_speakers.add(player_id_str)
         
         round_completed = len(current_round_speakers) >= len(alive_player_ids)
