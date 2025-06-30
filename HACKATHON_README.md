@@ -145,6 +145,7 @@ AIエージェントは以下の流れで人間らしい発言を生成します
 4. **品質管理**: 関西弁除去・敬語変換・文字数制限により発言品質を確保
 
 ## 🛠 技術アーキテクチャ
+![architecture](https://github.com/user-attachments/assets/a82d13d2-60d1-4ae8-88e0-729f88cd4d36)
 
 ### フロントエンド技術スタック
 - **React + TypeScript**: 型安全なコンポーネント開発
