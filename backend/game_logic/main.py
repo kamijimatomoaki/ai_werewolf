@@ -1458,26 +1458,7 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
             logger.info(f"🔍 詳細: day={db_room.day_number}, round={db_room.current_round}, player_speeches={len(player_day_speeches)}")
             raise HTTPException(status_code=400, detail=f"Player {player.character_name} has reached speech limit for current game state")
         
-        # 2. 短時間内連続発言防止（AI専用の追加安全策）
-        if not player.is_human:
-            recent_speech = db.query(GameLog).filter(
-                GameLog.room_id == room_id,
-                GameLog.event_type == "speech",
-                GameLog.actor_player_id == player_id
-            ).order_by(GameLog.created_at.desc()).first()
-            
-            if recent_speech:
-                created_at = recent_speech.created_at
-                if created_at.tzinfo is None:
-                    created_at = created_at.replace(tzinfo=timezone.utc)
-                time_since_last = datetime.now(timezone.utc) - created_at
-                
-                # 最後の発言から1秒以内の場合は連続発言防止（緩和版）
-                if time_since_last.total_seconds() < 1:
-                    logger.warning(f"🚫 AI短時間連続発言防止: {player.character_name} は{time_since_last.total_seconds():.1f}秒前に発言したばかり")
-                    raise HTTPException(status_code=400, detail=f"AI player {player.character_name} spoke too recently ({time_since_last.total_seconds():.1f}s ago)")
-                else:
-                    logger.info(f"✅ AI発言許可: {player.character_name} の前回発言から{time_since_last.total_seconds():.1f}秒経過")
+        # 2. AI連続発言防止は削除（LLMの発言生成速度に依存させる）
         
         # 3. ログ詳細記録（デバッグ用）
         logger.info(f"✅ 発言許可: {player.character_name} (ラウンド{db_room.current_round}, 発言回数: {len(player_day_speeches)})")
@@ -2533,24 +2514,11 @@ def generate_safe_fallback_speech(ai_player, room) -> str:
                 "疑わしい点があれば教えてください。"
             ]
         
-        # ペルソナの口調に基づいて発言を調整
+        # ペルソナ情報をLLMが自動的に反映できるよう、基本発言をそのまま使用
+        # 口調変換はLLMに委ねる（より自然で一貫性のある発言が期待できる）
         selected_speech = random.choice(base_speeches)
         
-        # 口調の適用（基本的な変換のみ）
-        if speech_style and '関西' in speech_style:
-            # 関西弁への変換
-            adjusted_speech = selected_speech.replace("ます。", "ますわ。").replace("です。", "やで。").replace("ください。", "てもらえる？")
-        elif speech_style and 'だよ' in speech_style:
-            # カジュアルな口調への変換
-            adjusted_speech = selected_speech.replace("ます。", "よ。").replace("です。", "だよ。").replace("ください。", "て。")
-        elif speech_style and ('ナリ' in speech_style or '古風' in speech_style):
-            # 古風な口調への変換
-            adjusted_speech = selected_speech.replace("ます。", "申す。").replace("です。", "である。").replace("ください。", "くだされ。")
-        else:
-            # デフォルトは標準語のまま
-            adjusted_speech = selected_speech
-        
-        return adjusted_speech
+        return selected_speech
         
     except Exception as e:
         # 最終フォールバック

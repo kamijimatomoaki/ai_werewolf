@@ -734,6 +734,7 @@ export default function GameRoom({ roomId, onBackToLobby }: GameRoomProps) {
             currentPlayer={currentSpeaker}
             currentRound={room.current_round}
             onSpeak={handleSpeak}
+            onRefresh={fetchRoomData}
             isLoading={loading}
             currentPlayerId={currentPlayerId}
             allPlayers={room.players || []}
