@@ -518,11 +518,6 @@ graph TB
         USERS[Users<br/>Web/Mobile Clients]
     end
     
-    subgraph "Google Cloud - DMZ"
-        WAF[Cloud Armor<br/>Web Application Firewall<br/>DDoS Protection]
-        LB[Load Balancer<br/>SSL/TLS Termination<br/>Traffic Distribution]
-    end
-    
     subgraph "Application Tier - VPC"
         subgraph "Public Subnet"
             FRONTEND[Frontend Service<br/>Cloud Run<br/>Public Access]
