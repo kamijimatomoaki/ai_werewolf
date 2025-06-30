@@ -1465,21 +1465,16 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
         # このプレイヤーの発言一覧を取得
         player_speeches = [s for s in all_today_speeches if s.actor_player_id == player_id]
         
-        # 現在のラウンドでこのプレイヤーが既に発言したかチェック
-        # ラウンド1: 0回目の発言, ラウンド2: 1回目の発言, ラウンド3: 2回目の発言
-        expected_speech_index_for_current_round = current_round - 1
-        player_speeches_in_current_round = len(player_speeches) > expected_speech_index_for_current_round
-        
-        if player_speeches_in_current_round:
+        # ラウンド別発言制限チェック - 各ラウンドで1回まで発言可能（1日最大3回）
+        if len(player_speeches) >= current_round:
             logger.warning(f"🚫 発言制限: {player.character_name} は既にラウンド{current_round}で発言済み（累計{len(player_speeches)}回）")
-            logger.info(f"🔍 詳細: day={db_room.day_number}, round={current_round}, player_speeches={len(player_speeches)}, expected_index={expected_speech_index_for_current_round}")
-            raise HTTPException(status_code=400, detail=f"Player {player.character_name} has reached speech limit for current game state")
+            logger.info(f"🔍 詳細: day={db_room.day_number}, round={current_round}, player_speeches={len(player_speeches)}")
+            raise HTTPException(status_code=400, detail=f"Player {player.character_name} has already spoken in round {current_round}")
         
         # 2. AI連続発言防止は削除（LLMの発言生成速度に依存させる）
         
         # 3. ログ詳細記録（デバッグ用）
         logger.info(f"✅ 発言許可: {player.character_name} (ラウンド{current_round}, 累計発言回数: {len(player_speeches)})")
-        logger.info(f"🔍 発言インデックス: {len(player_speeches)} (期待値: {expected_speech_index_for_current_round}以下)")
 
         # 発言を記録
         create_game_log(db, room_id, "day_discussion", "speech", actor_player_id=player_id, content=statement)
@@ -1533,11 +1528,11 @@ def speak_logic(db: Session, room_id: uuid.UUID, player_id: uuid.UUID, statement
                 player_id_str = str(speech.actor_player_id)
                 player_speech_counts[player_id_str] = player_speech_counts.get(player_id_str, 0) + 1
         
-        # 現在のラウンドが完了したかチェック：全生存プレイヤーが現在のラウンド回数分発言しているか
+        # 現在のラウンドが完了したかチェック：全生存プレイヤーが現在ラウンド分発言しているか
         current_round_speakers = set()
         for player_id_str in alive_player_ids:
             speech_count = player_speech_counts.get(player_id_str, 0)
-            if speech_count >= db_room.current_round:
+            if speech_count >= db_room.current_round:  # 各ラウンドで1回ずつ発言
                 current_round_speakers.add(player_id_str)
         
         round_completed = len(current_round_speakers) >= len(alive_player_ids)
