@@ -196,13 +196,19 @@ export default function GameControls({
               <p className="text-gray-200 mb-2">
                 {currentPlayer.character_name} の発言を待っています
               </p>
-              <div className="flex justify-center">
+              <div className="flex justify-center mb-3">
                 <div className="animate-pulse flex space-x-1">
                   <div className="w-2 h-2 bg-gray-500 rounded-full"></div>
                   <div className="w-2 h-2 bg-gray-500 rounded-full"></div>
                   <div className="w-2 h-2 bg-gray-500 rounded-full"></div>
                 </div>
               </div>
+              <button
+                onClick={() => window.location.reload()}
+                className="w-full px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded transition-colors text-sm"
+              >
+                ページを更新
+              </button>
             </div>
           </div>
         )}

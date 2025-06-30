@@ -792,6 +792,26 @@ async def delayed_ai_progression(room_id: uuid.UUID, delay_seconds: float):
     except Exception as e:
         logger.error(f"Error in delayed AI progression for room {room_id}: {e}")
 
+async def delayed_ai_progression_new_day(room_id: uuid.UUID, delay_seconds: float):
+    """Schedule AI progression for new day start after a delay"""
+    await asyncio.sleep(delay_seconds)
+    try:
+        db = SessionLocal()
+        try:
+            logger.info(f"Executing delayed AI progression for new day in room {room_id}")
+            await check_and_progress_ai_turns(room_id, db)
+            
+            # ゲーム状態をブロードキャスト
+            room = get_room(db, room_id)
+            if room:
+                complete_state = get_complete_game_state(db, room_id)
+                await sio.emit('complete_game_state', complete_state, room=str(room_id))
+                logger.info(f"Broadcasted complete game state for new day in room {room_id}")
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"Error in delayed AI progression for new day in room {room_id}: {e}")
+
 async def handle_voting_phase_auto_progress(room_id: uuid.UUID, room, db: Session):
     """投票フェーズでのAI自動投票処理"""
     try:
@@ -2179,7 +2199,6 @@ def process_night_actions(db: Session, room_id: uuid.UUID) -> Dict[str, Any]:
         # 次の日に進む
         db_room.day_number += 1
         db_room.status = 'day_discussion'
-        db_room.current_turn_index = 0
         db_room.current_round = 1
         
         # 生存者でターン順序を再構築（相対順序を保持）
@@ -2207,6 +2226,22 @@ def process_night_actions(db: Session, room_id: uuid.UUID) -> Dict[str, Any]:
             random.shuffle(living_players)
             
         db_room.turn_order = [str(p.player_id) for p in living_players]
+        
+        # 生存プレイヤーが存在する場合のみ、正しいターンインデックスを設定
+        if living_players:
+            db_room.current_turn_index = 0  # 生存プレイヤーの最初
+            logger.info(f"New day started: Day {db_room.day_number}, first player: {living_players[0].character_name}")
+            
+            # Day開始後のAI発言をスケジュール（3秒後）
+            import asyncio
+            first_player = living_players[0]
+            if not first_player.is_human:
+                logger.info(f"Scheduling AI progression for Day {db_room.day_number} start")
+                # 非同期でAI発言をスケジュール
+                asyncio.create_task(delayed_ai_progression_new_day(room_id, 3.0))
+        else:
+            db_room.current_turn_index = None
+            logger.error(f"No living players found when starting Day {db_room.day_number}")
     
     db.commit()
     return results
